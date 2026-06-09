@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ANC Logistica | Reporte Operacional</title>
+  <script>
+    if (new URLSearchParams(location.search).get("integrado") === "1") {
+      document.documentElement.classList.add("integrado");
+    }
+  </script>
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <section id="loginView" class="login-view">
+    <form class="login-card" onsubmit="login(event)">
+      <div class="brand-row login-brand-row">
+        <div class="brand-mark">ANC</div>
+        <div>
+          <strong>ANC Logistica</strong>
+          <span>Operacion Logistica</span>
+        </div>
+      </div>
+      <h1>Reporte Operacional Logistico</h1>
+      <p>Panel ejecutivo para seguimiento de picking, recepcion, despacho y pedido.</p>
+      <label>Usuario<input id="usuario" autocomplete="username" required></label>
+      <label>Contrasena<input id="password" type="password" autocomplete="current-password" required></label>
+      <button>Ingresar</button>
+      <div id="loginError" class="login-error"></div>
+    </form>
+  </section>
+
+  <section id="appView" hidden>
+    <header class="topbar">
+      <div>
+        <strong>ANC Logistica</strong>
+        <span id="estadoCarga">Esperando configuracion...</span>
+      </div>
+      <div class="topbar-actions">
+        <span id="usuarioActivo" class="user-pill"></span>
+        <button onclick="recargarDatos()">Actualizar</button>
+        <button class="ghost" onclick="logout()">Salir</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="shell">
+        <aside class="sidebar">
+          <div class="side-title">
+            <div class="brand-mark small">ANC</div>
+            <div>
+              <strong>Reporte Operacional</strong>
+              <span>Logistica</span>
+            </div>
+          </div>
+          <nav>
+            <details class="nav-group" open>
+              <summary>Resumen Ejecutivo</summary>
+              <button onclick="verResumenEjecutivo()">Principal</button>
+              <button onclick="verReporteGeneral()">Reporte General</button>
+            </details>
+            <details class="nav-group">
+              <summary>Reporte Picking</summary>
+              <button onclick="verPickingCompacto()">Reporte</button>
+              <button onclick="verPicking()">Dashboard operacional</button>
+              <button onclick="verRanking()">Ranking</button>
+              <button onclick="verBase()">Base</button>
+            </details>
+            <details class="nav-group">
+              <summary>Reporte Recepcion</summary>
+              <button onclick="verRecepcionCompacto()">Reporte</button>
+              <button onclick="verRecepcion()">Dashboard operacional</button>
+              <button onclick="verRecepcionRanking()">Ranking</button>
+            </details>
+            <details class="nav-group">
+              <summary>Reporte Despacho</summary>
+              <button onclick="verDespachoCompacto()">Reporte</button>
+              <button onclick="verDespacho()">Dashboard operacional</button>
+              <button onclick="verDespachoRanking()">Ranking</button>
+            </details>
+            <details class="nav-group">
+              <summary>Reporte Pedido</summary>
+              <button onclick="verPedidoCompacto()">Reporte</button>
+              <button onclick="verPedido()">Dashboard operacional</button>
+              <button onclick="verPedidoRanking()">Ranking</button>
+            </details>
+          </nav>
+        </aside>
+
+        <section class="workspace">
+          <div class="module-head">
+            <div>
+              <h1>Panel ejecutivo</h1>
+              <p>Reporte operacional logistico por modulo.</p>
+            </div>
+            <button class="soft" onclick="exportarImagen('modulo', 'anc-reporte-operacional')">Imagen</button>
+          </div>
+
+          <div id="modulo">
+            <div class="loading">Preparando dashboard...</div>
+          </div>
+        </section>
+      </section>
+    </main>
+  </section>
+
+  <script src="js/data.js"></script>
+  <script src="js/app.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
+</body>
+</html>

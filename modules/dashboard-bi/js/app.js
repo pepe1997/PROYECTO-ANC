@@ -1,0 +1,2223 @@
+﻿function limpiar(valor) {
+  if (valor === null || valor === undefined) return "";
+  return String(valor).trim();
+}
+
+function normalizar(valor) {
+  return limpiar(valor)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase();
+}
+
+function num(valor) {
+  const limpio = String(valor || "").trim().replace(/\s/g, "");
+  const normal = limpio.includes(",") && limpio.includes(".")
+    ? limpio.replace(/,/g, "")
+    : limpio.replace(",", ".");
+  const n = parseFloat(normal);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function fmt(valor) {
+  return Number(valor || 0).toLocaleString("es-PE", { maximumFractionDigits: 2 });
+}
+
+function corto(valor, max = 18) {
+  const texto = limpiar(valor);
+  return texto.length > max ? `${texto.slice(0, max)}...` : texto;
+}
+
+function campo(row, nombres) {
+  for (const nombre of nombres) {
+    if (row[nombre] !== undefined && row[nombre] !== null && row[nombre] !== "") return row[nombre];
+  }
+  const keys = Object.keys(row);
+  for (const nombre of nombres) {
+    const found = keys.find(k => normalizar(k) === normalizar(nombre));
+    if (found && row[found] !== undefined && row[found] !== null && row[found] !== "") return row[found];
+  }
+  return "";
+}
+
+function pct(a, b) {
+  return b > 0 ? (a / b) * 100 : 0;
+}
+
+function fechaValor(valor) {
+  const texto = limpiar(valor);
+  if (!texto) return null;
+  const iso = texto.replace(" ", "T");
+  const fecha = new Date(iso);
+  if (!Number.isNaN(fecha.getTime())) return fecha;
+  const partes = texto.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2}))?/);
+  if (!partes) return null;
+  return new Date(Number(partes[3]), Number(partes[2]) - 1, Number(partes[1]), Number(partes[4] || 0), Number(partes[5] || 0));
+}
+
+function fechaCorta(fecha) {
+  if (!fecha) return "";
+  return fecha.toLocaleDateString("es-PE", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+function horaFecha(fecha) {
+  return fecha ? fecha.getHours() : null;
+}
+
+function turnoPorHora(hora) {
+  if (hora === null || hora === undefined) return "SIN TURNO";
+  if (hora >= 7 && hora < 16) return "DIA";
+  if (hora >= 16 && hora < 21) return "TARDE";
+  return "NOCHE";
+}
+
+function descripcionIniciaConFruta(descripcion) {
+  const texto = normalizar(descripcion).replace(/[^A-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+  const frutas = [
+    "FRUTA", "FRUTAS", "PLATANO", "BANANO", "BANANA", "PERA", "PERAS", "MANZANA", "MANZANAS",
+    "NARANJA", "NARANJAS", "MANDARINA", "MANDARINAS", "LIMON", "LIMONES", "FRESA", "FRESAS",
+    "UVA", "UVAS", "MANGO", "MANGOS", "PINA", "PINIA", "PALTA", "PALTAS", "SANDIA",
+    "MELON", "PAPAYA", "DURAZNO", "GRANADILLA", "MARACUYA", "KIWI", "CIRUELA", "CHIRIMOYA"
+  ].map(normalizar);
+  return frutas.some(fruta => texto === fruta || texto.startsWith(`${fruta} `));
+}
+
+function pickingEsValido(row) {
+  if (normalizar(row.lpn).startsWith("ILE")) return false;
+  if (descripcionIniciaConFruta(row.descripcion)) return false;
+  return true;
+}
+
+function modeloPicking() {
+  return (dataPicking || []).map((r, index) => {
+    const fecha = fechaValor(campo(r, ["FECHA PICK", "FECHA_PICK", "Fecha Pick", "FECHA"]));
+    const hora = horaFecha(fecha);
+    const destino = limpiar(campo(r, ["DESTINO", "Cod Destino"]));
+    const local = limpiar(campo(r, ["LOCAL", "TIENDA", "Nombre Destino"])) || "SIN LOCAL";
+    return {
+      index,
+      centro: limpiar(campo(r, ["CENTRO DISTRIBUCION", "CD"])),
+      destino,
+      local,
+      tiendaKey: destino ? `${destino} | ${local}` : local,
+      orden: limpiar(campo(r, ["NRO ORDEN", "ORDEN"])),
+      tipo: limpiar(campo(r, ["TIPO ASGIN", "TIPO ASIGN", "TIPO_ASGIN"])) || "SIN TIPO",
+      lpn: limpiar(campo(r, ["NRO LPN", "LPN"])),
+      carton: limpiar(campo(r, ["NRO CARTON", "CARTON"])),
+      codigo: limpiar(campo(r, ["CODIGO", "PRODUCTO"])),
+      codAlterno: limpiar(campo(r, ["COD ALTERN", "COD ALTER", "COD_ALTERN"])),
+      descripcion: limpiar(campo(r, ["DESCRIPCION", "Descripcion"])),
+      usuario: limpiar(campo(r, ["USUARIO PICKING", "USUARIO", "OPERADOR"])) || "SIN USUARIO",
+      bultos: num(campo(r, ["BULTOS", "Bultos"])),
+      fecha,
+      fechaTexto: fechaCorta(fecha),
+      hora,
+      turno: turnoPorHora(hora),
+      raw: r
+    };
+  }).filter(pickingEsValido);
+}
+
+function agruparSum(data, fn, valueFn) {
+  const mapa = new Map();
+  data.forEach(r => {
+    const key = fn(r) || "SIN DATO";
+    if (!mapa.has(key)) mapa.set(key, { label: key, registros: 0, valor: 0 });
+    const item = mapa.get(key);
+    item.registros += 1;
+    item.valor += valueFn(r);
+  });
+  return Array.from(mapa.values()).sort((a, b) => b.valor - a.valor || b.registros - a.registros);
+}
+
+function opcionesFiltro(data, fn) {
+  return Array.from(new Set(data.map(fn).filter(Boolean))).sort((a, b) => String(a).localeCompare(String(b)));
+}
+
+function selectFiltro(id, label, opciones, valor) {
+  return `
+    <label class="filter-label">${label}
+      <select id="${id}" onchange="renderPicking()">
+        <option value="">Todos</option>
+        ${opciones.map(op => `<option value="${op}" ${op === valor ? "selected" : ""}>${op}</option>`).join("")}
+      </select>
+    </label>
+  `;
+}
+
+function filtrosPicking(data) {
+  const turno = limpiar(document.getElementById("filtroTurnoPicking")?.value);
+  const usuario = limpiar(document.getElementById("filtroUsuarioPicking")?.value);
+  const tipo = limpiar(document.getElementById("filtroTipoPicking")?.value);
+  const local = limpiar(document.getElementById("filtroLocalPicking")?.value);
+  const q = limpiar(document.getElementById("filtroBuscarPicking")?.value).toLowerCase();
+  return data.filter(r => {
+    if (turno && r.turno !== turno) return false;
+    if (usuario && r.usuario !== usuario) return false;
+    if (tipo && r.tipo !== tipo) return false;
+    if (local && r.tiendaKey !== local) return false;
+    if (q && ![r.destino, r.local, r.tiendaKey, r.usuario, r.tipo, r.lpn, r.codigo, r.codAlterno, r.descripcion, r.orden].join(" ").toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
+
+function lineaHoras(data) {
+  const porHora = new Map();
+  for (let h = 0; h < 24; h++) porHora.set(h, 0);
+  data.forEach(r => {
+    if (r.hora !== null && r.hora !== undefined) porHora.set(r.hora, (porHora.get(r.hora) || 0) + r.bultos);
+  });
+  const puntos = Array.from(porHora.entries()).filter(([, valor]) => valor > 0);
+  const max = Math.max(...puntos.map(([, valor]) => valor), 1);
+  const coords = puntos.map(([hora, valor], i) => {
+    const x = puntos.length === 1 ? 50 : (i / (puntos.length - 1)) * 100;
+    const y = 88 - (valor / max) * 76;
+    return { hora, valor, x, y };
+  });
+  const poly = coords.map(p => `${p.x},${p.y}`).join(" ");
+  return `
+    <div class="line-chart">
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+        <line x1="0" y1="88" x2="100" y2="88"></line>
+        <line x1="0" y1="62" x2="100" y2="62"></line>
+        <line x1="0" y1="36" x2="100" y2="36"></line>
+        <polyline points="${poly}"></polyline>
+      </svg>
+      <div class="line-axis">
+        ${coords.map(p => `<span><b>${p.hora}</b><small>${fmt(p.valor)}</small></span>`).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function verPicking() {
+  const data = modeloPicking();
+  const filtros = {
+    turno: limpiar(document.getElementById("filtroTurnoPicking")?.value),
+    usuario: limpiar(document.getElementById("filtroUsuarioPicking")?.value),
+    tipo: limpiar(document.getElementById("filtroTipoPicking")?.value),
+    local: limpiar(document.getElementById("filtroLocalPicking")?.value)
+  };
+
+  document.getElementById("modulo").innerHTML = `
+    <section class="hero picking-hero">
+      <div>
+        <span>Reporte operativo</span>
+        <h2>Picking</h2>
+        <p>Productividad por usuario, turno, hora y tienda destino.</p>
+      </div>
+      <div class="hero-metric">
+        <strong id="pickingHeroTotal">0</strong>
+        <span>Bultos picking</span>
+      </div>
+    </section>
+
+    <section class="filter-panel">
+      ${selectFiltro("filtroTurnoPicking", "Turno", opcionesFiltro(data, r => r.turno), filtros.turno)}
+      ${selectFiltro("filtroUsuarioPicking", "Usuario", opcionesFiltro(data, r => r.usuario), filtros.usuario)}
+      ${selectFiltro("filtroTipoPicking", "Tipo asignacion", opcionesFiltro(data, r => r.tipo), filtros.tipo)}
+      ${selectFiltro("filtroLocalPicking", "Local", opcionesFiltro(data, r => r.tiendaKey), filtros.local)}
+      <label class="filter-label grow">Busqueda
+        <input id="filtroBuscarPicking" oninput="renderPicking()" placeholder="LPN, codigo, usuario, local o descripcion...">
+      </label>
+    </section>
+
+    <div id="pickingVista"></div>
+  `;
+  renderPicking();
+}
+
+function renderPicking() {
+  const data = filtrosPicking(modeloPicking());
+  const total = data.reduce((a, b) => a + b.bultos, 0);
+  const usuarios = agruparSum(data, r => r.usuario, r => r.bultos);
+  const locales = agruparSum(data, r => r.tiendaKey, r => r.bultos);
+  const tipos = agruparSum(data, r => r.tipo, r => r.bultos);
+  const turnos = agruparSum(data, r => r.turno, r => r.bultos);
+  const productos = agruparSum(data, r => `${r.codigo} | ${r.descripcion || "SIN DESCRIPCION"}`, r => r.bultos);
+  const promedioHora = promedioPickingPorHora(data);
+  const lpns = new Set(data.map(r => r.lpn).filter(Boolean)).size;
+  const ordenes = new Set(data.map(r => r.orden).filter(Boolean)).size;
+  const promedioUsuario = usuarios.length ? total / usuarios.length : 0;
+  const promedioPorHora = promedioHora.length ? total / promedioHora.length : 0;
+  const horaPico = agruparSum(data.filter(r => r.hora !== null), r => `${String(r.hora).padStart(2, "0")}:00`, r => r.bultos)[0];
+  const fullContainer = data.filter(r => normalizar(r.tipo) === "FULL-CONTAINER").reduce((a, b) => a + b.bultos, 0);
+  const bultosDia = turnos.find(x => x.label === "DIA")?.valor || 0;
+  const bultosTarde = turnos.find(x => x.label === "TARDE")?.valor || 0;
+  const bultosNoche = turnos.find(x => x.label === "NOCHE")?.valor || 0;
+  const hero = document.getElementById("pickingHeroTotal");
+  if (hero) hero.textContent = fmt(total);
+
+  document.getElementById("pickingVista").innerHTML = `
+    <section class="kpi-grid">
+      ${kpi("Bultos", fmt(total), "Total filtrado", "accent")}
+      ${kpi("Turno dia", fmt(bultosDia), "07:00 a 15:59", "accent")}
+      ${kpi("Turno tarde", fmt(bultosTarde), "16:00 a 20:59")}
+      ${kpi("Turno noche", fmt(bultosNoche), "21:00 a 06:59")}
+      ${kpi("Hora pico", horaPico?.label || "-", fmt(horaPico?.valor || 0), "warn")}
+      ${kpi("Prom. hora", fmt(promedioPorHora), `${fmt(promedioHora.length)} horas activas`)}
+      ${kpi("Full container", fmt(fullContainer), `${pct(fullContainer, total).toFixed(1)}% del total`, "warn")}
+    </section>
+
+    <section class="dashboard-grid">
+      <div class="card wide">
+        <div class="card-title">
+          <h2>Tendencia por hora</h2>
+          <span>${data.length} registros</span>
+        </div>
+        ${lineaHoras(data)}
+      </div>
+
+      <div class="card wide visual-suite">
+        <div class="card-title">
+          <h2>Vista grafica Picking</h2>
+          <span>Turno, tipo y tiendas principales</span>
+        </div>
+        <div class="visual-combo">
+          <div class="visual-box">
+            <h3>Turno</h3>
+            ${pieChart(turnos, total, fmt(total))}
+          </div>
+          <div class="visual-box">
+            <h3>Tipo asignacion</h3>
+            ${pieChart(tipos, total, `${tipos.length} tipos`)}
+          </div>
+          <div class="visual-box bars-box">
+            <h3>Top tiendas destino</h3>
+            ${verticalBars(locales.slice(0, 8), total)}
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Ranking usuarios</h2>
+        ${barras(usuarios.slice(0, 12), total)}
+      </div>
+
+      <div class="card">
+        <h2>Tiendas clave</h2>
+        ${metricTiles(locales.slice(0, 6), total)}
+      </div>
+
+      <div class="card wide">
+        <div class="card-title">
+          <h2>Top productos con mas demanda</h2>
+          <span>Segun bultos de picking</span>
+        </div>
+        ${barrasHorizontales(productos.slice(0, 10), total)}
+      </div>
+
+      <div class="card wide">
+        <div class="card-title">
+          <h2>Avance de picking por hora</h2>
+          <span>Bultos por hora vs promedio general</span>
+        </div>
+        ${barrasPromedioHora(promedioHora)}
+      </div>
+    </section>
+  `;
+}
+
+function exportarPickingCsv() {
+  const data = filtrosPicking(modeloPicking());
+  const headers = ["Fecha", "Turno", "Hora", "Usuario", "LPN", "Orden", "Destino", "Local", "Tipo", "Codigo", "Cod alterno", "Descripcion", "Bultos"];
+  const rows = data.map(r => [r.fechaTexto, r.turno, r.hora !== null ? `${r.hora}:00` : "", r.usuario, r.lpn, r.orden, r.destino, r.local, r.tipo, r.codigo, r.codAlterno, r.descripcion, r.bultos]);
+  descargarCsv("picking.csv", headers, rows);
+}
+
+function modeloRecepcion() {
+  return (dataRecepcion || []).map((r, index) => {
+    const asn = limpiar(campo(r, ["NRO ASN", "ASN", "Nro ASN"]));
+    const codigoProveedorBase = limpiar(campo(r, ["CODIGO PROVEE", "CODIGO PROVEEDOR", "COD PROVEEDOR"]));
+    const codigoProveedor = codigoProveedorBase || "917";
+    const nombreBase = limpiar(campo(r, ["NOM PROVEEDOR", "NOMBRE PROVEEDOR", "Proveedor"]));
+    const proveedor = nombreBase || (codigoProveedor === "917" ? "PUNTA NEGRA" : "SIN PROVEEDOR");
+    const fecha = fechaValor(campo(r, ["Fe Recepcion", "FE RECEPCION", "FECHA RECEPCION", "FECHA"]));
+    return {
+      index,
+      codigoProveedor,
+      proveedor,
+      proveedorKey: `${codigoProveedor} | ${proveedor}`,
+      asn,
+      lpn: limpiar(campo(r, ["LPN", "NRO LPN", "PALLET", "NroPallet"])),
+      codigo: limpiar(campo(r, ["CODIGO", "PRODUCTO"])),
+      codAlterno: limpiar(campo(r, ["COD ALTER", "COD ALTERN", "COD_ALTER"])),
+      descripcion: limpiar(campo(r, ["DESCRIPCION", "Descripcion"])),
+      programado: num(campo(r, ["BULTOS PROGRAMADOS", "BULTOS PROG", "PROGRAMADO"])),
+      recibido: num(campo(r, ["BULTOS RECIBIDOS", "BULTOS REC", "RECIBIDO"])),
+      usuario: limpiar(campo(r, ["USU RECEP", "USUARIO RECEPCION", "USUARIO"])) || "SIN USUARIO",
+      fecha,
+      fechaTexto: fechaCorta(fecha),
+      raw: r
+    };
+  }).filter(r => !normalizar(r.asn).startsWith("ILE"));
+}
+
+function palletsRecepcion(data) {
+  const mapa = new Map();
+  data.forEach(r => {
+    const key = r.lpn || `SIN LPN ${r.index}`;
+    if (!mapa.has(key)) {
+      mapa.set(key, {
+        lpn: r.lpn || "SIN LPN",
+        codigoProveedor: r.codigoProveedor,
+        proveedor: r.proveedor,
+        asns: new Set(),
+        codigos: new Set(),
+        recibido: 0,
+        programado: 0
+      });
+    }
+    const item = mapa.get(key);
+    if (r.asn) item.asns.add(r.asn);
+    if (r.codigo) item.codigos.add(r.codigo);
+    item.recibido += r.recibido;
+    item.programado += r.programado;
+  });
+  return Array.from(mapa.values()).map(x => ({
+    ...x,
+    tipo: x.codigos.size > 1 ? "MULTI" : "MONOPALLET",
+    totalCodigos: x.codigos.size,
+    totalAsn: x.asns.size
+  }));
+}
+
+function resumenRecepcion(data) {
+  const pallets = palletsRecepcion(data);
+  const totalProgramado = data.reduce((a, b) => a + b.programado, 0);
+  const totalRecibido = data.reduce((a, b) => a + b.recibido, 0);
+  const asnUnicos = new Set(data.map(r => r.asn).filter(Boolean)).size;
+  const pallets917 = pallets.filter(p => p.codigoProveedor === "917");
+  const data917 = data.filter(r => r.codigoProveedor === "917");
+  return {
+    pallets,
+    totalProgramado,
+    totalRecibido,
+    diferencia: totalProgramado - totalRecibido,
+    cumplimiento: pct(totalRecibido, totalProgramado),
+    asnUnicos,
+    palletsTotal: pallets.length,
+    mono: pallets.filter(p => p.tipo === "MONOPALLET").length,
+    multi: pallets.filter(p => p.tipo === "MULTI").length,
+    asn917: new Set(data917.map(r => r.asn).filter(Boolean)).size,
+    pallets917: pallets917.length,
+    mono917: pallets917.filter(p => p.tipo === "MONOPALLET").length,
+    multi917: pallets917.filter(p => p.tipo === "MULTI").length,
+    recibido917: data917.reduce((a, b) => a + b.recibido, 0)
+  };
+}
+
+function ajustesRecepcion() {
+  try {
+    return JSON.parse(localStorage.getItem("dashboard_bi_recepcion_ajustes") || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function valorAjustado(ajustes, key, calculado) {
+  const valor = num(ajustes[key]);
+  return valor > 0 ? valor : calculado;
+}
+
+function resumenRecepcionVisual(resumen) {
+  const ajustes = ajustesRecepcion();
+  const mono917 = valorAjustado(ajustes, "mono917", resumen.mono917);
+  const multi917 = valorAjustado(ajustes, "multi917", resumen.multi917);
+  return { ...resumen, mono917, multi917, ajustes };
+}
+
+function inputAjusteRecepcion(id, label, valor, calculado) {
+  return `
+    <label class="manual-field">${label}
+      <input id="${id}" type="number" min="0" step="1" value="${valor || ""}" placeholder="${fmt(calculado)}">
+    </label>
+  `;
+}
+
+function panelAjustesRecepcion(resumen) {
+  const ajustes = ajustesRecepcion();
+  return `
+    <section class="manual-panel">
+      <div>
+        <h2>Ajuste 917 / Punta Negra</h2>
+        <p>La data no trae el pallet real. Ajusta solo mono y multi de 917; si queda vacio, se usa el calculo por LPN.</p>
+      </div>
+      <div class="manual-grid">
+        ${inputAjusteRecepcion("ajMono917", "917 monopallet", ajustes.mono917, resumen.mono917)}
+        ${inputAjusteRecepcion("ajMulti917", "917 multi", ajustes.multi917, resumen.multi917)}
+      </div>
+      <div class="manual-actions">
+        <button onclick="guardarAjustesRecepcion()">Aplicar</button>
+        <button class="ghost" onclick="limpiarAjustesRecepcion()">Usar calculado</button>
+      </div>
+    </section>
+  `;
+}
+
+function guardarAjustesRecepcion() {
+  const ajustes = {
+    mono917: limpiar(document.getElementById("ajMono917")?.value),
+    multi917: limpiar(document.getElementById("ajMulti917")?.value)
+  };
+  localStorage.setItem("dashboard_bi_recepcion_ajustes", JSON.stringify(ajustes));
+  verRecepcion();
+}
+
+function limpiarAjustesRecepcion() {
+  localStorage.removeItem("dashboard_bi_recepcion_ajustes");
+  verRecepcion();
+}
+
+function resumenProveedoresRecepcion(data) {
+  const mapa = new Map();
+  data.forEach(r => {
+    const key = r.proveedorKey;
+    if (!mapa.has(key)) {
+      mapa.set(key, {
+        codigo: r.codigoProveedor,
+        proveedor: r.proveedor,
+        programado: 0,
+        recibido: 0,
+        registros: 0,
+        asns: new Set()
+      });
+    }
+    const item = mapa.get(key);
+    item.programado += r.programado;
+    item.recibido += r.recibido;
+    item.registros += 1;
+    if (r.asn) item.asns.add(r.asn);
+  });
+  return Array.from(mapa.values()).map(x => ({
+    ...x,
+    diferencia: x.programado - x.recibido,
+    cumplimiento: pct(x.recibido, x.programado),
+    asnUnicos: x.asns.size
+  })).sort((a, b) => b.recibido - a.recibido);
+}
+
+function tablaProveedoresRecepcion(proveedores, totalRecibido) {
+  const max = Math.max(...proveedores.map(x => x.recibido), 1);
+  return `
+    <div class="provider-summary">
+      ${proveedores.map(p => `
+        <article class="provider-row">
+          <div>
+            <strong>${p.codigo} | ${p.proveedor}</strong>
+            <span>${fmt(p.asnUnicos)} ASN | ${fmt(p.registros)} registros</span>
+          </div>
+          <div class="provider-values">
+            <b>${fmt(p.recibido)}</b>
+            <span>Recibido</span>
+          </div>
+          <div class="provider-values">
+            <b>${fmt(p.programado)}</b>
+            <span>Programado</span>
+          </div>
+          <div class="provider-values ${p.diferencia ? "warn-text" : ""}">
+            <b>${fmt(p.diferencia)}</b>
+            <span>Diferencia</span>
+          </div>
+          <div class="provider-progress">
+            <div><i style="width:${pct(p.recibido, max)}%"></i></div>
+            <span>${p.cumplimiento.toFixed(1)}% cump. | ${pct(p.recibido, totalRecibido).toFixed(1)}% part.</span>
+          </div>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function verRecepcion() {
+  const data = modeloRecepcion();
+  const resumenCalculado = resumenRecepcion(data);
+  const resumen = resumenRecepcionVisual(resumenCalculado);
+  const proveedoresDetalle = resumenProveedoresRecepcion(data);
+  const proveedores = proveedoresDetalle.map(p => ({ label: `${p.codigo} | ${p.proveedor}`, valor: p.recibido, registros: p.registros }));
+  const usuarios = agruparSum(data, r => r.usuario, r => r.recibido);
+  const tipoPallets917 = [
+    { label: "917 MONOPALLET", valor: resumen.mono917, registros: resumen.mono917 },
+    { label: "917 MULTI", valor: resumen.multi917, registros: resumen.multi917 }
+  ];
+
+  document.getElementById("modulo").innerHTML = `
+    <section class="hero recepcion-hero">
+      <div>
+        <span>Reporte operativo</span>
+        <h2>Recepcion</h2>
+        <p>Recepcion general por proveedor y foco logistico en 917 / Punta Negra.</p>
+      </div>
+      <div class="hero-metric">
+        <strong>${fmt(resumen.totalRecibido)}</strong>
+        <span>Bultos recibidos</span>
+      </div>
+    </section>
+
+    <section class="kpi-grid">
+      ${kpi("Total recibido", fmt(resumen.totalRecibido), "General", "accent")}
+      ${kpi("Total programado", fmt(resumen.totalProgramado), "General")}
+      ${kpi("Diferencia", fmt(resumen.diferencia), "Programado - recibido", resumen.diferencia ? "warn" : "")}
+      ${kpi("Cumplimiento", `${resumen.cumplimiento.toFixed(1)}%`, "General")}
+      ${kpi("ASN 917", fmt(resumen.asn917), "PUNTA NEGRA")}
+      ${kpi("Paleteros 917", fmt(resumen.pallets917), "Calculado por LPN")}
+      ${kpi("917 mono", fmt(resumen.mono917), "PUNTA NEGRA")}
+      ${kpi("917 multi", fmt(resumen.multi917), "PUNTA NEGRA", "warn")}
+    </section>
+
+    ${panelAjustesRecepcion(resumenCalculado)}
+
+    <section class="dashboard-grid">
+      <div class="card wide visual-suite">
+        <div class="card-title">
+          <h2>Vista grafica Recepcion</h2>
+          <span>General y proveedor 917</span>
+        </div>
+        <div class="visual-combo">
+          <div class="visual-box">
+            <h3>Bultos por proveedor</h3>
+            ${pieChart(proveedores, resumen.totalRecibido, fmt(resumen.totalRecibido))}
+          </div>
+          <div class="visual-box">
+            <h3>Cumplimiento general</h3>
+            ${pieChart([
+              { label: "Recibido", valor: resumen.totalRecibido, registros: data.length },
+              { label: "Pendiente", valor: Math.max(0, resumen.diferencia), registros: 0 }
+            ], Math.max(resumen.totalProgramado, resumen.totalRecibido), `${resumen.cumplimiento.toFixed(1)}%`)}
+          </div>
+          <div class="visual-box">
+            <h3>917 mono/multi</h3>
+            ${pieChart(tipoPallets917, resumen.pallets917, fmt(resumen.pallets917))}
+          </div>
+        </div>
+      </div>
+
+      <div class="card wide">
+        <div class="card-title">
+          <h2>Resumen visual por proveedor</h2>
+          <span>Programado, recibido, diferencia y cumplimiento</span>
+        </div>
+        ${tablaProveedoresRecepcion(proveedoresDetalle, resumen.totalRecibido)}
+      </div>
+
+      <div class="card">
+        <h2>Usuarios recepcion</h2>
+        ${barras(usuarios.slice(0, 8), resumen.totalRecibido)}
+      </div>
+    </section>
+  `;
+}
+
+function verRecepcionRanking() {
+  const data = modeloRecepcion();
+  const resumen = resumenRecepcion(data);
+  const proveedores = agruparSum(data, r => r.proveedorKey, r => r.recibido);
+  const usuarios = agruparSum(data, r => r.usuario, r => r.recibido);
+  const productos = agruparSum(data, r => `${r.codigo} | ${r.descripcion || "SIN DESCRIPCION"}`, r => r.recibido);
+  const pallets = resumen.pallets
+    .sort((a, b) => b.recibido - a.recibido)
+    .slice(0, 10)
+    .map(p => ({ label: `${p.lpn} | ${p.tipo}`, valor: p.recibido, registros: p.totalCodigos }));
+
+  document.getElementById("modulo").innerHTML = `
+    <section class="hero recepcion-hero">
+      <div>
+        <span>Ranking operativo</span>
+        <h2>Recepcion</h2>
+        <p>Proveedores, usuarios, productos y pallets con mayor volumen recibido.</p>
+      </div>
+      <div class="hero-metric">
+        <strong>${fmt(resumen.totalRecibido)}</strong>
+        <span>Bultos recibidos</span>
+      </div>
+    </section>
+
+    <section class="dashboard-grid">
+      <div class="card">
+        <h2>Ranking proveedores</h2>
+        ${barras(proveedores.slice(0, 10), resumen.totalRecibido)}
+      </div>
+      <div class="card">
+        <h2>Ranking usuarios</h2>
+        ${barras(usuarios.slice(0, 10), resumen.totalRecibido)}
+      </div>
+      <div class="card wide">
+        <div class="card-title">
+          <h2>Productos recibidos con mas volumen</h2>
+          <span>Top 10 por bultos</span>
+        </div>
+        ${barrasHorizontales(productos.slice(0, 10), resumen.totalRecibido)}
+      </div>
+      <div class="card wide">
+        <div class="card-title">
+          <h2>Pallets con mayor volumen</h2>
+          <span>Incluye tipo mono/multi</span>
+        </div>
+        ${barrasHorizontales(pallets, resumen.totalRecibido)}
+      </div>
+    </section>
+  `;
+}
+
+function turnoDespachoPorHora(hora) {
+  if (hora === null || hora === undefined) return "SIN TURNO";
+  return hora >= 7 && hora < 21 ? "DIA" : "NOCHE";
+}
+
+function modeloDespacho() {
+  return (dataDespacho || []).map((r, index) => {
+    const fecha = fechaValor(campo(r, ["Fe y Hr de Despacho", "FECHA DESPACHO", "Fecha Despacho", "Fecha Modif"]));
+    const horaRaw = campo(r, ["Hora", "HORA"]);
+    const hora = horaRaw !== "" ? Math.trunc(num(horaRaw)) : horaFecha(fecha);
+    const destino = limpiar(campo(r, ["Destino", "DESTINO", "Cod Destino"]));
+    const local = limpiar(campo(r, ["Nombre Destino", "LOCAL", "TIENDA"])) || "SIN DESTINO";
+    return {
+      index,
+      sucursal: limpiar(campo(r, ["Sucursal", "CENTRO DISTRIBUCION", "CD"])),
+      pallet: limpiar(campo(r, ["NroPallet", "NRO PALLET", "PALLET"])),
+      lpn: limpiar(campo(r, ["Nro LPNs", "NRO LPNS", "LPN"])),
+      estado: limpiar(campo(r, ["Estado LPN", "ESTADO LPN"])) || "SIN ESTADO",
+      producto: limpiar(campo(r, ["Producto", "CODIGO", "PRODUCTO"])),
+      bultos: num(campo(r, ["Bultos", "BULTOS"])),
+      carga: limpiar(campo(r, ["Nro Carga", "NRO CARGA", "CARGA"])),
+      destino,
+      local,
+      destinoKey: destino ? `${destino} | ${local}` : local,
+      fecha,
+      fechaTexto: fechaCorta(fecha),
+      hora,
+      turno: turnoDespachoPorHora(hora),
+      jerarquia: limpiar(campo(r, ["Jerarq1", "JERARQ1", "JERARQUIA"])) || "SIN JERARQUIA",
+      tipoDistribucion: limpiar(campo(r, ["Tipo Distribucion", "TIPO DISTRIBUCION"])),
+      orden: limpiar(campo(r, ["Nro Orden", "NRO ORDEN"]))
+    };
+  }).filter(r => r.bultos > 0);
+}
+
+function palletsDespacho(data) {
+  const mapa = new Map();
+  data.forEach(r => {
+    if (!r.pallet) return;
+    const key = r.pallet;
+    if (!mapa.has(key)) {
+      mapa.set(key, { pallet: r.pallet, bultos: 0, productos: new Set(), destinos: new Set(), cargas: new Set(), turno: r.turno });
+    }
+    const item = mapa.get(key);
+    item.bultos += r.bultos;
+    if (r.producto) item.productos.add(r.producto);
+    if (r.destinoKey) item.destinos.add(r.destinoKey);
+    if (r.carga) item.cargas.add(r.carga);
+  });
+  return Array.from(mapa.values()).map(p => ({
+    ...p,
+    tipo: p.productos.size > 1 ? "MULTISKU" : "MONOPALLET",
+    totalProductos: p.productos.size,
+    totalDestinos: p.destinos.size
+  }));
+}
+
+function resumenDespacho(data) {
+  const pallets = palletsDespacho(data);
+  const totalBultos = data.reduce((a, b) => a + b.bultos, 0);
+  const cargas = new Set(data.map(r => r.carga).filter(Boolean)).size;
+  const turnos = agruparSum(data, r => r.turno, r => r.bultos);
+  const porTurno = {};
+  ["DIA", "NOCHE"].forEach(turno => {
+    const rows = data.filter(r => r.turno === turno);
+    const palletsTurno = palletsDespacho(rows);
+    porTurno[turno] = {
+      bultos: rows.reduce((a, b) => a + b.bultos, 0),
+      pallets: palletsTurno.length,
+      viajes: new Set(rows.map(r => r.carga).filter(Boolean)).size,
+      bultosPallet: rows.reduce((a, b) => a + b.bultos, 0) / Math.max(palletsTurno.length, 1)
+    };
+  });
+  return {
+    pallets,
+    totalBultos,
+    palletsTotal: pallets.length,
+    viajes: cargas,
+    bultosPallet: totalBultos / Math.max(pallets.length, 1),
+    mono: pallets.filter(p => p.tipo === "MONOPALLET").length,
+    multi: pallets.filter(p => p.tipo === "MULTISKU").length,
+    turnos,
+    porTurno
+  };
+}
+
+function turnoDespachoCards(resumen) {
+  return `
+    <div class="shift-grid">
+      ${["DIA", "NOCHE"].map(turno => {
+        const x = resumen.porTurno[turno];
+        return `
+          <article class="shift-card">
+            <span>${turno}</span>
+            <strong>${fmt(x.bultos)}</strong>
+            <div class="shift-metrics">
+              <b>${fmt(x.pallets)}<small>Pallets</small></b>
+              <b>${fmt(x.viajes)}<small>Viajes</small></b>
+              <b>${fmt(x.bultosPallet)}<small>Bultos x pallet</small></b>
+            </div>
+          </article>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function verDespacho() {
+  const data = modeloDespacho();
+  const resumen = resumenDespacho(data);
+  const destinos = agruparSum(data, r => r.destinoKey, r => r.bultos);
+  const jerarquias = agruparSum(data, r => r.jerarquia, r => r.bultos);
+  const cargas = agruparSum(data, r => r.carga || "SIN CARGA", r => r.bultos);
+  const destinosUnicos = new Set(data.map(r => r.destinoKey).filter(Boolean)).size;
+  const cargaPrincipal = cargas[0];
+
+  document.getElementById("modulo").innerHTML = `
+    <section class="hero despacho-hero">
+      <div>
+        <span>Reporte operativo</span>
+        <h2>Despacho</h2>
+        <p>Pallets, viajes, bultos por pallet, turnos y destinos despachados.</p>
+      </div>
+      <div class="hero-metric">
+        <strong>${fmt(resumen.totalBultos)}</strong>
+        <span>Bultos despachados</span>
+      </div>
+    </section>
+
+    <section class="kpi-grid">
+      ${kpi("Bultos total", fmt(resumen.totalBultos), "General", "accent")}
+      ${kpi("Pallets", fmt(resumen.palletsTotal))}
+      ${kpi("Viajes", fmt(resumen.viajes))}
+      ${kpi("Bultos x pallet", fmt(resumen.bultosPallet))}
+      ${kpi("Destinos", fmt(destinosUnicos))}
+      ${kpi("Carga principal", fmt(cargaPrincipal?.valor || 0), corto(cargaPrincipal?.label || "-"), "warn")}
+    </section>
+
+    ${turnoDespachoCards(resumen)}
+
+    <section class="dashboard-grid">
+      <div class="card wide visual-suite">
+        <div class="card-title">
+          <h2>Vista grafica Despacho</h2>
+          <span>Turno, pallets y principales destinos</span>
+        </div>
+        <div class="visual-combo">
+          <div class="visual-box">
+            <h3>Bultos por turno</h3>
+            ${pieChart(resumen.turnos, resumen.totalBultos, fmt(resumen.totalBultos))}
+          </div>
+          <div class="visual-box">
+            <h3>Bultos por jerarquia</h3>
+            ${pieChart(jerarquias.slice(0, 6), resumen.totalBultos, fmt(resumen.totalBultos))}
+          </div>
+          <div class="visual-box bars-box">
+            <h3>Top destinos</h3>
+            ${verticalBars(destinos.slice(0, 8), resumen.totalBultos)}
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Jerarquias</h2>
+        ${barras(jerarquias.slice(0, 8), resumen.totalBultos)}
+      </div>
+
+      <div class="card">
+        <h2>Destinos clave</h2>
+        ${metricTiles(destinos.slice(0, 6), resumen.totalBultos)}
+      </div>
+    </section>
+  `;
+}
+
+function verDespachoRanking() {
+  const data = modeloDespacho();
+  const resumen = resumenDespacho(data);
+  const destinos = agruparSum(data, r => r.destinoKey, r => r.bultos);
+  const jerarquias = agruparSum(data, r => r.jerarquia, r => r.bultos);
+  const cargas = agruparSum(data, r => r.carga || "SIN CARGA", r => r.bultos);
+  const pallets = resumen.pallets
+    .sort((a, b) => b.bultos - a.bultos)
+    .slice(0, 10)
+    .map(p => ({ label: `${p.pallet} | ${p.tipo}`, valor: p.bultos, registros: p.totalProductos }));
+
+  document.getElementById("modulo").innerHTML = `
+    <section class="hero despacho-hero">
+      <div>
+        <span>Ranking operativo</span>
+        <h2>Despacho</h2>
+        <p>Destinos, jerarquias, cargas y pallets con mayor volumen.</p>
+      </div>
+      <div class="hero-metric">
+        <strong>${fmt(resumen.totalBultos)}</strong>
+        <span>Bultos despachados</span>
+      </div>
+    </section>
+
+    <section class="dashboard-grid">
+      <div class="card">
+        <h2>Ranking destinos</h2>
+        ${barras(destinos.slice(0, 12), resumen.totalBultos)}
+      </div>
+      <div class="card">
+        <h2>Ranking jerarquias</h2>
+        ${barras(jerarquias.slice(0, 12), resumen.totalBultos)}
+      </div>
+      <div class="card wide">
+        <div class="card-title">
+          <h2>Cargas con mayor volumen</h2>
+          <span>Top por bultos</span>
+        </div>
+        ${barrasHorizontales(cargas.slice(0, 10), resumen.totalBultos)}
+      </div>
+      <div class="card wide">
+        <div class="card-title">
+          <h2>Pallets con mayor volumen</h2>
+          <span>Incluye mono/multisku</span>
+        </div>
+        ${barrasHorizontales(pallets, resumen.totalBultos)}
+      </div>
+    </section>
+  `;
+}
+
+function modeloPedido() {
+  const base = dataPedido || [];
+  const firma = `${base.length}:${JSON.stringify(base[0] || {})}:${JSON.stringify(base[base.length - 1] || {})}`;
+  if (modeloPedido.cache && modeloPedido.firma === firma) return modeloPedido.cache;
+
+  modeloPedido.firma = firma;
+  modeloPedido.cache = base.map((r, index) => {
+    const fecha = fechaValor(campo(r, ["Fecha Orden", "FECHA ORDEN", "Fecha", "FECHA"]));
+    return {
+      index,
+      fecha,
+      fechaTexto: fechaCorta(fecha),
+      orden: limpiar(campo(r, ["Nro Orden", "NRO ORDEN", "ORDEN"])),
+      estado: limpiar(campo(r, ["Estado", "ESTADO"])) || "SIN ESTADO",
+      producto: limpiar(campo(r, ["Producto", "CODIGO", "CODIGO PRODUCTO"])),
+      codAlterno: limpiar(campo(r, ["Cod Alternat", "COD ALTERNAT", "COD ALTER"])),
+      descripcion: limpiar(campo(r, ["Descripcion", "DESCRIPCION"])),
+      tienda: limpiar(campo(r, ["Tienda", "LOCAL", "Nombre Destino"])) || "SIN TIENDA",
+      pedido: num(campo(r, ["Bultos Ped", "BULTOS_PEDIDO", "BULTOS PED", "UniOrden"])),
+      asignado: num(campo(r, ["Bultos Asig", "BULTOS_ASIGNADOS", "BULTOS ASIG", "Un Asig"])),
+      picking: num(campo(r, ["Bultos Emp", "BULTOS_EMP", "BULTOS PICKING", "Un Emp"])),
+      despacho: num(campo(r, ["Bultos Env", "BULTOS_ENV", "BULTOS DESPACHO", "Un Env"])),
+      noAsignado: num(campo(r, ["Bultos No Asig", "BULTOS_NO_ASIGNADO", "BULTOS NO ASIG", "Un No asignadas"]))
+    };
+  }).filter(r => r.pedido || r.asignado || r.picking || r.despacho || r.noAsignado);
+  pedidoCache = null;
+  return modeloPedido.cache;
+}
+
+let pedidoFechaSeleccionada = "";
+let pedidoCache = null;
+
+function modeloUbicacionesNoAsignado() {
+  return (dataUbicaciones || []).map(r => ({
+    ubicacion: limpiar(campo(r, ["UBICACION", "Ubicacion"])) || "SIN UBICACION",
+    codigo: limpiar(campo(r, ["CODIGO PRODUCTO", "CODIGO", "PRODUCTO"])),
+    descripcion: limpiar(campo(r, ["DESCRIPCION", "Descripcion"])),
+    bultos: num(campo(r, ["BULTOS REQUERIDOS", "BULTOS", "Bultos"]))
+  })).filter(r => r.bultos > 0);
+}
+
+function resumenPedido(data) {
+  const pedido = data.reduce((a, b) => a + b.pedido, 0);
+  const asignado = data.reduce((a, b) => a + b.asignado, 0);
+  const picking = data.reduce((a, b) => a + b.picking, 0);
+  const despacho = data.reduce((a, b) => a + b.despacho, 0);
+  const noAsignado = data.reduce((a, b) => a + b.noAsignado, 0);
+  return {
+    pedido,
+    asignado,
+    picking,
+    despacho,
+    noAsignado,
+    asignable: pedido - noAsignado,
+    pctAsignacion: pct(asignado, pedido),
+    pctPicking: pct(picking, pedido),
+    pctDespacho: pct(despacho, pedido),
+    ordenes: new Set(data.map(r => r.orden).filter(Boolean)).size,
+    tiendas: new Set(data.map(r => r.tienda).filter(Boolean)).size,
+    productos: new Set(data.map(r => r.producto).filter(Boolean)).size
+  };
+}
+
+function pedidoPorFecha(data) {
+  const mapa = new Map();
+  data.forEach(r => {
+    const key = r.fechaTexto || "SIN FECHA";
+    if (!mapa.has(key)) mapa.set(key, { label: key, pedido: 0, asignado: 0, picking: 0, despacho: 0, noAsignado: 0, valor: 0, registros: 0 });
+    const x = mapa.get(key);
+    x.pedido += r.pedido;
+    x.asignado += r.asignado;
+    x.picking += r.picking;
+    x.despacho += r.despacho;
+    x.noAsignado += r.noAsignado;
+    x.valor += r.pedido;
+    x.registros += 1;
+  });
+  return Array.from(mapa.values()).sort((a, b) => {
+    const [da, ma, ya] = a.label.split("/").map(Number);
+    const [db, mb, yb] = b.label.split("/").map(Number);
+    return new Date(ya, ma - 1, da) - new Date(yb, mb - 1, db);
+  });
+}
+
+function cachePedido() {
+  const data = modeloPedido();
+  if (pedidoCache && pedidoCache.rows === data) return pedidoCache;
+
+  const porFecha = new Map();
+  data.forEach(r => {
+    const key = r.fechaTexto || "SIN FECHA";
+    if (!porFecha.has(key)) porFecha.set(key, []);
+    porFecha.get(key).push(r);
+  });
+
+  const fechas = pedidoPorFecha(data);
+  const resumenGeneral = resumenPedido(data);
+  const resumenPorFecha = new Map();
+  const estadosPorFecha = new Map();
+  const tiendasPorFecha = new Map();
+  porFecha.forEach((rows, fecha) => {
+    resumenPorFecha.set(fecha, resumenPedido(rows));
+    estadosPorFecha.set(fecha, agruparSum(rows, r => r.estado, r => r.pedido));
+    tiendasPorFecha.set(fecha, agruparSum(rows, r => r.tienda, r => r.pedido));
+  });
+
+  pedidoCache = {
+    rows: data,
+    porFecha,
+    fechas,
+    resumenGeneral,
+    resumenPorFecha,
+    estadosGeneral: agruparSum(data, r => r.estado, r => r.pedido),
+    tiendasGeneral: agruparSum(data, r => r.tienda, r => r.pedido),
+    estadosPorFecha,
+    tiendasPorFecha,
+    noAsignadoUbi: agruparSum(modeloUbicacionesNoAsignado(), r => r.ubicacion, r => r.bultos)
+  };
+  return pedidoCache;
+}
+
+function filtrarPedidoPorFecha(data) {
+  if (!pedidoFechaSeleccionada) return data;
+  return cachePedido().porFecha.get(pedidoFechaSeleccionada) || [];
+}
+
+function seleccionarFechaPedido(fecha) {
+  pedidoFechaSeleccionada = pedidoFechaSeleccionada === fecha ? "" : fecha;
+  renderPedidoOperacional();
+}
+
+function flujoPedidoPanel(resumen) {
+  const pasos = [
+    { label: "Pedido", valor: resumen.pedido },
+    { label: "Asignado", valor: resumen.asignado },
+    { label: "Picking", valor: resumen.picking },
+    { label: "Despacho", valor: resumen.despacho },
+    { label: "No asignado", valor: resumen.noAsignado }
+  ];
+  return `
+    <article class="visual-panel main-chart">
+      <div class="visual-panel-head">
+        <h3>FLUJO DEL PEDIDO</h3>
+        <span>${fmt(resumen.pedido)}</span>
+      </div>
+      <div class="pedido-flow">
+        ${pasos.map((p, i) => `
+          <div class="pedido-step ${i === pasos.length - 1 ? "warn" : ""}">
+            <strong>${fmt(p.valor)}</strong>
+            <span>${p.label}</span>
+            <div><i style="width:${Math.min(100, pct(p.valor, resumen.pedido))}%"></i></div>
+          </div>
+        `).join("")}
+      </div>
+    </article>
+  `;
+}
+
+function verPedidoCompacto() {
+  const cache = cachePedido();
+  const data = cache.rows;
+  const dataVista = filtrarPedidoPorFecha(data);
+  const resumen = pedidoFechaSeleccionada ? (cache.resumenPorFecha.get(pedidoFechaSeleccionada) || resumenPedido(dataVista)) : cache.resumenGeneral;
+  const resumenGeneral = cache.resumenGeneral;
+  const fechas = cache.fechas.map(x => ({ label: x.label.slice(0, 5), valor: x.pedido }));
+  const noAsignadoUbi = cache.noAsignadoUbi;
+  const fechasTabla = cache.fechas;
+
+  document.getElementById("modulo").innerHTML = `
+    <section class="visual-sheet pedido-compact">
+      <div class="visual-header pedido">
+        <h2>INDICADORES DE PEDIDO ${pedidoFechaSeleccionada ? pedidoFechaSeleccionada : ""}</h2>
+        <div class="visual-kpi-row">
+          ${visualKpi("PEDIDO", fmt(resumen.pedido))}
+          ${visualKpi("ASIGNADO", fmt(resumen.asignado))}
+          ${visualKpi("DESPACHO", fmt(resumen.despacho))}
+          ${visualKpi("NO ASIGNADO", fmt(resumen.noAsignado))}
+        </div>
+      </div>
+      <div class="visual-body">
+        <aside class="visual-side">
+          <span>ORDENES</span><b>${fmt(resumen.ordenes)}</b>
+          <span>TIENDAS</span><b>${fmt(resumen.tiendas)}</b>
+          <span>PRODUCTOS</span><b>${fmt(resumen.productos)}</b>
+        </aside>
+        ${visualLine("TENDENCIA DEL PEDIDO", fechas, resumenGeneral.pedido, "#2563eb")}
+        ${visualDonut("NO ASIGNADO", noAsignadoUbi, Math.max(resumen.noAsignado, noAsignadoUbi.reduce((a, b) => a + b.valor, 0)))}
+      </div>
+      <div class="visual-gauge-row">
+        ${visualGauge("ASIGNACION", resumen.asignado, resumen.pedido, "#22c55e")}
+        ${visualGauge("PICKING", resumen.picking, resumen.pedido, "#2563eb")}
+        ${visualGauge("DESPACHO", resumen.despacho, resumen.pedido, "#6d28d9")}
+        ${visualGauge("NO ASIG.", resumen.noAsignado, resumen.pedido, "#ef4444")}
+      </div>
+      <div class="pedido-bottom-grid">
+        <article class="visual-panel main-chart">
+          <div class="visual-panel-head">
+            <h3>RESUMEN POR FECHA</h3>
+            <span>${pedidoFechaSeleccionada ? "Filtro activo" : "Clic para filtrar"}</span>
+          </div>
+          ${tabla(["Fecha", "Pedido", "Asignado", "Picking", "Despacho", "No asignado"], fechasTabla.map(f => `
+            <tr class="clickable-row ${pedidoFechaSeleccionada === f.label ? "selected-row" : ""}" onclick="pedidoFechaSeleccionada = pedidoFechaSeleccionada === '${f.label}' ? '' : '${f.label}'; verPedidoCompacto();">
+              <td><strong>${f.label}</strong></td>
+              <td class="number">${fmt(f.pedido)}</td>
+              <td>${fmt(f.asignado)}</td>
+              <td>${fmt(f.picking)}</td>
+              <td>${fmt(f.despacho)}</td>
+              <td>${fmt(f.noAsignado)}</td>
+            </tr>
+          `))}
+        </article>
+        ${visualColumns("NO ASIGNADO POR FECHA", fechasTabla.map(x => ({ label: x.label.slice(0, 5), valor: x.noAsignado })), Math.max(resumenGeneral.noAsignado, 1), "#ef4444")}
+      </div>
+    </section>
+  `;
+}
+
+function verPedido() {
+  pedidoFechaSeleccionada = "";
+  document.getElementById("modulo").innerHTML = `<div id="pedidoOperacionalVista"></div>`;
+  renderPedidoOperacional();
+}
+
+function renderPedidoOperacional() {
+  const cache = cachePedido();
+  const data = cache.rows;
+  const dataVista = filtrarPedidoPorFecha(data);
+  const resumen = pedidoFechaSeleccionada ? (cache.resumenPorFecha.get(pedidoFechaSeleccionada) || resumenPedido(dataVista)) : cache.resumenGeneral;
+  const fechas = cache.fechas;
+  const estados = pedidoFechaSeleccionada ? (cache.estadosPorFecha.get(pedidoFechaSeleccionada) || []) : cache.estadosGeneral;
+  const tiendas = pedidoFechaSeleccionada ? (cache.tiendasPorFecha.get(pedidoFechaSeleccionada) || []) : cache.tiendasGeneral;
+  const noAsignadoUbi = cache.noAsignadoUbi;
+
+  document.getElementById("pedidoOperacionalVista").innerHTML = `
+    <section class="hero pedido-hero">
+      <div>
+        <span>Dashboard operacional</span>
+        <h2>Pedido ${pedidoFechaSeleccionada ? pedidoFechaSeleccionada : ""}</h2>
+        <p>${pedidoFechaSeleccionada ? "Vista filtrada por fecha. Clic nuevamente en la fecha para volver al general." : "Flujo pedido, asignacion, picking, despacho y no asignados."}</p>
+      </div>
+      <div class="hero-metric">
+        <strong>${fmt(resumen.pedido)}</strong>
+        <span>Bultos pedido</span>
+      </div>
+    </section>
+    <section class="kpi-grid">
+      ${kpi("Pedido", fmt(resumen.pedido), "Total", "accent")}
+      ${kpi("Asignado", fmt(resumen.asignado), `${resumen.pctAsignacion.toFixed(1)}%`)}
+      ${kpi("Picking", fmt(resumen.picking), `${resumen.pctPicking.toFixed(1)}%`)}
+      ${kpi("Despacho", fmt(resumen.despacho), `${resumen.pctDespacho.toFixed(1)}%`)}
+      ${kpi("No asignado", fmt(resumen.noAsignado), "Pendiente", "warn")}
+      ${kpi("Ordenes", fmt(resumen.ordenes))}
+    </section>
+    <section class="dashboard-grid">
+      <div class="card wide">
+        <div class="card-title"><h2>Resumen por fecha</h2><span>${fmt(fechas.length)} dias</span></div>
+        ${tabla(["Fecha", "Pedido", "Asignado", "Picking", "Despacho", "No asignado"], fechas.map(f => `
+          <tr class="clickable-row ${pedidoFechaSeleccionada === f.label ? "selected-row" : ""}" onclick="seleccionarFechaPedido('${f.label}')">
+            <td><strong>${f.label}</strong></td>
+            <td class="number">${fmt(f.pedido)}</td>
+            <td>${fmt(f.asignado)}</td>
+            <td>${fmt(f.picking)}</td>
+            <td>${fmt(f.despacho)}</td>
+            <td>${fmt(f.noAsignado)}</td>
+          </tr>
+        `))}
+      </div>
+      <div class="card">
+        <h2>Estado pedido</h2>
+        ${pieChart(estados.slice(0, 6), resumen.pedido, fmt(resumen.pedido))}
+      </div>
+      <div class="card">
+        <h2>Ubicacion no asignado</h2>
+        ${pieChart(noAsignadoUbi, Math.max(resumen.noAsignado, noAsignadoUbi.reduce((a, b) => a + b.valor, 0)), fmt(resumen.noAsignado))}
+      </div>
+      <div class="card wide">
+        <h2>Top tiendas pedido</h2>
+        ${barrasHorizontales(tiendas.slice(0, 10), resumen.pedido)}
+      </div>
+    </section>
+  `;
+}
+
+function verPedidoRanking() {
+  const data = modeloPedido();
+  const resumen = resumenPedido(data);
+  const tiendas = agruparSum(data, r => r.tienda, r => r.pedido);
+  const productos = agruparSum(data, r => `${r.producto} | ${r.descripcion || "SIN DESCRIPCION"}`, r => r.pedido);
+  const noAsignadoProductos = agruparSum(data.filter(r => r.noAsignado > 0), r => `${r.producto} | ${r.descripcion || "SIN DESCRIPCION"}`, r => r.noAsignado);
+  const estados = agruparSum(data, r => r.estado, r => r.pedido);
+
+  document.getElementById("modulo").innerHTML = `
+    <section class="hero pedido-hero">
+      <div>
+        <span>Ranking operativo</span>
+        <h2>Pedido</h2>
+        <p>Tiendas, productos, estados y no asignados con mayor volumen.</p>
+      </div>
+      <div class="hero-metric">
+        <strong>${fmt(resumen.pedido)}</strong>
+        <span>Bultos pedido</span>
+      </div>
+    </section>
+    <section class="dashboard-grid">
+      <div class="card">
+        <h2>Estados</h2>
+        ${barras(estados.slice(0, 10), resumen.pedido)}
+      </div>
+      <div class="card">
+        <h2>Top tiendas</h2>
+        ${barras(tiendas.slice(0, 10), resumen.pedido)}
+      </div>
+      <div class="card wide">
+        <div class="card-title"><h2>Productos con mas pedido</h2><span>Top 10</span></div>
+        ${barrasHorizontales(productos.slice(0, 10), resumen.pedido)}
+      </div>
+      <div class="card wide">
+        <div class="card-title"><h2>Productos no asignados</h2><span>Top 10</span></div>
+        ${barrasHorizontales(noAsignadoProductos.slice(0, 10), Math.max(resumen.noAsignado, 1))}
+      </div>
+    </section>
+  `;
+}
+
+function descargarCsv(nombre, headers, rows) {
+  const clean = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const csv = [headers.map(clean).join(";"), ...rows.map(row => row.map(clean).join(";"))].join("\n");
+  const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = nombre;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function miniBar(label, valor, total) {
+  return `
+    <div class="exec-mini-bar">
+      <span>${label}</span>
+      <div><i style="width:${Math.min(100, pct(valor, total))}%"></i></div>
+      <b>${fmt(valor)}</b>
+    </div>
+  `;
+}
+
+function executiveMetric(label, value, note = "") {
+  return `
+    <article class="exec-metric">
+      <span>${label}</span>
+      <strong>${value}</strong>
+      ${note ? `<small>${note}</small>` : ""}
+    </article>
+  `;
+}
+
+function verResumenEjecutivo() {
+  const picking = modeloPicking();
+  const recepcion = modeloRecepcion();
+  const despacho = modeloDespacho();
+
+  const totalPicking = picking.reduce((a, b) => a + b.bultos, 0);
+  const pickTurnos = agruparSum(picking, r => r.turno, r => r.bultos);
+  const pickUsuarios = agruparSum(picking, r => r.usuario, r => r.bultos);
+  const pickHoras = promedioPickingPorHora(picking);
+  const pickHoraPico = pickHoras.slice().sort((a, b) => b.valor - a.valor)[0];
+
+  const resRecepCalc = resumenRecepcion(recepcion);
+  const resRecep = resumenRecepcionVisual(resRecepCalc);
+  const recepProveedores = resumenProveedoresRecepcion(recepcion);
+
+  const resDesp = resumenDespacho(despacho);
+  const despJerarquias = agruparSum(despacho, r => r.jerarquia, r => r.bultos);
+  const diaDesp = resDesp.porTurno.DIA?.bultos || 0;
+  const nocheDesp = resDesp.porTurno.NOCHE?.bultos || 0;
+
+  document.getElementById("modulo").innerHTML = `
+    <section class="visual-sheet executive-main">
+      <div class="visual-header executive">
+        <h2>PANEL EJECUTIVO OPERACIONAL</h2>
+        <div class="visual-kpi-row">
+          ${visualKpi("PICKING", fmt(totalPicking))}
+          ${visualKpi("RECEPCION", fmt(resRecep.totalRecibido))}
+          ${visualKpi("DESPACHO", fmt(resDesp.totalBultos))}
+          ${visualKpi("FECHA", new Date().toLocaleDateString("es-PE", { day: "2-digit", month: "2-digit" }))}
+        </div>
+      </div>
+
+      <div class="executive-visual-grid">
+        <article class="visual-panel">
+          <div class="visual-panel-head">
+            <h3>PICKING</h3>
+            <span>Hora pico ${pickHoraPico?.label || "-"}</span>
+          </div>
+          ${visualLine("AVANCE POR HORA", pickHoras.map(x => ({ label: x.label, valor: x.valor })), totalPicking, "#2563eb")}
+          <div class="executive-mini-row">
+            ${miniBar("Dia", pickTurnos.find(x => x.label === "DIA")?.valor || 0, totalPicking)}
+            ${miniBar("Tarde", pickTurnos.find(x => x.label === "TARDE")?.valor || 0, totalPicking)}
+            ${miniBar("Noche", pickTurnos.find(x => x.label === "NOCHE")?.valor || 0, totalPicking)}
+          </div>
+        </article>
+
+        <article class="visual-panel">
+          <div class="visual-panel-head">
+            <h3>RECEPCION</h3>
+            <span>${resRecep.cumplimiento.toFixed(1)}% cumplimiento</span>
+          </div>
+          ${providerCompactPanel(recepProveedores)}
+        </article>
+
+        <article class="visual-panel">
+          <div class="visual-panel-head">
+            <h3>DESPACHO</h3>
+            <span>DIA vs NOCHE</span>
+          </div>
+          ${despachoTurnoPanel(resDesp)}
+        </article>
+      </div>
+
+      <div class="visual-gauge-row executive-gauges">
+        ${visualTurnoResumen("PICKING POR TURNO", pickTurnos, totalPicking)}
+        ${visualGauge("PUNTA NEGRA", resRecep.recibido917, resRecep.totalRecibido, "#2563eb")}
+        ${visualGauge("DESP DIA", diaDesp, resDesp.totalBultos, "#22c55e")}
+        ${visualGauge("DESP NOCHE", nocheDesp, resDesp.totalBultos, "#6d28d9")}
+      </div>
+    </section>
+  `;
+}
+
+function keyFecha(fecha) {
+  if (!fecha) return "";
+  const y = fecha.getFullYear();
+  const m = String(fecha.getMonth() + 1).padStart(2, "0");
+  const d = String(fecha.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function fechaDesdeKey(key) {
+  const partes = limpiar(key).split("-").map(Number);
+  if (partes.length !== 3 || partes.some(n => !Number.isFinite(n))) return null;
+  return new Date(partes[0], partes[1] - 1, partes[2]);
+}
+
+function diaNombre(fecha) {
+  return fecha ? fecha.toLocaleDateString("es-PE", { weekday: "long" }) : "";
+}
+
+function asistenciaDefault() {
+  const hoy = new Date();
+  const lunes = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate());
+  const offset = (lunes.getDay() + 6) % 7;
+  lunes.setDate(lunes.getDate() - offset);
+  return Array.from({ length: 6 }, (_, i) => {
+    const fecha = new Date(lunes);
+    fecha.setDate(lunes.getDate() + i);
+    return { fecha: keyFecha(fecha), asistencia: "" };
+  });
+}
+
+function asistenciaGeneral() {
+  try {
+    const guardado = JSON.parse(localStorage.getItem("dashboard_bi_asistencia_general") || "[]");
+    if (Array.isArray(guardado) && guardado.length) return guardado.slice(0, 6);
+  } catch {
+    return asistenciaDefault();
+  }
+  return asistenciaDefault();
+}
+
+function guardarAsistenciaGeneral() {
+  const rows = Array.from(document.querySelectorAll("[data-asistencia-row]")).map((row, index) => ({
+    fecha: limpiar(document.getElementById(`asistenciaFecha${index}`)?.value),
+    asistencia: limpiar(document.getElementById(`asistenciaValor${index}`)?.value)
+  }));
+  localStorage.setItem("dashboard_bi_asistencia_general", JSON.stringify(rows));
+  const tabla = document.getElementById("asistenciaGeneralTabla");
+  if (tabla) tabla.innerHTML = asistenciaRows(rows);
+}
+
+function asistenciaRows(rows) {
+  return rows.map((row, index) => {
+    const fecha = fechaDesdeKey(row.fecha);
+    return `
+      <tr data-asistencia-row>
+        <td><input id="asistenciaFecha${index}" type="date" value="${row.fecha || ""}" onchange="guardarAsistenciaGeneral()"></td>
+        <td><strong>${diaNombre(fecha)}</strong></td>
+        <td><input id="asistenciaValor${index}" type="number" min="0" step="1" value="${row.asistencia || ""}" oninput="guardarAsistenciaGeneral()" placeholder="0"></td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function asistenciaEditable() {
+  const rows = asistenciaGeneral();
+  return `
+    <table class="general-mini-table editable-assistance">
+      <thead><tr><th>FECHA</th><th>DIA</th><th>ASISTENCIA</th></tr></thead>
+      <tbody id="asistenciaGeneralTabla">${asistenciaRows(rows)}</tbody>
+    </table>
+  `;
+}
+
+function pedidoFechaResumenes() {
+  const data = modeloPedido();
+  const porFecha = new Map();
+  data.forEach(r => {
+    const key = keyFecha(r.fecha);
+    if (!key) return;
+    if (!porFecha.has(key)) porFecha.set(key, []);
+    porFecha.get(key).push(r);
+  });
+  const keys = Array.from(porFecha.keys()).sort((a, b) => fechaDesdeKey(a) - fechaDesdeKey(b));
+  const ultimoKey = keys[keys.length - 1] || "";
+  const fechaAnterior = fechaDesdeKey(ultimoKey);
+  if (fechaAnterior) fechaAnterior.setDate(fechaAnterior.getDate() - 1);
+  const anteriorKeyCalendario = keyFecha(fechaAnterior);
+  const anteriorKey = porFecha.has(anteriorKeyCalendario) ? anteriorKeyCalendario : (keys[keys.length - 2] || "");
+  return {
+    general: resumenPedido(data),
+    ultimoKey,
+    anteriorKey,
+    ultimo: resumenPedido(porFecha.get(ultimoKey) || []),
+    anterior: resumenPedido(porFecha.get(anteriorKey) || [])
+  };
+}
+
+function fechaReporteLabel(key) {
+  const fecha = fechaDesdeKey(key);
+  if (!fecha) return "-";
+  return `${String(fecha.getDate()).padStart(2, "0")}/${String(fecha.getMonth() + 1).padStart(2, "0")}/${fecha.getFullYear()}`;
+}
+
+function generalValueBox(valor, label, note = "", tone = "blue") {
+  return `
+    <article class="general-value-box ${tone}">
+      <strong>${valor}</strong>
+      <span>${label}</span>
+      ${note ? `<small>${note}</small>` : ""}
+    </article>
+  `;
+}
+
+function tablaRecepcionGeneral(proveedores) {
+  const rows = proveedores.slice(0, 6).map(p => `
+    <tr>
+      <td>${p.codigo}</td>
+      <td><strong>${corto(p.proveedor, 34)}</strong></td>
+      <td class="number">${fmt(p.programado)}</td>
+      <td class="number">${fmt(p.recibido)}</td>
+      <td class="general-progress">
+        <b>${p.cumplimiento.toFixed(1)}%</b>
+        <i><span style="width:${Math.min(100, p.cumplimiento)}%"></span></i>
+      </td>
+    </tr>
+  `).join("");
+  return `
+    <table class="general-mini-table">
+      <thead><tr><th>CODIGO</th><th>PROVEEDOR</th><th>PROGRAMADO</th><th>RECIBIDO</th><th>% CUMP.</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+function tablaDespachoGeneral(resumen) {
+  const dia = resumen.porTurno.DIA || { bultos: 0, pallets: 0, viajes: 0, bultosPallet: 0 };
+  const noche = resumen.porTurno.NOCHE || { bultos: 0, pallets: 0, viajes: 0, bultosPallet: 0 };
+  return `
+    <table class="general-mini-table despacho-general-table">
+      <thead><tr><th></th><th>Dia</th><th>Noche</th><th>Total</th></tr></thead>
+      <tbody>
+        <tr><td>Viajes</td><td>${fmt(dia.viajes)}</td><td>${fmt(noche.viajes)}</td><td><strong>${fmt(resumen.viajes)}</strong></td></tr>
+        <tr><td>Pallets</td><td>${fmt(dia.pallets)}</td><td>${fmt(noche.pallets)}</td><td><strong>${fmt(resumen.palletsTotal)}</strong></td></tr>
+        <tr><td>Bultos total</td><td>${fmt(dia.bultos)}</td><td>${fmt(noche.bultos)}</td><td><strong>${fmt(resumen.totalBultos)}</strong></td></tr>
+        <tr><td>Bultos x Pallet</td><td>${fmt(dia.bultosPallet)}</td><td>${fmt(noche.bultosPallet)}</td><td><strong>${fmt(resumen.bultosPallet)}</strong></td></tr>
+      </tbody>
+    </table>
+  `;
+}
+
+function verReporteGeneral() {
+  window.scrollTo({ left: 0, top: 0 });
+  const picking = modeloPicking();
+  const recepcion = modeloRecepcion();
+  const despacho = modeloDespacho();
+  const pedido = pedidoFechaResumenes();
+  const totalPicking = picking.reduce((a, b) => a + b.bultos, 0);
+  const resRecep = resumenRecepcionVisual(resumenRecepcion(recepcion));
+  const proveedores = resumenProveedoresRecepcion(recepcion);
+  const resDesp = resumenDespacho(despacho);
+
+  document.getElementById("modulo").innerHTML = `
+    <section class="general-report-sheet">
+      <h2>REPORTE GENERAL</h2>
+      <div class="general-report-grid">
+        <article class="general-block asistencia-block">
+          <h3>ASISTENCIA</h3>
+          ${asistenciaEditable()}
+        </article>
+
+        <article class="general-block recepcion-block">
+          <h3>RECEPCION</h3>
+          ${tablaRecepcionGeneral(proveedores)}
+        </article>
+
+        <aside class="general-side-kpis">
+          ${generalValueBox(fmt(resRecep.asn917), "ASN UNICOS 917", "Punta Negra", "green")}
+          ${generalValueBox(fmt(resRecep.mono917), "MONOPALLET", "917", "gold")}
+          ${generalValueBox(fmt(resRecep.multi917), "MULTISKU", "917", "red")}
+        </aside>
+
+        <article class="general-block despacho-block">
+          <h3>DESPACHO</h3>
+          ${tablaDespachoGeneral(resDesp)}
+        </article>
+
+        <article class="general-block pedido-operativo-block">
+          <h3>PICKING</h3>
+          <div class="general-stack-card">
+            ${generalValueBox(fmt(totalPicking), "TOTAL PICKING", "Data PICKING", "blue")}
+            ${generalValueBox(fmt(pedido.anterior.pedido), "BULTOS PEDIDO", `Fecha ${fechaReporteLabel(pedido.anteriorKey)}`, "blue")}
+            ${generalValueBox(fmt(pedido.anterior.asignado), "ASIGNADO", `Fecha ${fechaReporteLabel(pedido.anteriorKey)}`, "green")}
+          </div>
+        </article>
+
+        <article class="general-block pedido-block">
+          <h3>PEDIDO</h3>
+          <div class="general-date-line"><span>FECHA :</span><strong>${fechaCorta(new Date())}</strong></div>
+          <div class="general-pedido-boxes">
+            ${generalValueBox(fmt(pedido.ultimo.pedido), "BULTOS PEDIDO", "Ultima fecha", "blue")}
+            ${generalValueBox(fmt(pedido.general.noAsignado), "NO ASIGNADO", "General", "red")}
+          </div>
+        </article>
+      </div>
+    </section>
+  `;
+}
+
+function compactHeader(titulo, subtitulo, total, label) {
+  return `
+    <div class="exec-header">
+      <div>
+        <span>Reporte compacto</span>
+        <h2>${titulo}</h2>
+        <p>${subtitulo}</p>
+      </div>
+      <div class="exec-date"><strong>${fmt(total)}</strong><span>${label}</span></div>
+    </div>
+  `;
+}
+
+function compactTopList(titulo, data, total) {
+  return `
+    <article class="exec-card">
+      <div class="exec-card-head">
+        <h3>${titulo}</h3>
+        <b>${fmt(data[0]?.valor || 0)}</b>
+      </div>
+      ${data.slice(0, 6).map(x => miniBar(corto(x.label, 28), x.valor, total)).join("")}
+    </article>
+  `;
+}
+
+function visualKpi(label, value, tone = "") {
+  return `
+    <article class="visual-kpi ${tone}">
+      <span>${label}</span>
+      <strong>${value}</strong>
+    </article>
+  `;
+}
+
+function visualGauge(label, value, max, color = "#2563eb") {
+  const p = Math.max(0, Math.min(100, pct(value, max)));
+  const radio = 42;
+  const circ = Math.PI * radio;
+  const largo = (p / 100) * circ;
+  const restante = Math.max(0, circ - largo);
+  return `
+    <article class="visual-gauge">
+      <h3>${label}</h3>
+      <div class="gauge-svg-wrap">
+        <svg class="gauge-svg" viewBox="0 0 100 58" aria-hidden="true">
+          <path d="M 10 50 A 40 40 0 0 1 90 50" fill="none" stroke="#e5e7eb" stroke-width="14" stroke-linecap="butt"></path>
+          <path d="M 10 50 A 40 40 0 0 1 90 50" fill="none" stroke="${color}" stroke-width="14" stroke-dasharray="${largo} ${restante}" stroke-linecap="butt"></path>
+        </svg>
+        <strong>${p.toFixed(1)}%</strong>
+      </div>
+      <span>${fmt(value)} de ${fmt(max)}</span>
+    </article>
+  `;
+}
+
+function visualColumns(title, data, total, color = "#6d28d9") {
+  const max = Math.max(...data.map(x => x.valor), 1);
+  return `
+    <article class="visual-panel main-chart">
+      <div class="visual-panel-head">
+        <h3>${title}</h3>
+        <span>${fmt(total)}</span>
+      </div>
+      <div class="visual-columns">
+        ${data.slice(0, 10).map(x => `
+          <div class="visual-col">
+            <div><i style="height:${pct(x.valor, max)}%;background:${color}"></i></div>
+            <b>${fmt(x.valor)}</b>
+            <span>${corto(x.label, 10)}</span>
+          </div>
+        `).join("")}
+      </div>
+    </article>
+  `;
+}
+
+function visualLine(title, data, total, color = "#2563eb") {
+  const max = Math.max(...data.map(x => x.valor), 1);
+  const points = data.map((x, i) => {
+    const xPos = data.length === 1 ? 50 : (i / (data.length - 1)) * 100;
+    const yPos = 86 - (x.valor / max) * 72;
+    return { ...x, x: xPos, y: yPos };
+  });
+  const poly = points.map(p => `${p.x},${p.y}`).join(" ");
+  return `
+    <article class="visual-panel main-chart">
+      <div class="visual-panel-head">
+        <h3>${title}</h3>
+        <span>${fmt(total)}</span>
+      </div>
+      <div class="visual-line">
+        <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+          <line x1="0" y1="86" x2="100" y2="86"></line>
+          <line x1="0" y1="62" x2="100" y2="62"></line>
+          <line x1="0" y1="38" x2="100" y2="38"></line>
+          <polyline points="${poly}" style="stroke:${color}"></polyline>
+        </svg>
+        <div class="visual-line-axis">
+          ${points.map(p => `<span><b>${fmt(p.valor)}</b><small>${p.label}</small></span>`).join("")}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function visualDonut(title, data, total) {
+  return `
+    <article class="visual-panel">
+      <div class="visual-panel-head">
+        <h3>${title}</h3>
+      </div>
+      ${pieChart(data, total, fmt(total))}
+    </article>
+  `;
+}
+
+function visualTurnoResumen(title, data, total) {
+  return `
+    <article class="visual-gauge visual-turno-card">
+      <h3>${title}</h3>
+      <div class="turno-stack">
+        ${data.map(x => `
+          <div class="turno-line">
+            <span>${x.label}</span>
+            <div><i style="width:${Math.min(100, pct(x.valor, total))}%"></i></div>
+            <b>${pct(x.valor, total).toFixed(1)}%</b>
+          </div>
+        `).join("")}
+      </div>
+      <span>${fmt(total)} bultos total</span>
+    </article>
+  `;
+}
+
+function providerCompactPanel(proveedores) {
+  return `
+    <article class="visual-panel main-chart">
+      <div class="visual-panel-head">
+        <h3>PROVEEDORES</h3>
+        <span>Programado vs recibido</span>
+      </div>
+      <div class="provider-compact">
+        ${proveedores.slice(0, 6).map(p => {
+          const estado = p.diferencia === 0 ? "COMPLETO" : p.diferencia > 0 ? "FALTO" : "DE MAS";
+          return `
+            <div class="provider-compact-row ${estado === "COMPLETO" ? "ok" : "alert"}">
+              <div>
+                <strong>${p.codigo} | ${corto(p.proveedor, 28)}</strong>
+                <span>${estado} | ${p.cumplimiento.toFixed(1)}%</span>
+              </div>
+              <b>${fmt(p.recibido)}</b>
+              <small>Prog. ${fmt(p.programado)} | Dif. ${fmt(p.diferencia)}</small>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    </article>
+  `;
+}
+
+function despachoTurnoPanel(resumen) {
+  return `
+    <article class="visual-panel main-chart">
+      <div class="visual-panel-head">
+        <h3>DIA VS NOCHE</h3>
+        <span>Bultos, pallets y productividad</span>
+      </div>
+      <div class="dispatch-shifts">
+        ${["DIA", "NOCHE"].map(turno => {
+          const x = resumen.porTurno[turno];
+          return `
+            <div class="dispatch-shift-card">
+              <strong>${turno}</strong>
+              <div class="dispatch-big">${fmt(x.bultos)}</div>
+              <span>Bultos</span>
+              <div class="dispatch-mini">
+                <b>${fmt(x.pallets)}<small>Pallets</small></b>
+                <b>${fmt(x.bultosPallet)}<small>Bultos/Pallet</small></b>
+              </div>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    </article>
+  `;
+}
+
+function verPickingCompacto() {
+  const data = modeloPicking();
+  const total = data.reduce((a, b) => a + b.bultos, 0);
+  const turnos = agruparSum(data, r => r.turno, r => r.bultos);
+  const tipos = agruparSum(data, r => r.tipo, r => r.bultos);
+  const horas = promedioPickingPorHora(data);
+  const lpns = new Set(data.map(r => r.lpn).filter(Boolean)).size;
+  const usuarios = agruparSum(data, r => r.usuario, r => r.bultos);
+  const fullContainer = data.filter(r => normalizar(r.tipo) === "FULL-CONTAINER").reduce((a, b) => a + b.bultos, 0);
+  const dia = turnos.find(x => x.label === "DIA")?.valor || 0;
+  const tarde = turnos.find(x => x.label === "TARDE")?.valor || 0;
+  const noche = turnos.find(x => x.label === "NOCHE")?.valor || 0;
+  const horaPico = horas.slice().sort((a, b) => b.valor - a.valor)[0];
+
+  document.getElementById("modulo").innerHTML = `
+    <section class="visual-sheet picking-compact">
+      <div class="visual-header">
+        <h2>INDICADORES DE PICKING</h2>
+        <div class="visual-kpi-row">
+          ${visualKpi("TOTAL PICKING", fmt(total))}
+          ${visualKpi("USUARIOS", fmt(usuarios.length))}
+          ${visualKpi("LPNS", fmt(lpns))}
+          ${visualKpi("PROM. HORA", fmt(horas.length ? total / horas.length : 0))}
+        </div>
+      </div>
+      <div class="visual-body">
+        <aside class="visual-side">
+          <span>TURNO</span><b>DIA / TARDE / NOCHE</b>
+          <span>TOP USUARIO</span><b>${corto(usuarios[0]?.label || "-", 18)}</b>
+          <span>HORA PICO</span><b>${horaPico?.label || "-"} | ${fmt(horaPico?.valor || 0)}</b>
+        </aside>
+        ${visualLine("AVANCE POR HORA", horas.map(x => ({ label: x.label, valor: x.valor })), total, "#2563eb")}
+        ${visualDonut("TIPO ASIGNACION", tipos, total)}
+      </div>
+      <div class="visual-gauge-row">
+        ${visualGauge("DIA", dia, total, "#22c55e")}
+        ${visualGauge("TARDE", tarde, total, "#f59e0b")}
+        ${visualGauge("NOCHE", noche, total, "#6d28d9")}
+      </div>
+    </section>
+  `;
+}
+
+function verRecepcionCompacto() {
+  const data = modeloRecepcion();
+  const resumen = resumenRecepcionVisual(resumenRecepcion(data));
+  const proveedoresDetalle = resumenProveedoresRecepcion(data);
+  const proveedores = proveedoresDetalle.map(p => ({ label: `${p.codigo} | ${p.proveedor}`, valor: p.recibido, registros: p.registros }));
+  const foco917 = [
+    { label: "Recibido 917", valor: resumen.recibido917, registros: 0 },
+    { label: "Mono 917", valor: resumen.mono917, registros: 0 },
+    { label: "Multi 917", valor: resumen.multi917, registros: 0 }
+  ];
+
+  document.getElementById("modulo").innerHTML = `
+    <section class="visual-sheet">
+      <div class="visual-header green">
+        <h2>INDICADORES DE RECEPCION</h2>
+        <div class="visual-kpi-row">
+          ${visualKpi("RECIBIDO", fmt(resumen.totalRecibido))}
+          ${visualKpi("PROGRAMADO", fmt(resumen.totalProgramado))}
+          ${visualKpi("CUMPLIMIENTO", `${resumen.cumplimiento.toFixed(1)}%`)}
+          ${visualKpi("ASN 917", fmt(resumen.asn917))}
+        </div>
+      </div>
+      <div class="visual-body">
+        <aside class="visual-side">
+          <span>PROVEEDOR FOCO</span><b>917 PUNTA NEGRA</b>
+          <span>PALETEROS 917</span><b>${fmt(resumen.pallets917)}</b>
+          <span>MONO / MULTI</span><b>${fmt(resumen.mono917)} / ${fmt(resumen.multi917)}</b>
+        </aside>
+        ${providerCompactPanel(proveedoresDetalle)}
+        ${visualDonut("FOCO 917", foco917, Math.max(resumen.recibido917, resumen.mono917 + resumen.multi917, 1))}
+      </div>
+      <div class="visual-gauge-row">
+        ${visualGauge("CUMPLIMIENTO", resumen.totalRecibido, resumen.totalProgramado, "#22c55e")}
+        ${visualGauge("PUNTA NEGRA", resumen.recibido917, resumen.totalRecibido, "#2563eb")}
+        ${visualGauge("MONO 917", resumen.mono917, Math.max(resumen.pallets917, 1), "#f59e0b")}
+        ${visualGauge("MULTI 917", resumen.multi917, Math.max(resumen.pallets917, 1), "#ef4444")}
+      </div>
+    </section>
+  `;
+}
+
+function verDespachoCompacto() {
+  const data = modeloDespacho();
+  const resumen = resumenDespacho(data);
+  const turnos = resumen.turnos;
+  const destinos = agruparSum(data, r => r.destinoKey, r => r.bultos);
+  const jerarquias = agruparSum(data, r => r.jerarquia, r => r.bultos);
+  const dia = turnos.find(x => x.label === "DIA")?.valor || 0;
+  const noche = turnos.find(x => x.label === "NOCHE")?.valor || 0;
+
+  document.getElementById("modulo").innerHTML = `
+    <section class="visual-sheet">
+      <div class="visual-header blue">
+        <h2>INDICADORES DE DESPACHO</h2>
+        <div class="visual-kpi-row">
+          ${visualKpi("BULTOS", fmt(resumen.totalBultos))}
+          ${visualKpi("PALLETS", fmt(resumen.palletsTotal))}
+          ${visualKpi("VIAJES", fmt(resumen.viajes))}
+          ${visualKpi("BULTOS/PALLET", fmt(resumen.bultosPallet))}
+        </div>
+      </div>
+      <div class="visual-body">
+        <aside class="visual-side">
+          <span>DESTINOS</span><b>${fmt(destinos.length)}</b>
+          <span>TOP DESTINO</span><b>${corto(destinos[0]?.label || "-", 18)}</b>
+          <span>TOP JERARQUIA</span><b>${corto(jerarquias[0]?.label || "-", 18)}</b>
+        </aside>
+        ${despachoTurnoPanel(resumen)}
+        ${visualDonut("TURNO", turnos, resumen.totalBultos)}
+      </div>
+      <div class="visual-gauge-row">
+        ${visualGauge("DIA", dia, resumen.totalBultos, "#22c55e")}
+        ${visualGauge("NOCHE", noche, resumen.totalBultos, "#6d28d9")}
+        ${visualGauge("PALLETS DIA", resumen.porTurno.DIA?.pallets || 0, Math.max(resumen.palletsTotal, 1), "#f59e0b")}
+        ${visualGauge("PALLETS NOCHE", resumen.porTurno.NOCHE?.pallets || 0, Math.max(resumen.palletsTotal, 1), "#ef4444")}
+      </div>
+    </section>
+  `;
+}
+
+function modeloBI() {
+  return dataBI.map((r, index) => ({
+    index,
+    fecha: limpiar(campo(r, ["FECHA", "Fecha", "DATE"])),
+    area: limpiar(campo(r, ["AREA", "MODULO", "TIPO", "PROCESO"])) || "SIN AREA",
+    estado: limpiar(campo(r, ["ESTADO", "STATUS", "ESTADO_TAREA"])) || "SIN ESTADO",
+    usuario: limpiar(campo(r, ["USUARIO", "RESPONSABLE", "OPERADOR"])) || "SIN USUARIO",
+    categoria: limpiar(campo(r, ["CATEGORIA", "JERARQUIA", "FAMILIA", "TIPO_PRODUCTO"])) || "SIN CATEGORIA",
+    destino: limpiar(campo(r, ["DESTINO", "TIENDA", "SUCURSAL"])) || "SIN DESTINO",
+    valor: num(campo(r, ["VALOR", "BULTOS", "UNIDADES", "CANTIDAD", "TOTAL", "QTY"])),
+    raw: r
+  }));
+}
+
+function kpi(label, value, note = "", clase = "") {
+  return `<article class="kpi ${clase}"><span>${label}</span><strong>${value}</strong>${note ? `<small>${note}</small>` : ""}</article>`;
+}
+
+function tabla(headers, rows, empty = "Sin datos") {
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead><tr>${headers.map(h => `<th>${h}</th>`).join("")}</tr></thead>
+        <tbody>${rows.join("") || `<tr><td colspan="${headers.length}">${empty}</td></tr>`}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function agrupar(data, fn) {
+  const mapa = new Map();
+  data.forEach(r => {
+    const key = fn(r);
+    if (!mapa.has(key)) mapa.set(key, { label: key, registros: 0, valor: 0 });
+    const item = mapa.get(key);
+    item.registros += 1;
+    item.valor += r.valor;
+  });
+  return Array.from(mapa.values()).sort((a, b) => b.valor - a.valor || b.registros - a.registros);
+}
+
+function barras(data, total) {
+  return `
+    <div class="bar-list">
+      ${data.map(x => `
+        <div class="bar-item">
+          <div><strong>${x.label}</strong><span>${fmt(x.valor)} | ${fmt(x.registros)} reg.</span></div>
+          <div class="bar"><div style="width:${Math.min(100, pct(x.valor, total))}%"></div></div>
+          <b>${pct(x.valor, total).toFixed(1)}%</b>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function donut(valor, total, label) {
+  const p = Math.min(100, pct(valor, total));
+  return `
+    <div class="donut-card">
+      <div class="donut" style="--p:${p}"></div>
+      <div>
+        <strong>${p.toFixed(1)}%</strong>
+        <span>${label}</span>
+        <small>${fmt(valor)} de ${fmt(total)}</small>
+      </div>
+    </div>
+  `;
+}
+
+function pieChart(data, total, tituloCentro = "") {
+  const colores = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2"];
+  const radio = 42;
+  const centro = 50;
+  const circ = 2 * Math.PI * radio;
+  let acumulado = 0;
+  const segmentos = data.slice(0, 6).map((x, i) => {
+    const valorPct = Math.max(0, pct(x.valor, total));
+    const largo = (valorPct / 100) * circ;
+    const gap = Math.max(0, circ - largo);
+    const offset = -((acumulado / 100) * circ);
+    acumulado += valorPct;
+    return `<circle cx="${centro}" cy="${centro}" r="${radio}" fill="none" stroke="${colores[i]}" stroke-width="16" stroke-dasharray="${largo} ${gap}" stroke-dashoffset="${offset}" transform="rotate(-90 ${centro} ${centro})"></circle>`;
+  }).join("");
+
+  return `
+    <div class="pie-layout">
+      <div class="pie-svg-wrap">
+        <svg class="pie-svg" viewBox="0 0 100 100" aria-hidden="true">
+          <circle cx="${centro}" cy="${centro}" r="${radio}" fill="none" stroke="#e2e8f0" stroke-width="16"></circle>
+          ${segmentos}
+        </svg>
+        <div class="pie-center"><strong>${tituloCentro || fmt(total)}</strong><span>Total</span></div>
+      </div>
+      <div class="legend-list">
+        ${data.slice(0, 6).map((x, i) => `
+          <div class="legend-item">
+            <i style="background:${colores[i]}"></i>
+            <span>${x.label}</span>
+            <b>${pct(x.valor, total).toFixed(1)}%</b>
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function verticalBars(data, total) {
+  const max = Math.max(...data.map(x => x.valor), 1);
+  return `
+    <div class="vertical-bars">
+      ${data.map(x => `
+        <div class="vbar-item">
+          <div class="vbar-track"><div style="height:${pct(x.valor, max)}%"></div></div>
+          <strong>${fmt(x.valor)}</strong>
+          <span>${x.label}</span>
+          <small>${pct(x.valor, total).toFixed(1)}%</small>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function metricTiles(data, total) {
+  return `
+    <div class="mini-tile-grid">
+      ${data.slice(0, 6).map(x => `
+        <article class="mini-tile">
+          <span>${x.label}</span>
+          <strong>${fmt(x.valor)}</strong>
+          <div class="mini-progress"><div style="width:${Math.min(100, pct(x.valor, total))}%"></div></div>
+          <small>${pct(x.valor, total).toFixed(1)}% del total</small>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function barrasHorizontales(data, total) {
+  const max = Math.max(...data.map(x => x.valor), 1);
+  return `
+    <div class="product-demand-grid">
+      ${data.map((x, index) => `
+        <div class="demand-row">
+          <span class="rank-badge">${index + 1}</span>
+          <div>
+            <strong>${x.label}</strong>
+            <span>${fmt(x.valor)} bultos | ${fmt(x.registros)} reg.</span>
+          </div>
+          <div class="demand-track"><div style="width:${pct(x.valor, max)}%"></div></div>
+          <b>${pct(x.valor, total).toFixed(1)}%</b>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function resumenPorDestino(data) {
+  const mapa = new Map();
+  data.forEach(r => {
+    const key = r.tiendaKey || "SIN DESTINO";
+    if (!mapa.has(key)) {
+      mapa.set(key, {
+        destino: r.destino,
+        local: r.local,
+        bultos: 0,
+        registros: 0,
+        lpns: new Set(),
+        productos: new Set()
+      });
+    }
+    const item = mapa.get(key);
+    item.bultos += r.bultos;
+    item.registros += 1;
+    if (r.lpn) item.lpns.add(r.lpn);
+    if (r.codigo) item.productos.add(r.codigo);
+  });
+  return Array.from(mapa.values())
+    .map(x => ({ ...x, totalLpns: x.lpns.size, totalProductos: x.productos.size }))
+    .sort((a, b) => b.bultos - a.bultos || b.totalLpns - a.totalLpns);
+}
+
+function promedioPickingPorHora(data) {
+  const mapa = new Map();
+  data.forEach(r => {
+    if (r.hora === null || r.hora === undefined) return;
+    const key = String(r.hora).padStart(2, "0");
+    if (!mapa.has(key)) mapa.set(key, { label: `${key}:00`, valor: 0, registros: 0 });
+    const item = mapa.get(key);
+    item.valor += r.bultos;
+    item.registros += 1;
+  });
+  return Array.from(mapa.values())
+    .sort((a, b) => Number(a.label.slice(0, 2)) - Number(b.label.slice(0, 2)));
+}
+
+function barrasPromedioHora(data) {
+  const total = data.reduce((a, b) => a + b.valor, 0);
+  const promedio = data.length ? total / data.length : 0;
+  const max = Math.max(...data.map(x => x.valor), promedio, 1);
+  return `
+    <div class="hour-summary">
+      <strong>${fmt(promedio)}</strong>
+      <span>Promedio bultos por hora activa</span>
+    </div>
+    <div class="hour-average" style="--avg:${pct(promedio, max)}%">
+      ${data.map(x => `
+        <div class="hour-average-item">
+          <div class="hour-bar"><div style="height:${pct(x.valor, max)}%"></div></div>
+          <strong>${fmt(x.valor)}</strong>
+          <span>${x.label}</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function verResumen() {
+  const data = modeloBI();
+  const total = data.reduce((a, b) => a + b.valor, 0);
+  const areas = agrupar(data, r => r.area);
+  const estados = agrupar(data, r => r.estado);
+  const destinos = agrupar(data, r => r.destino);
+  const categorias = agrupar(data, r => r.categoria);
+  const principal = areas[0];
+  const alerta = estados.find(e => normalizar(e.label).includes("ALERTA") || normalizar(e.label).includes("PEND")) || estados[0];
+
+  document.getElementById("modulo").innerHTML = `
+    <section class="hero">
+      <div>
+        <span>Vista ejecutiva</span>
+        <h2>Resumen BI</h2>
+        <p>Indicadores principales, carga por area y rankings operativos.</p>
+      </div>
+      <div class="hero-metric">
+        <strong>${fmt(total)}</strong>
+        <span>Total valor</span>
+      </div>
+    </section>
+
+    <section class="kpi-grid">
+      ${kpi("Registros", fmt(data.length))}
+      ${kpi("Areas", fmt(areas.length))}
+      ${kpi("Estados", fmt(estados.length))}
+      ${kpi("Destinos", fmt(destinos.length))}
+      ${kpi("Mayor carga", principal?.label || "-", fmt(principal?.valor || 0), "accent")}
+      ${kpi("Atencion", alerta?.label || "-", fmt(alerta?.valor || 0), "warn")}
+    </section>
+
+    <section class="dashboard-grid">
+      <div class="card wide">
+        <h2>Carga por area</h2>
+        ${barras(areas.slice(0, 8), total)}
+      </div>
+      <div class="card">
+        <h2>Estado principal</h2>
+        ${donut(estados[0]?.valor || 0, total, estados[0]?.label || "Sin estado")}
+      </div>
+      <div class="card">
+        <h2>Ranking destino</h2>
+        ${tabla(["Destino", "Registros", "Valor"], destinos.slice(0, 8).map(x => filaGrupo(x)))}
+      </div>
+      <div class="card">
+        <h2>Categorias</h2>
+        ${tabla(["Categoria", "Registros", "Valor"], categorias.slice(0, 8).map(x => filaGrupo(x)))}
+      </div>
+    </section>
+  `;
+}
+
+function filaGrupo(x) {
+  return `
+    <tr>
+      <td><strong>${x.label}</strong></td>
+      <td>${fmt(x.registros)}</td>
+      <td class="number">${fmt(x.valor)}</td>
+    </tr>
+  `;
+}
+
+function verExplorador() {
+  document.getElementById("modulo").innerHTML = `
+    <div class="section-head">
+      <h2>Explorador</h2>
+      <input class="search" id="filtroExplorador" placeholder="Buscar area, estado, destino, usuario..." oninput="renderExplorador()">
+    </div>
+    <div id="exploradorVista"></div>
+  `;
+  renderExplorador();
+}
+
+function renderExplorador() {
+  const q = limpiar(document.getElementById("filtroExplorador")?.value).toLowerCase();
+  const data = modeloBI().filter(r => !q || [r.fecha, r.area, r.estado, r.usuario, r.categoria, r.destino].join(" ").toLowerCase().includes(q));
+  document.getElementById("exploradorVista").innerHTML = tabla(["Fecha", "Area", "Estado", "Usuario", "Categoria", "Destino", "Valor"], data.slice(0, 1200).map(r => `
+    <tr>
+      <td>${r.fecha}</td>
+      <td><strong>${r.area}</strong></td>
+      <td>${r.estado}</td>
+      <td>${r.usuario}</td>
+      <td>${r.categoria}</td>
+      <td>${r.destino}</td>
+      <td class="number">${fmt(r.valor)}</td>
+    </tr>
+  `));
+}
+
+function verRanking() {
+  const data = modeloPicking();
+  const total = data.reduce((a, b) => a + b.bultos, 0);
+  const usuarios = agruparSum(data, r => r.usuario, r => r.bultos);
+  const destinos = agruparSum(data, r => r.tiendaKey, r => r.bultos);
+  const productos = agruparSum(data, r => `${r.codigo} | ${r.descripcion || "SIN DESCRIPCION"}`, r => r.bultos);
+  const tipos = agruparSum(data, r => r.tipo, r => r.bultos);
+
+  document.getElementById("modulo").innerHTML = `
+    <section class="hero ranking-hero">
+      <div>
+        <span>Ranking operativo</span>
+        <h2>Picking</h2>
+        <p>Usuarios, destinos y productos con mayor peso en la operacion.</p>
+      </div>
+      <div class="hero-metric">
+        <strong>${fmt(total)}</strong>
+        <span>Bultos analizados</span>
+      </div>
+    </section>
+
+    <section class="dashboard-grid">
+      <div class="card wide">
+        <div class="card-title">
+          <h2>Ranking usuarios</h2>
+          <span>Productividad por bultos</span>
+        </div>
+        ${barras(usuarios.slice(0, 15), total)}
+      </div>
+
+      <div class="card">
+        <h2>Participacion por tipo</h2>
+        ${pieChart(tipos, total, `${tipos.length} tipos`)}
+      </div>
+
+      <div class="card">
+        <h2>Destinos principales</h2>
+        ${metricTiles(destinos.slice(0, 6), total)}
+      </div>
+
+      <div class="card wide">
+        <div class="card-title">
+          <h2>Productos con mas demanda</h2>
+          <span>Top 10 por bultos</span>
+        </div>
+        ${barrasHorizontales(productos.slice(0, 10), total)}
+      </div>
+    </section>
+  `;
+}
+
+function verBase() {
+  const headers = Object.keys(dataBI[0] || {});
+  document.getElementById("modulo").innerHTML = `
+    <div class="section-head">
+      <h2>Base</h2>
+      <input class="search" id="filtroBase" placeholder="Buscar en la base..." oninput="renderBase()">
+    </div>
+    <div id="baseVista"></div>
+  `;
+  renderBase(headers);
+}
+
+function renderBase(headersParam) {
+  const q = limpiar(document.getElementById("filtroBase")?.value).toLowerCase();
+  const headers = headersParam || Object.keys(dataBI[0] || {});
+  const data = dataBI.filter(r => !q || Object.values(r).join(" ").toLowerCase().includes(q));
+  document.getElementById("baseVista").innerHTML = tabla(headers, data.slice(0, 1500).map(r => `
+    <tr>${headers.map(h => `<td>${limpiar(r[h])}</td>`).join("")}</tr>
+  `));
+}
+
+function exportarImagen(id, nombre) {
+  if (typeof html2canvas === "undefined") return alert("No se cargo html2canvas");
+  const el = document.getElementById(id);
+  if (!el) return alert("No se encontro la seccion");
+  html2canvas(el).then(canvas => {
+    const a = document.createElement("a");
+    a.href = canvas.toDataURL("image/png");
+    a.download = `${nombre}.png`;
+    a.click();
+  });
+}
+

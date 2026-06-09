@@ -1,0 +1,2775 @@
+let estadoAntiguos = JSON.parse(localStorage.getItem("operaciones_estadoAntiguos") || "{}");
+let modoAntiguos = "UND";
+let ubicacionReservaActiva = "";
+let detallePuntosControl = new Map();
+
+function limpiar(valor) {
+  if (valor === null || valor === undefined) return "";
+  return String(valor).trim();
+}
+
+function htmlSeguro(valor) {
+  return String(valor ?? "").replace(/[&<>"']/g, char => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  }[char]));
+}
+
+function atributoSeguro(valor) {
+  return htmlSeguro(valor);
+}
+
+function argumentoSeguro(valor) {
+  return atributoSeguro(JSON.stringify(String(valor ?? ""))
+    .replace(/</g, "\\u003C")
+    .replace(/>/g, "\\u003E")
+    .replace(/&/g, "\\u0026"));
+}
+
+function normalizar(valor) {
+  return limpiar(valor).replace(/'/g, "").replace(/\.0$/, "").replace(/\s/g, "").toUpperCase();
+}
+
+function palabrasClave(texto) {
+  return limpiar(texto)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .split(/[^A-Z0-9]+/)
+    .filter(p => p.length >= 4)
+    .filter(p => !["PRODUCTO", "UNIDAD", "CAJA", "PACK", "BOLSA", "COLOR", "TALLA"].includes(p));
+}
+
+function similitudTexto(a, b) {
+  const pa = new Set(palabrasClave(a));
+  const pb = new Set(palabrasClave(b));
+  if (!pa.size || !pb.size) return 0;
+  let comunes = 0;
+  pa.forEach(p => {
+    if (pb.has(p)) comunes += 1;
+  });
+  return comunes / Math.max(pa.size, pb.size);
+}
+
+function num(valor) {
+  const n = parseFloat(String(valor || "").replace(",", "."));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function fmt(valor) {
+  return Number(valor || 0).toLocaleString("es-PE", { maximumFractionDigits: 2 });
+}
+
+function pct(a, b) {
+  return b > 0 ? (a / b) * 100 : 0;
+}
+
+function parseFecha(valor) {
+  const txt = limpiar(valor);
+  if (!txt) return null;
+  const partes = txt.split(/[\/-]/);
+  if (partes.length !== 3) return null;
+
+  if (partes[0].length === 4) return new Date(Number(partes[0]), Number(partes[1]) - 1, Number(partes[2]));
+  return new Date(Number(partes[2]), Number(partes[1]) - 1, Number(partes[0]));
+}
+
+function diasLaboralesSinDomingos(fechaTexto, hasta = new Date()) {
+  const inicio = parseFecha(fechaTexto);
+  if (!inicio) return 0;
+
+  const actual = new Date(inicio.getFullYear(), inicio.getMonth(), inicio.getDate());
+  const fin = new Date(hasta.getFullYear(), hasta.getMonth(), hasta.getDate());
+  let dias = 0;
+
+  while (actual < fin) {
+    actual.setDate(actual.getDate() + 1);
+    if (actual.getDay() !== 0) dias += 1;
+  }
+
+  return dias;
+}
+
+function campo(row, nombres) {
+  for (const nombre of nombres) {
+    if (row[nombre] !== undefined && row[nombre] !== null && row[nombre] !== "") return row[nombre];
+  }
+  return "";
+}
+
+function ordenarUbicacion(a, b) {
+  const parse = u => {
+    const p = limpiar(u).split("-");
+    return [num(p[1]), num(p[2]), num(p[3]), num(p[4])];
+  };
+  const pa = parse(a);
+  const pb = parse(b);
+  return pa[0] - pb[0] || pa[1] - pb[1] || pa[2] - pb[2] || pa[3] - pb[3];
+}
+
+function pasilloMass(ubicacion) {
+  const partes = limpiar(ubicacion).toUpperCase().split("-");
+  if (partes[0] !== "MASS" || !partes[1]) return "";
+  return limpiar(partes[1]).padStart(2, "0");
+}
+
+function esMassPasillo10(ubicacion) {
+  return pasilloMass(ubicacion) === "10";
+}
+
+function kpi(label, value, note = "", clase = "") {
+  return `<div class="kpi ${atributoSeguro(clase)}"><span>${htmlSeguro(label)}</span><strong>${htmlSeguro(value)}</strong>${note ? `<small>${htmlSeguro(note)}</small>` : ""}</div>`;
+}
+
+function tabla(headers, rows, empty = "Sin datos") {
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead><tr>${headers.map(h => `<th>${htmlSeguro(h)}</th>`).join("")}</tr></thead>
+        <tbody>${rows.join("") || `<tr><td colspan="${headers.length}">${htmlSeguro(empty)}</td></tr>`}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function tablaConId(id, headers, rows, empty = "Sin datos") {
+  return `
+    <div class="table-wrap">
+      <table id="${atributoSeguro(id)}">
+        <thead><tr>${headers.map(h => `<th>${htmlSeguro(h)}</th>`).join("")}</tr></thead>
+        <tbody>${rows.join("") || `<tr><td colspan="${headers.length}">${htmlSeguro(empty)}</td></tr>`}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function exportarImagen(id, nombre) {
+  if (typeof html2canvas === "undefined") return alert("No se cargo html2canvas");
+  const el = document.getElementById(id);
+  if (!el) return alert("No se encontro la seccion");
+
+  html2canvas(el).then(canvas => {
+    const a = document.createElement("a");
+    a.href = canvas.toDataURL("image/png");
+    a.download = `${nombre}.png`;
+    a.click();
+  });
+}
+
+function descargarExcel(nombre, html) {
+  const blob = new Blob([prepararHtmlExcel(html)], { type: "application/vnd.ms-excel" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${nombre}.xls`;
+  a.click();
+}
+
+async function copiarTablaVisible(id) {
+  const table = document.getElementById(id);
+  if (!table) return alert("No se encontro la tabla");
+
+  const filas = Array.from(table.querySelectorAll("tr"))
+    .filter(tr => tr.offsetParent !== null)
+    .map(tr => Array.from(tr.children).map(cell => cell.innerText.trim()).join("\t"))
+    .filter(Boolean);
+
+  if (!filas.length) return alert("No hay filas visibles para copiar");
+
+  const texto = filas.join("\n");
+  try {
+    await navigator.clipboard.writeText(texto);
+  } catch (error) {
+    const area = document.createElement("textarea");
+    area.value = texto;
+    document.body.appendChild(area);
+    area.select();
+    document.execCommand("copy");
+    area.remove();
+  }
+  alert("Tabla copiada al portapapeles");
+}
+
+function exportarTablaVisible(id, nombre) {
+  const table = document.getElementById(id);
+  if (!table) return alert("No se encontro la tabla");
+
+  const clone = table.cloneNode(true);
+  Array.from(clone.querySelectorAll("tr")).forEach((tr, index) => {
+    const original = table.querySelectorAll("tr")[index];
+    if (original && original.style.display === "none") tr.remove();
+  });
+  descargarExcel(nombre, clone.outerHTML);
+}
+
+function prepararHtmlExcel(html) {
+  const css = `
+    <meta charset="UTF-8">
+    <style>
+      .excel-text { mso-number-format:"\\@"; }
+      td.excel-text { mso-number-format:"\\@"; }
+    </style>
+  `;
+
+  return css + String(html || "").replace(/<td([^>]*)>([\s\S]*?)<\/td>/gi, (match, attrs, contenido) => {
+    const texto = contenido
+      .replace(/<[^>]*>/g, "")
+      .replace(/&nbsp;/g, " ")
+      .trim();
+
+    const esCodigoLargo = /^[0-9]{10,}$/.test(texto);
+    const esCientifico = /^[0-9]+(?:\.[0-9]+)?E\+[0-9]+$/i.test(texto);
+
+    if (!esCodigoLargo && !esCientifico) return match;
+    const attrsTexto = /style\s*=/.test(attrs)
+      ? attrs.replace(/style\s*=\s*["']([^"']*)["']/i, `style="$1;mso-number-format:'\\@';"`)
+      : `${attrs} style="mso-number-format:'\\@';"`;
+    if (/class\s*=/.test(attrsTexto)) {
+      return `<td${attrsTexto.replace(/class\s*=\s*["']([^"']*)["']/i, `class="$1 excel-text"`)}>${contenido}</td>`;
+    }
+    return `<td${attrsTexto} class="excel-text">${contenido}</td>`;
+  });
+}
+
+function lpnsOperativos() {
+  return dataLPN.filter(r => ["UBICADO", "RECIBIDO"].includes(normalizar(r.ESTADO)));
+}
+
+function resumenLpn() {
+  const base = lpnsOperativos();
+  const stock = base.reduce((a, b) => a + num(b.BULTOS), 0);
+  return {
+    lpns: base.length,
+    productos: new Set(base.map(r => normalizar(r.CODIGO)).filter(Boolean)).size,
+    stock,
+    paletero: base.filter(r => limpiar(r.UBICACION) === "").length,
+    buffer: base.filter(r => limpiar(r.UBICACION).startsWith("DROP-BUFR")).length,
+    mass: base.filter(r => limpiar(r.UBICACION).toUpperCase().startsWith("MASS-")).length
+  };
+}
+
+function consolidarInventario() {
+  const mapa = new Map();
+  dataInventario.forEach(r => {
+    const codigo = normalizar(r.PRODUCTO);
+    const ubicacion = limpiar(r.UBICACION);
+    if (!codigo || !ubicacion) return;
+    const key = `${codigo}|${ubicacion}`;
+    if (!mapa.has(key)) {
+      mapa.set(key, {
+        codigo,
+        desc: r.DESCRIPCION || "",
+        ubicacion,
+        unact: 0,
+        uniAsig: 0,
+        uniMax: num(r.UNI_MAX),
+        uniMin: num(r.UNI_MIN),
+        uxb: num(r.UXB) || 1
+      });
+    }
+    const item = mapa.get(key);
+    item.unact += num(r.UNACT);
+    item.uniAsig += num(r.UNI_ASIG);
+  });
+
+  return Array.from(mapa.values()).map(r => {
+    r.disponible = Math.max(0, r.uniMax - r.unact);
+    r.futuro = Math.max(0, r.uniMax - (r.unact - r.uniAsig));
+    r.estado = r.disponible <= 0 ? "Saturado" : r.uniAsig > 0 ? "Libera" : r.unact === 0 ? "Vacio" : "Disponible";
+    return r;
+  }).sort((a, b) => ordenarUbicacion(a.ubicacion, b.ubicacion));
+}
+
+function inventarioComparable() {
+  return consolidarInventario().filter(r => !esMassPasillo10(r.ubicacion));
+}
+
+function inventarioPasillo10() {
+  return consolidarInventario().filter(r => esMassPasillo10(r.ubicacion) && r.unact > 0);
+}
+
+function estadoSemaforo(valor, amarillo, rojo, inverso = false) {
+  if (inverso) {
+    if (valor >= rojo) return "ok";
+    if (valor >= amarillo) return "warn";
+    return "danger";
+  }
+  if (valor >= rojo) return "danger";
+  if (valor >= amarillo) return "warn";
+  return "ok";
+}
+
+function semaforo(label, valor, nota, clase) {
+  return `
+    <article class="signal-card ${clase}">
+      <span>${label}</span>
+      <strong>${valor}</strong>
+      <small>${nota}</small>
+    </article>
+  `;
+}
+
+function resumenOperaciones() {
+  const lpn = resumenLpn();
+  const antiguos = calcularLpnsAntiguos();
+  const puntos = calcularPuntosControl().filter(r => r.zona !== "MASS");
+  const inv = inventarioComparable();
+  const saturadas = inv.filter(x => x.estado === "Saturado").length;
+  const libera = inv.filter(x => x.estado === "Libera").length;
+  const dinamicasLibres = dataUbicaciones.filter(x => tipoUbicacion(x) === "DINAMICA" && (!normalizar(x.PRODUCTO) || normalizar(x.PRODUCTO) === "-----------")).length;
+  const dinamicasOcupadas = dataUbicaciones.filter(x => tipoUbicacion(x) === "DINAMICA" && normalizar(x.PRODUCTO) && normalizar(x.PRODUCTO) !== "-----------").length;
+  const slotting = calcularSlotting();
+  const bloqueados = codigosProductoBloqueados();
+  const puntosCriticos = puntos.filter(x => x.antiguedad >= 7);
+  const antiguosCriticos = antiguos.filter(x => x.antiguedad >= 7);
+  const avanceAntiguos = pct(antiguos.filter(x => x.estado === "HECHO").length, antiguos.length);
+
+  return {
+    lpn,
+    antiguos,
+    antiguosCriticos,
+    puntos,
+    puntosCriticos,
+    inv,
+    saturadas,
+    libera,
+    dinamicasLibres,
+    dinamicasOcupadas,
+    slotting: slotting.resultado,
+    pasillos: slotting.pasillos,
+    bloqueados: bloqueados.size,
+    avanceAntiguos
+  };
+}
+
+function topProductosAntiguos(data) {
+  const mapa = new Map();
+  data.forEach(r => {
+    if (!mapa.has(r.codigo)) mapa.set(r.codigo, { codigo: r.codigo, desc: r.desc, bultos: 0, lpns: 0, maxDias: 0 });
+    const item = mapa.get(r.codigo);
+    item.bultos += r.bultos;
+    item.lpns += 1;
+    item.maxDias = Math.max(item.maxDias, r.antiguedad);
+  });
+  return Array.from(mapa.values()).sort((a, b) => b.maxDias - a.maxDias || b.bultos - a.bultos).slice(0, 8);
+}
+
+function cargaPasillosOperativa(resumen) {
+  const mapa = new Map();
+  lpnsOperativos().forEach(r => {
+    const ubi = limpiar(r.UBICACION);
+    if (!ubi.toUpperCase().startsWith("MASS-")) return;
+    const pasillo = limpiar(ubi.split("-")[1]).padStart(2, "0");
+    if (!mapa.has(pasillo)) mapa.set(pasillo, { pasillo, lpns: 0, bultos: 0, dinamicas: 0, slotting: 0, antiguos: 0 });
+    const item = mapa.get(pasillo);
+    item.lpns += 1;
+    item.bultos += num(r.BULTOS);
+  });
+  resumen.pasillos.forEach(p => {
+    if (!mapa.has(p.pasillo)) mapa.set(p.pasillo, { pasillo: p.pasillo, lpns: 0, bultos: 0, dinamicas: 0, slotting: 0, antiguos: 0 });
+    mapa.get(p.pasillo).dinamicas = p.libres;
+  });
+  resumen.slotting.forEach(s => {
+    const pasillo = s.top1?.pasillo || "SIN";
+    if (!mapa.has(pasillo)) mapa.set(pasillo, { pasillo, lpns: 0, bultos: 0, dinamicas: 0, slotting: 0, antiguos: 0 });
+    mapa.get(pasillo).slotting += 1;
+  });
+  resumen.antiguosCriticos.forEach(a => {
+    const ubi = limpiar(a.ubicacion);
+    const pasillo = ubi.toUpperCase().startsWith("MASS-") ? limpiar(ubi.split("-")[1]).padStart(2, "0") : a.ubicacion;
+    if (!mapa.has(pasillo)) mapa.set(pasillo, { pasillo, lpns: 0, bultos: 0, dinamicas: 0, slotting: 0, antiguos: 0 });
+    mapa.get(pasillo).antiguos += 1;
+  });
+  return Array.from(mapa.values()).sort((a, b) => String(a.pasillo).localeCompare(String(b.pasillo))).slice(0, 16);
+}
+
+function codigoAltBloqueo(row) {
+  return normalizar(row.COD_ALT || row.COD_ALTERNATIVO || row.CODIGO_ALT || row.ALTERNATIVO);
+}
+
+function codigosBloqueoDetallados() {
+  const porAlt = new Map(dataProductos.map(p => [
+    normalizar(p.CODIGO_ALT || p.COD_ALT || p.COD_ALTERNATIVO || p["CODIGO ALTERNATIVO"] || p["Cod Alternat"]),
+    p
+  ]));
+
+  return dataBloqueo.map(b => {
+    const alt = codigoAltBloqueo(b);
+    const prod = porAlt.get(alt);
+    return {
+      alt,
+      codigo: normalizar(prod?.CODIGO),
+      desc: prod?.DESCRIPCION || limpiar(b.DESCRIPCION),
+      encontrado: Boolean(prod)
+    };
+  });
+}
+
+function alertasGenerales() {
+  const antiguosCriticos = calcularLpnsAntiguos().filter(r => r.antiguedad >= 7 && r.estado !== "HECHO");
+  const puntosCriticos = calcularPuntosControl().filter(r => r.zona !== "MASS" && r.antiguedad >= 7);
+  const bultosPuntosCriticos = puntosCriticos.reduce((a, b) => a + b.bultos, 0);
+  const pasillo10Stock = inventarioPasillo10();
+  const pasillo10 = reportePasillo10NoOperativo();
+  const bloqueados = codigosProductoBloqueados();
+  const bloqueadosActivo = inventarioComparable().filter(r => bloqueados.has(r.codigo) && r.unact > 0);
+  const bloqueadosSeteados = ubicacionesSeteadasBloqueadas(bloqueados);
+  const sinUbicacion = productosSinUbicacionActivo();
+  const noEncontradosBloqueo = codigosBloqueoDetallados().filter(r => r.alt && !r.encontrado);
+  const filas = [];
+
+  (advertenciasCarga || []).forEach(msg => filas.push({
+    prioridad: "ALTA",
+    alerta: "Carga de datos",
+    detalle: msg,
+    cantidad: 1,
+    accion: "Revisar Diagnostico",
+    modulo: "Diagnostico",
+    clase: "bad"
+  }));
+
+  if (bloqueadosActivo.length) filas.push({
+    prioridad: "ALTA",
+    alerta: "Bloqueados con stock activo",
+    detalle: `${fmt(new Set(bloqueadosActivo.map(r => r.codigo)).size)} productos tienen stock en activo`,
+    cantidad: bloqueadosActivo.reduce((a, b) => a + b.unact / (b.uxb || 1), 0),
+    accion: "Revisar Bloqueo",
+    modulo: "Bloqueo",
+    clase: "bad"
+  });
+
+  if (bloqueadosSeteados.length) filas.push({
+    prioridad: "ALTA",
+    alerta: "Bloqueados seteados",
+    detalle: "Productos bloqueados aun figuran seteados en ubicaciones activas",
+    cantidad: bloqueadosSeteados.length,
+    accion: "Descargar detalle en Bloqueo",
+    modulo: "Bloqueo",
+    clase: "bad"
+  });
+
+  if (pasillo10.length) filas.push({
+    prioridad: "ALTA",
+    alerta: "MASS-10 no operativo",
+    detalle: `${fmt(pasillo10Stock.length)} ubicaciones con stock y/o ubicaciones seteadas`,
+    cantidad: pasillo10.length,
+    accion: "Exportar MASS-10",
+    modulo: "Inventario/Bloqueo",
+    clase: "bad"
+  });
+
+  if (antiguosCriticos.length) filas.push({
+    prioridad: "MEDIA",
+    alerta: "LPNs antiguos +7",
+    detalle: "LPNs pendientes con antiguedad critica",
+    cantidad: antiguosCriticos.length,
+    accion: "Atender LPNs antiguos",
+    modulo: "LPNs antiguos",
+    clase: "warn"
+  });
+
+  if (bultosPuntosCriticos) filas.push({
+    prioridad: "MEDIA",
+    alerta: "Puntos control +7",
+    detalle: "Bultos en ubicaciones de control con antiguedad critica",
+    cantidad: bultosPuntosCriticos,
+    accion: "Revisar puntos control",
+    modulo: "Puntos control",
+    clase: "warn"
+  });
+
+  if (sinUbicacion.length) filas.push({
+    prioridad: "MEDIA",
+    alerta: "Productos sin activo",
+    detalle: "Productos operativos sin ubicacion activa/permanente util",
+    cantidad: sinUbicacion.length,
+    accion: "Revisar Slotting",
+    modulo: "Slotting",
+    clase: "warn"
+  });
+
+  if (noEncontradosBloqueo.length) filas.push({
+    prioridad: "MEDIA",
+    alerta: "Bloqueo no encontrado",
+    detalle: "Codigos alternativos bloqueados sin match en PRODUCTOS",
+    cantidad: noEncontradosBloqueo.length,
+    accion: "Corregir maestro PRODUCTOS",
+    modulo: "Bloqueo",
+    clase: "warn"
+  });
+
+  return filas;
+}
+
+function panelAlertasGenerales() {
+  const data = alertasGenerales();
+  return `
+    <section class="card">
+      <div class="section-head">
+        <div>
+          <h2>Alertas generales</h2>
+          <span class="muted-note">${fmt(data.length)} alertas accionables detectadas</span>
+        </div>
+        <div class="filters">
+          <button onclick="verDiagnostico()">Diagnostico</button>
+          <button onclick="exportarTablaVisible('tablaAlertasGenerales', 'alertas_generales')">Excel</button>
+        </div>
+      </div>
+      ${tablaConId("tablaAlertasGenerales", ["Prioridad", "Alerta", "Detalle", "Cantidad", "Accion", "Modulo"], data.map(r => `
+        <tr class="${r.clase}">
+          <td><strong>${htmlSeguro(r.prioridad)}</strong></td>
+          <td>${htmlSeguro(r.alerta)}</td>
+          <td>${htmlSeguro(r.detalle)}</td>
+          <td class="number">${fmt(r.cantidad)}</td>
+          <td>${htmlSeguro(r.accion)}</td>
+          <td>${htmlSeguro(r.modulo)}</td>
+        </tr>
+      `), "Sin alertas criticas con la data actual.")}
+    </section>
+  `;
+}
+
+function barrasPasillo(data) {
+  const max = Math.max(...data.map(x => Math.max(x.bultos, x.slotting, x.antiguos, x.dinamicas)), 1);
+  return `
+    <div class="aisle-map">
+      ${data.map(p => `
+        <div class="aisle-row">
+          <strong>${p.pasillo}</strong>
+          <span class="aisle-track stock" style="width:${pct(p.bultos, max)}%"></span>
+          <span class="aisle-track slot" style="width:${pct(p.slotting, max)}%"></span>
+          <span class="aisle-track old" style="width:${pct(p.antiguos, max)}%"></span>
+          <small>${fmt(p.bultos)} bul | ${p.slotting} slot | ${p.antiguos} ant</small>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function verDashboard() {
+  const r = resumenOperaciones();
+  const topAntiguos = topProductosAntiguos(r.antiguosCriticos);
+  const pasillos = cargaPasillosOperativa(r);
+  const totalDinamicas = r.dinamicasLibres + r.dinamicasOcupadas;
+  const ocupacionDinamica = pct(r.dinamicasOcupadas, totalDinamicas);
+
+  document.getElementById("modulo").innerHTML = `
+    ${(advertenciasCarga || []).length ? `
+      <section class="notice danger">
+        <strong>Revisar datos:</strong>
+        ${(advertenciasCarga || []).map(msg => `<span>${htmlSeguro(msg)}</span>`).join("")}
+      </section>
+    ` : ""}
+    <section class="hero-dashboard">
+      <div>
+        <span>ANC Logistica</span>
+        <h2>Torre de control operativa</h2>
+        <p>Prioridades del dia para almacen, inventario, ubicaciones y bloqueo.</p>
+      </div>
+      <button onclick="verGerencia()">Resumen gerencia</button>
+    </section>
+
+    <section class="signal-grid">
+      ${semaforo("Paletero", fmt(r.lpn.paletero), "LPNs sin ubicacion", estadoSemaforo(r.lpn.paletero, 20, 60))}
+      ${semaforo("Antiguos +7", fmt(r.antiguosCriticos.length), "LPNs con antiguedad critica", estadoSemaforo(r.antiguosCriticos.length, 15, 40))}
+      ${semaforo("Puntos control", fmt(r.puntosCriticos.reduce((a, b) => a + b.bultos, 0)), "bultos +7 dias", estadoSemaforo(r.puntosCriticos.length, 10, 30))}
+      ${semaforo("Slotting", fmt(r.slotting.length), "productos con sugerencia", estadoSemaforo(r.slotting.length, 5, 20))}
+      ${semaforo("Dinamicas libres", fmt(r.dinamicasLibres), `${ocupacionDinamica.toFixed(1)}% ocupadas`, estadoSemaforo(r.dinamicasLibres, 10, 25, true))}
+      ${semaforo("Bloqueo", fmt(r.bloqueados), "productos bloqueados", estadoSemaforo(r.bloqueados, 5, 15))}
+    </section>
+
+    <section class="quick-actions">
+      <button onclick="verBuscadorGlobal()">Buscador global</button>
+      <button onclick="verDiagnostico()">Diagnostico data</button>
+      <button onclick="verLpnsAntiguos()">Ver antiguos +7</button>
+      <button onclick="verPuntosControl()">Ver puntos control</button>
+      <button onclick="verBloqueo()">Ver bloqueo</button>
+      <button onclick="verSlotting()">Ver slotting</button>
+      <button onclick="verInventario()">Ver inventario</button>
+    </section>
+
+    ${panelAlertasGenerales()}
+
+    <section class="dashboard-layout">
+      <div class="card">
+        <h2>Mapa por pasillo</h2>
+        <div class="legend">
+          <span><b class="dot green"></b>Stock</span>
+          <span><b class="dot blue"></b>Slotting</span>
+          <span><b class="dot red"></b>Antiguos</span>
+        </div>
+        ${barrasPasillo(pasillos)}
+      </div>
+      <div class="card">
+        <h2>Flujo de atencion</h2>
+        ${barra("Avance antiguos", r.antiguos.filter(x => x.estado === "HECHO").length, r.antiguos.length)}
+        ${barra("Dinamicas libres", r.dinamicasLibres, totalDinamicas)}
+        ${barra("Slotting usable", r.slotting.filter(x => x.accionSlotting === "USAR LIBRE").length, r.slotting.length)}
+        ${barra("Inventario saturado", r.saturadas, r.inv.length)}
+      </div>
+    </section>
+
+    <section class="dashboard-layout">
+      <div class="card">
+        <h2>Top productos antiguos</h2>
+        ${tabla(["Codigo", "Descripcion", "LPNs", "Bultos", "Max dias"], topAntiguos.map(p => `
+          <tr class="${p.maxDias >= 10 ? "bad" : "warn"}">
+            <td><strong>${p.codigo}</strong></td>
+            <td>${p.desc}</td>
+            <td>${fmt(p.lpns)}</td>
+            <td class="number">${fmt(p.bultos)}</td>
+            <td>${fmt(p.maxDias)}</td>
+          </tr>
+        `))}
+      </div>
+      <div class="card">
+        <h2>Acciones recomendadas</h2>
+        <div class="action-list">
+          <div><strong>1</strong><span>Atacar primero ${fmt(r.antiguosCriticos.length)} LPNs antiguos +7.</span></div>
+          <div><strong>2</strong><span>Usar ${fmt(r.dinamicasLibres)} dinamicas libres para slotting.</span></div>
+          <div><strong>3</strong><span>Revisar ${fmt(r.saturadas)} ubicaciones saturadas y ${fmt(r.libera)} con liberacion.</span></div>
+          <div><strong>4</strong><span>Separar bloqueo: ${fmt(r.bloqueados)} productos no aptos.</span></div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function verGerencia() {
+  const r = resumenOperaciones();
+  const pasillos = cargaPasillosOperativa(r).slice(0, 10);
+  const topAntiguos = topProductosAntiguos(r.antiguosCriticos).slice(0, 5);
+  document.getElementById("modulo").innerHTML = `
+    <section class="executive-view" id="gerenciaView">
+      <div class="section-head">
+        <div>
+          <h2>Resumen gerencia</h2>
+          <p class="muted-note">Vista limpia para exportar imagen y presentar estado operativo.</p>
+        </div>
+        <button onclick="exportarImagen('gerenciaView', 'resumen-gerencia')">Imagen</button>
+      </div>
+      <section class="signal-grid executive">
+        ${semaforo("LPNs operativos", fmt(r.lpn.lpns), `${fmt(r.lpn.stock)} bultos`, "ok")}
+        ${semaforo("Antiguos +7", fmt(r.antiguosCriticos.length), "requieren accion", estadoSemaforo(r.antiguosCriticos.length, 15, 40))}
+        ${semaforo("Puntos control", fmt(r.puntosCriticos.reduce((a, b) => a + b.bultos, 0)), "bultos criticos", estadoSemaforo(r.puntosCriticos.length, 10, 30))}
+        ${semaforo("Slotting", fmt(r.slotting.length), "productos sugeridos", estadoSemaforo(r.slotting.length, 5, 20))}
+      </section>
+      <section class="dashboard-layout">
+        <div class="card">
+          <h2>Pasillos con carga</h2>
+          ${barrasPasillo(pasillos)}
+        </div>
+        <div class="card">
+          <h2>Productos mas antiguos</h2>
+          ${tabla(["Codigo", "LPNs", "Bultos", "Dias"], topAntiguos.map(p => `
+            <tr>
+              <td><strong>${p.codigo}</strong></td>
+              <td>${fmt(p.lpns)}</td>
+              <td class="number">${fmt(p.bultos)}</td>
+              <td>${fmt(p.maxDias)}</td>
+            </tr>
+          `))}
+        </div>
+      </section>
+    </section>
+  `;
+}
+
+function columnasData(data) {
+  return Array.from(new Set((data || []).flatMap(r => Object.keys(r || {})))).sort();
+}
+
+function contarDuplicados(valores) {
+  const vistos = new Set();
+  const duplicados = new Set();
+  valores.filter(Boolean).forEach(v => {
+    if (vistos.has(v)) duplicados.add(v);
+    vistos.add(v);
+  });
+  return duplicados.size;
+}
+
+function filasDiagnosticoData() {
+  const bloqueadosDet = codigosBloqueoDetallados();
+  const problemas = [];
+  const agregar = (origen, tipo, detalle, cantidad, severidad = "MEDIA") => {
+    if (!cantidad) return;
+    problemas.push({ origen, tipo, detalle, cantidad, severidad, clase: severidad === "ALTA" ? "bad" : "warn" });
+  };
+
+  (advertenciasCarga || []).forEach(msg => agregar("Carga", "Columnas/hojas", msg, 1, "ALTA"));
+  agregar("LPNS", "LPN vacio", "Filas sin LPN", dataLPN.filter(r => !limpiar(r.LPN)).length, "ALTA");
+  agregar("LPNS", "Codigo vacio", "Filas sin CODIGO", dataLPN.filter(r => !normalizar(r.CODIGO)).length, "ALTA");
+  agregar("LPNS", "Ubicacion vacia", "LPNs operativos en paletero o sin ubicacion", lpnsOperativos().filter(r => !limpiar(r.UBICACION)).length, "MEDIA");
+  agregar("LPNS", "Bultos invalidos", "Filas con BULTOS menor o igual a cero", dataLPN.filter(r => num(r.BULTOS) <= 0).length, "MEDIA");
+  agregar("PRODUCTOS", "Codigo duplicado", "Codigos repetidos en maestro de productos", contarDuplicados(dataProductos.map(r => normalizar(r.CODIGO))), "MEDIA");
+  agregar("PRODUCTOS", "Codigo vacio", "Filas sin CODIGO", dataProductos.filter(r => !normalizar(r.CODIGO)).length, "ALTA");
+  agregar("PEDIDO", "Producto vacio", "Filas sin PRODUCTO", dataPedido.filter(r => !normalizar(r.PRODUCTO)).length, "MEDIA");
+  agregar("INV_ACTIVO", "Codigo vacio", "Filas sin PRODUCTO", dataInventario.filter(r => !normalizar(r.PRODUCTO)).length, "ALTA");
+  agregar("INV_ACTIVO", "Ubicacion vacia", "Filas sin UBICACION", dataInventario.filter(r => !limpiar(r.UBICACION)).length, "ALTA");
+  agregar("INV_ACTIVO", "Stock MASS-10", "Stock ubicado en pasillo no operativo MASS-10", inventarioPasillo10().length, "ALTA");
+  agregar("UBICACION", "MASS-10 seteado", "Ubicaciones seteadas o con producto en pasillo no operativo", reportePasillo10NoOperativo().filter(r => r.origen === "MAESTRO UBICACIONES").length, "ALTA");
+  agregar("BLOQUEO", "Alternativo no encontrado", "Codigos alternativos de bloqueo sin match en PRODUCTOS", bloqueadosDet.filter(r => r.alt && !r.encontrado).length, "MEDIA");
+  agregar("BLOQUEO", "Alternativo vacio", "Filas de bloqueo sin codigo alternativo", bloqueadosDet.filter(r => !r.alt).length, "ALTA");
+
+  return problemas;
+}
+
+function verDiagnostico() {
+  const hojas = [
+    { nombre: "LPNS", data: dataLPN, clave: "LPN" },
+    { nombre: "PRODUCTOS", data: dataProductos, clave: "CODIGO" },
+    { nombre: "PEDIDO", data: dataPedido, clave: "PRODUCTO" },
+    { nombre: "INV_ACTIVO", data: dataInventario, clave: "PRODUCTO" },
+    { nombre: "UBICACION", data: dataUbicaciones, clave: "MASCARA" },
+    { nombre: "BLOQUEO", data: dataBloqueo, clave: "COD_ALT" }
+  ];
+  const problemas = filasDiagnosticoData();
+  const totalFilas = hojas.reduce((a, b) => a + b.data.length, 0);
+  const altas = problemas.filter(p => p.severidad === "ALTA").length;
+
+  document.getElementById("modulo").innerHTML = `
+    <div class="section-head">
+      <div>
+        <h2>Diagnostico de data</h2>
+        <p class="muted-note">Revision rapida de hojas, columnas y datos que pueden distorsionar los reportes.</p>
+      </div>
+      <div class="filters">
+        <button onclick="recargarDatos()">Actualizar data</button>
+        <button onclick="exportarTablaVisible('tablaDiagnosticoProblemas', 'diagnostico_problemas')">Excel problemas</button>
+      </div>
+    </div>
+    <section class="kpi-grid compact">
+      ${kpi("Filas totales", fmt(totalFilas))}
+      ${kpi("Hojas", fmt(hojas.length))}
+      ${kpi("Problemas", fmt(problemas.length), "", problemas.length ? "warn" : "")}
+      ${kpi("Criticos", fmt(altas), "", altas ? "danger" : "")}
+      ${kpi("Advertencias carga", fmt((advertenciasCarga || []).length), "", (advertenciasCarga || []).length ? "danger" : "")}
+    </section>
+    <section class="dashboard-layout">
+      <div class="card">
+        <div class="section-head">
+          <h2>Hojas cargadas</h2>
+          <button onclick="exportarTablaVisible('tablaDiagnosticoHojas', 'diagnostico_hojas')">Excel</button>
+        </div>
+        ${tablaConId("tablaDiagnosticoHojas", ["Hoja", "Filas", "Columnas", "Columna clave", "Vacios clave"], hojas.map(h => {
+          const cols = columnasData(h.data);
+          const vacios = h.data.filter(r => !limpiar(r[h.clave])).length;
+          return `
+            <tr class="${!h.data.length || vacios ? "warn" : ""}">
+              <td><strong>${htmlSeguro(h.nombre)}</strong></td>
+              <td>${fmt(h.data.length)}</td>
+              <td>${fmt(cols.length)}</td>
+              <td>${htmlSeguro(h.clave)}</td>
+              <td>${fmt(vacios)}</td>
+            </tr>
+          `;
+        }))}
+      </div>
+      <div class="card">
+        <div class="section-head">
+          <h2>Problemas detectados</h2>
+          <button onclick="copiarTablaVisible('tablaDiagnosticoProblemas')">Copiar</button>
+        </div>
+        ${tablaConId("tablaDiagnosticoProblemas", ["Severidad", "Origen", "Tipo", "Detalle", "Cantidad"], problemas.map(p => `
+          <tr class="${p.clase}">
+            <td><strong>${htmlSeguro(p.severidad)}</strong></td>
+            <td>${htmlSeguro(p.origen)}</td>
+            <td>${htmlSeguro(p.tipo)}</td>
+            <td>${htmlSeguro(p.detalle)}</td>
+            <td class="number">${fmt(p.cantidad)}</td>
+          </tr>
+        `), "No se detectaron problemas relevantes.")}
+      </div>
+    </section>
+  `;
+}
+
+function coincideBusqueda(row, q, campos) {
+  if (!q) return false;
+  const texto = campos.map(c => limpiar(row[c])).join(" ").toLowerCase();
+  return texto.includes(q);
+}
+
+function resultadosBusquedaGlobal(q) {
+  const query = limpiar(q).toLowerCase();
+  if (query.length < 2) return [];
+  const rows = [];
+  const agregar = item => rows.push(item);
+
+  dataLPN.forEach(r => {
+    if (!coincideBusqueda(r, query, ["LPN", "CODIGO", "DESCRIPCION", "UBICACION", "ESTADO"])) return;
+    agregar({
+      origen: "LPNS",
+      codigo: normalizar(r.CODIGO),
+      referencia: limpiar(r.LPN),
+      descripcion: limpiar(r.DESCRIPCION),
+      ubicacion: limpiar(r.UBICACION) || "PALETERO",
+      cantidad: num(r.BULTOS),
+      estado: limpiar(r.ESTADO)
+    });
+  });
+
+  inventarioComparable().forEach(r => {
+    const texto = [r.codigo, r.desc, r.ubicacion, r.estado].join(" ").toLowerCase();
+    if (!texto.includes(query)) return;
+    agregar({
+      origen: "INV_ACTIVO",
+      codigo: r.codigo,
+      referencia: "-",
+      descripcion: r.desc,
+      ubicacion: r.ubicacion,
+      cantidad: r.unact,
+      estado: r.estado
+    });
+  });
+
+  dataProductos.forEach(r => {
+    if (!coincideBusqueda(r, query, ["CODIGO", "CODIGO_ALT", "COD_ALT", "CODIGO ALTERNATIVO", "Cod Alternat", "DESCRIPCION", "JERARQUIA1"])) return;
+    agregar({
+      origen: "PRODUCTOS",
+      codigo: normalizar(r.CODIGO),
+      referencia: normalizar(r.CODIGO_ALT || r.COD_ALT || r.COD_ALTERNATIVO || r["CODIGO ALTERNATIVO"] || r["Cod Alternat"]),
+      descripcion: limpiar(r.DESCRIPCION),
+      ubicacion: "-",
+      cantidad: "",
+      estado: limpiar(r.JERARQUIA1 || "MAESTRO")
+    });
+  });
+
+  dataPedido.forEach(r => {
+    if (!coincideBusqueda(r, query, ["PRODUCTO", "DESCRIPCION"])) return;
+    agregar({
+      origen: "PEDIDO",
+      codigo: normalizar(r.PRODUCTO),
+      referencia: "-",
+      descripcion: limpiar(r.DESCRIPCION),
+      ubicacion: "-",
+      cantidad: num(campo(r, ["BULTOS_PEDIDO", "BULTOS_REAL", "CANTIDAD", "UND"])),
+      estado: "PEDIDO"
+    });
+  });
+
+  dataUbicaciones.forEach(r => {
+    if (!coincideBusqueda(r, query, ["MASCARA", "UBICACION", "PRODUCTO", "TIPO_UBICACION", "TIPO", "TIPOUBICACION"])) return;
+    agregar({
+      origen: "UBICACION",
+      codigo: normalizar(r.PRODUCTO),
+      referencia: tipoUbicacion(r),
+      descripcion: limpiar(r.DESCRIPCION),
+      ubicacion: limpiar(r.MASCARA || r.UBICACION),
+      cantidad: "",
+      estado: esMassPasillo10(r.MASCARA || r.UBICACION) ? "MASS-10 NO OPERATIVO" : "MAESTRO UBICACION"
+    });
+  });
+
+  dataBloqueo.forEach(r => {
+    if (!coincideBusqueda(r, query, ["COD_ALT", "COD_ALTERNATIVO", "CODIGO_ALT", "ALTERNATIVO", "DESCRIPCION"])) return;
+    agregar({
+      origen: "BLOQUEO",
+      codigo: "-",
+      referencia: codigoAltBloqueo(r),
+      descripcion: limpiar(r.DESCRIPCION),
+      ubicacion: "-",
+      cantidad: "",
+      estado: "BLOQUEADO"
+    });
+  });
+
+  return rows.slice(0, 500);
+}
+
+function verBuscadorGlobal() {
+  document.getElementById("modulo").innerHTML = `
+    <div class="section-head">
+      <div>
+        <h2>Buscador global</h2>
+        <p class="muted-note">Busca por codigo, codigo alternativo, LPN, ubicacion o descripcion en todas las hojas.</p>
+      </div>
+      <div class="filters">
+        <button onclick="exportarTablaVisible('tablaBusquedaGlobal', 'busqueda_global')">Excel visible</button>
+        <button onclick="copiarTablaVisible('tablaBusquedaGlobal')">Copiar</button>
+      </div>
+    </div>
+    <section class="card">
+      <input class="search" id="filtroGlobal" placeholder="Buscar codigo, LPN, ubicacion o descripcion..." oninput="renderBusquedaGlobal()">
+      <div id="busquedaKpis"></div>
+      <div id="busquedaResultados"></div>
+    </section>
+  `;
+  renderBusquedaGlobal();
+}
+
+function renderBusquedaGlobal() {
+  const q = limpiar(document.getElementById("filtroGlobal")?.value);
+  const data = resultadosBusquedaGlobal(q);
+  const origenes = new Set(data.map(r => r.origen)).size;
+  const destinoKpis = document.getElementById("busquedaKpis");
+  const destino = document.getElementById("busquedaResultados");
+  if (!destinoKpis || !destino) return;
+
+  destinoKpis.innerHTML = `<section class="kpi-grid compact">${kpi("Resultados", fmt(data.length), q.length < 2 ? "minimo 2 caracteres" : "")}${kpi("Origenes", fmt(origenes))}${kpi("Limite", "500", "filas visibles")}</section>`;
+  destino.innerHTML = tablaConId("tablaBusquedaGlobal", ["Origen", "Codigo", "Referencia", "Descripcion", "Ubicacion", "Cantidad", "Estado"], data.map(r => `
+    <tr class="${r.estado.includes("BLOQUEADO") || r.estado.includes("MASS-10") ? "bad" : ""}">
+      <td><strong>${htmlSeguro(r.origen)}</strong></td>
+      <td>${htmlSeguro(r.codigo)}</td>
+      <td>${htmlSeguro(r.referencia)}</td>
+      <td>${htmlSeguro(r.descripcion)}</td>
+      <td>${htmlSeguro(r.ubicacion)}</td>
+      <td class="number">${r.cantidad === "" ? "" : fmt(r.cantidad)}</td>
+      <td>${htmlSeguro(r.estado)}</td>
+    </tr>
+  `), q.length < 2 ? "Escribe al menos 2 caracteres para buscar." : "Sin resultados para la busqueda.");
+}
+
+function barra(label, value, total) {
+  const p = Math.min(100, pct(value, total));
+  return `
+    <div class="bar-row">
+      <div><strong>${label}</strong><span>${fmt(value)} / ${fmt(total)}</span></div>
+      <div class="bar"><div style="width:${p}%"></div></div>
+      <b>${p.toFixed(1)}%</b>
+    </div>
+  `;
+}
+
+function verLpns() {
+  document.getElementById("modulo").innerHTML = `
+    <div class="section-head">
+      <h2>LPNs</h2>
+      <input class="search" id="filtroLpn" placeholder="Buscar LPN, codigo, descripcion o ubicacion..." oninput="renderLpns()">
+    </div>
+    <div id="lpnsKpis"></div>
+    <div id="reservaMass"></div>
+    <div id="lpnsTabla"></div>
+    <div id="modalReservaMass" class="modal-backdrop" hidden></div>
+  `;
+  renderLpns();
+}
+
+function renderLpns() {
+  const q = limpiar(document.getElementById("filtroLpn")?.value).toLowerCase();
+  const data = dataLPN.filter(r => !q || [r.LPN, r.CODIGO, r.DESCRIPCION, r.UBICACION, r.ESTADO].join(" ").toLowerCase().includes(q));
+  const stock = data.reduce((a, b) => a + num(b.BULTOS), 0);
+  const dataMass = data.filter(r => limpiar(r.UBICACION).toUpperCase().startsWith("MASS"));
+  const dataOtras = data.filter(r => !limpiar(r.UBICACION).toUpperCase().startsWith("MASS"));
+  document.getElementById("lpnsKpis").innerHTML = `<section class="kpi-grid compact">${kpi("LPNs", fmt(data.length))}${kpi("Productos", fmt(new Set(data.map(r => normalizar(r.CODIGO))).size))}${kpi("Stock", fmt(stock))}</section>`;
+  renderResumenReservaMass();
+  document.getElementById("lpnsTabla").innerHTML = `
+    <section class="card subcard">
+      <div class="section-head">
+        <h2>Ubicacion MASS</h2>
+        <span class="muted-note">${fmt(dataMass.length)} LPNs</span>
+      </div>
+      ${tablaLpns(dataMass)}
+    </section>
+    <section class="card subcard">
+      <div class="section-head">
+        <h2>Otras ubicaciones</h2>
+        <span class="muted-note">${fmt(dataOtras.length)} LPNs</span>
+      </div>
+      ${tablaLpns(dataOtras)}
+    </section>
+    ${seccionReservaActivo(q)}
+  `;
+}
+
+function tablaLpns(data) {
+  return tabla(["LPN", "Codigo", "Descripcion", "Ubicacion", "Estado", "Bultos", "Fecha"], data.slice(0, 1000).map(r => `
+    <tr>
+      <td><strong>${htmlSeguro(limpiar(r.LPN))}</strong></td>
+      <td>${htmlSeguro(limpiar(r.CODIGO))}</td>
+      <td>${htmlSeguro(limpiar(r.DESCRIPCION))}</td>
+      <td>${htmlSeguro(limpiar(r.UBICACION) || "PALETERO")}</td>
+      <td>${htmlSeguro(limpiar(r.ESTADO))}</td>
+      <td class="number">${fmt(num(r.BULTOS))}</td>
+      <td>${htmlSeguro(limpiar(r.FECHA))}</td>
+    </tr>
+  `));
+}
+
+function productosReservaActivo(q = "") {
+  const reserva = new Map();
+  lpnsOperativos()
+    .filter(r => limpiar(r.UBICACION).toUpperCase().startsWith("MASS-"))
+    .forEach(r => {
+      const codigo = normalizar(r.CODIGO);
+      if (!codigo) return;
+      if (!reserva.has(codigo)) {
+        reserva.set(codigo, {
+          codigo,
+          desc: limpiar(r.DESCRIPCION),
+          ubicacionesReserva: new Set(),
+          lpns: new Set(),
+          bultosReserva: 0
+        });
+      }
+      const item = reserva.get(codigo);
+      item.ubicacionesReserva.add(limpiar(r.UBICACION));
+      item.lpns.add(limpiar(r.LPN));
+      item.bultosReserva += num(r.BULTOS);
+    });
+
+  const activo = new Map();
+  inventarioComparable().forEach(r => {
+    if (!r.codigo || r.unact <= 0) return;
+    if (!activo.has(r.codigo)) {
+      activo.set(r.codigo, {
+        ubicacionesActivo: new Set(),
+        unidadesActivo: 0,
+        bultosActivo: 0
+      });
+    }
+    const item = activo.get(r.codigo);
+    item.ubicacionesActivo.add(r.ubicacion);
+    item.unidadesActivo += r.unact;
+    item.bultosActivo += r.unact / (r.uxb || 1);
+  });
+
+  return Array.from(reserva.values())
+    .filter(r => activo.has(r.codigo))
+    .map(r => ({
+      ...r,
+      ...activo.get(r.codigo)
+    }))
+    .filter(r => {
+      const texto = [
+        r.codigo,
+        r.desc,
+        Array.from(r.ubicacionesReserva).join(" "),
+        Array.from(r.ubicacionesActivo).join(" ")
+      ].join(" ").toLowerCase();
+      return !q || texto.includes(q);
+    })
+    .sort((a, b) => b.bultosReserva - a.bultosReserva || b.bultosActivo - a.bultosActivo);
+}
+
+function seccionReservaActivo(q = "") {
+  const data = productosReservaActivo(q);
+  return `
+    <section class="card subcard">
+      <div class="section-head">
+        <div>
+          <h2>Productos en reserva y activo</h2>
+          <span class="muted-note">${fmt(data.length)} productos encontrados en ambos origenes</span>
+        </div>
+        <div class="filters">
+          <button onclick="copiarTablaVisible('tablaReservaActivo')">Copiar</button>
+          <button onclick="exportarTablaVisible('tablaReservaActivo', 'productos_reserva_activo')">Excel visible</button>
+        </div>
+      </div>
+      ${tablaConId("tablaReservaActivo", ["Codigo", "Descripcion", "Ubicacion reserva", "LPNs", "Bultos reserva", "Ubicacion activo", "Unidades activo", "Bultos activo"], data.map(r => `
+        <tr>
+          <td><strong>${htmlSeguro(r.codigo)}</strong></td>
+          <td>${htmlSeguro(r.desc)}</td>
+          <td>${htmlSeguro(Array.from(r.ubicacionesReserva).sort(ordenarUbicacion).join(", "))}</td>
+          <td>${fmt(r.lpns.size)}</td>
+          <td class="number">${fmt(r.bultosReserva)}</td>
+          <td>${htmlSeguro(Array.from(r.ubicacionesActivo).sort(ordenarUbicacion).join(", "))}</td>
+          <td>${fmt(r.unidadesActivo)}</td>
+          <td class="number">${fmt(r.bultosActivo)}</td>
+        </tr>
+      `), "No se encontraron productos presentes en reserva y activo.")}
+    </section>
+  `;
+}
+
+function calcularReservaMassIncidencias() {
+  const unicos = new Map();
+  lpnsOperativos()
+    .filter(r => limpiar(r.UBICACION).toUpperCase().startsWith("MASS"))
+    .forEach(r => {
+      const lpn = limpiar(r.LPN);
+      const codigo = normalizar(r.CODIGO);
+      const ubicacion = limpiar(r.UBICACION);
+      if (!lpn || !codigo || !ubicacion) return;
+      const key = `${lpn}|${codigo}|${ubicacion}`;
+      if (!unicos.has(key)) {
+        unicos.set(key, {
+          lpn,
+          codigo,
+          desc: limpiar(r.DESCRIPCION),
+          ubicacion,
+          bultos: num(r.BULTOS)
+        });
+      }
+    });
+
+  const porUbicacion = new Map();
+  unicos.forEach(r => {
+    if (!porUbicacion.has(r.ubicacion)) {
+      porUbicacion.set(r.ubicacion, {
+        ubicacion: r.ubicacion,
+        lpns: new Set(),
+        productos: new Set(),
+        bultos: 0,
+        filas: []
+      });
+    }
+    const item = porUbicacion.get(r.ubicacion);
+    item.lpns.add(r.lpn);
+    item.productos.add(r.codigo);
+    item.bultos += r.bultos;
+    item.filas.push(r);
+  });
+
+  return Array.from(porUbicacion.values())
+    .filter(r => r.lpns.size > 1 || r.productos.size > 1)
+    .sort((a, b) => ordenarUbicacion(a.ubicacion, b.ubicacion));
+}
+
+function renderResumenReservaMass() {
+  const incidencias = calcularReservaMassIncidencias();
+  const totalBultos = incidencias.reduce((a, b) => a + b.bultos, 0);
+  const totalLpns = incidencias.reduce((a, b) => a + b.lpns.size, 0);
+  const totalProductos = incidencias.reduce((a, b) => a + b.productos.size, 0);
+
+  document.getElementById("reservaMass").innerHTML = `
+    <section class="card subcard">
+      <div class="section-head">
+        <div>
+          <h2>Validacion reserva MASS</h2>
+          <p class="muted-note">Regla: cada ubicacion debe tener solo 1 LPN y 1 producto distinto. Se ignoran duplicados exactos de la data.</p>
+        </div>
+        <button onclick="exportarReservaMassExcel()">Excel incidencias</button>
+      </div>
+      <section class="kpi-grid compact">
+        ${kpi("Ubicaciones con alerta", fmt(incidencias.length), "", incidencias.length ? "danger" : "")}
+        ${kpi("LPNs involucrados", fmt(totalLpns))}
+        ${kpi("Productos distintos", fmt(totalProductos))}
+        ${kpi("Bultos", fmt(totalBultos))}
+      </section>
+      ${tabla(["Ubicacion", "LPNs", "Productos", "Bultos", "Causa", "Ver"], incidencias.map(r => `
+        <tr class="${r.productos.size > 1 ? "bad" : "warn"}">
+          <td><strong>${r.ubicacion}</strong></td>
+          <td>${fmt(r.lpns.size)}</td>
+          <td>${fmt(r.productos.size)}</td>
+          <td class="number">${fmt(r.bultos)}</td>
+          <td>${[r.lpns.size > 1 ? "Mas de 1 LPN" : "", r.productos.size > 1 ? "Mas de 1 producto" : ""].filter(Boolean).join(" / ")}</td>
+          <td><button class="soft" onclick="verDetalleReservaMass('${encodeURIComponent(r.ubicacion)}')">Ver</button></td>
+        </tr>
+      `), "Todas las ubicaciones MASS cumplen con 1 LPN y 1 producto.")}
+    </section>
+  `;
+}
+
+function detalleReservaMassHtml(item) {
+  const porProducto = new Map();
+  item.filas.forEach(r => {
+    const key = `${r.codigo}|${r.desc}|${r.ubicacion}`;
+    if (!porProducto.has(key)) porProducto.set(key, { codigo: r.codigo, desc: r.desc, ubicacion: r.ubicacion, bultos: 0, lpns: new Set() });
+    const p = porProducto.get(key);
+    p.bultos += r.bultos;
+    p.lpns.add(r.lpn);
+  });
+  const rows = Array.from(porProducto.values()).sort((a, b) => b.bultos - a.bultos).map(r => `
+    <tr>
+      <td>${r.codigo}</td>
+      <td>${r.desc}</td>
+      <td>${r.ubicacion}</td>
+      <td>${Array.from(r.lpns).join(" / ")}</td>
+      <td class="number">${fmt(r.bultos)}</td>
+    </tr>
+  `);
+
+  return `
+    <div class="modal-card">
+      <div class="section-head">
+        <div>
+          <h2>Detalle ${item.ubicacion}</h2>
+          <span class="muted-note">${item.lpns.size} LPNs / ${item.productos.size} productos</span>
+        </div>
+        <button class="ghost" onclick="cerrarModalReservaMass()">Cerrar</button>
+      </div>
+      ${tabla(["Codigo", "Descripcion", "Ubicacion", "LPNs", "Bultos"], rows)}
+    </div>
+  `;
+}
+
+function verDetalleReservaMass(ubicacion) {
+  ubicacionReservaActiva = decodeURIComponent(ubicacion);
+  const item = calcularReservaMassIncidencias().find(r => r.ubicacion === ubicacionReservaActiva);
+  const destino = document.getElementById("modalReservaMass");
+  if (!destino) return;
+  destino.innerHTML = item ? detalleReservaMassHtml(item) : `<div class="modal-card"><button class="ghost" onclick="cerrarModalReservaMass()">Cerrar</button><p>Sin detalle para mostrar.</p></div>`;
+  destino.hidden = false;
+}
+
+function cerrarModalReservaMass() {
+  const destino = document.getElementById("modalReservaMass");
+  if (!destino) return;
+  destino.hidden = true;
+  destino.innerHTML = "";
+}
+
+function exportarReservaMassExcel() {
+  const incidencias = calcularReservaMassIncidencias();
+  const filas = [];
+  incidencias.forEach(item => {
+    const porProducto = new Map();
+    item.filas.forEach(r => {
+      const key = `${r.codigo}|${r.desc}|${r.ubicacion}`;
+      if (!porProducto.has(key)) porProducto.set(key, { codigo: r.codigo, desc: r.desc, ubicacion: r.ubicacion, bultos: 0 });
+      porProducto.get(key).bultos += r.bultos;
+    });
+    Array.from(porProducto.values()).forEach(r => filas.push(r));
+  });
+
+  const html = `
+    <table>
+      <thead><tr><th>Codigo</th><th>Descripcion</th><th>Ubicacion</th><th>Bultos</th></tr></thead>
+      <tbody>
+        ${filas.map(r => `
+          <tr>
+            <td>${r.codigo}</td>
+            <td>${r.desc}</td>
+            <td>${r.ubicacion}</td>
+            <td>${fmt(r.bultos)}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+  descargarExcel("reserva_mass_incidencias", html);
+}
+
+function calcularLpnsAntiguos() {
+  const mapaInv = new Map();
+  inventarioComparable().forEach(i => {
+    if (!mapaInv.has(i.codigo)) mapaInv.set(i.codigo, []);
+    mapaInv.get(i.codigo).push(i);
+  });
+
+  return lpnsOperativos()
+    .filter(r => limpiar(r.UBICACION) === "" || limpiar(r.UBICACION).startsWith("DROP-BUFR"))
+    .map(r => {
+      const codigo = normalizar(r.CODIGO);
+      const inv = mapaInv.get(codigo) || [];
+      const disp = inv.reduce((a, b) => a + b.disponible, 0);
+      const dispBul = inv.reduce((a, b) => a + (b.disponible / (b.uxb || 1)), 0);
+      return {
+        lpn: limpiar(r.LPN),
+        codigo,
+        desc: limpiar(r.DESCRIPCION),
+        fecha: limpiar(r.FECHA),
+        antiguedad: diasLaboralesSinDomingos(r.FECHA),
+        bultos: num(r.BULTOS),
+        ubicacion: limpiar(r.UBICACION) || "PALETERO",
+        ubicacionActiva: inv.map(x => x.ubicacion).join(" / ") || "SIN UBICACION ACTIVA",
+        disponible: disp,
+        disponibleBul: dispBul,
+        estado: estadoAntiguos[limpiar(r.LPN)] || "PENDIENTE"
+      };
+    });
+}
+
+function verLpnsAntiguos() {
+  document.getElementById("modulo").innerHTML = `
+    <div class="section-head">
+      <h2>LPNs antiguos</h2>
+      <div class="filters">
+        <input class="search" id="filtroAntiguos" placeholder="Buscar LPN, codigo o descripcion..." oninput="renderLpnsAntiguos()">
+        <input class="search small" id="diasAntiguos" type="number" value="7" min="0" oninput="renderLpnsAntiguos()">
+        <button onclick="reiniciarEstadosAntiguos()">Reiniciar estados</button>
+      </div>
+    </div>
+    <div id="antiguosKpis"></div>
+    <div id="antiguosTabla"></div>
+  `;
+  renderLpnsAntiguos();
+}
+
+function renderLpnsAntiguos() {
+  const q = limpiar(document.getElementById("filtroAntiguos")?.value).toLowerCase();
+  const minDias = num(document.getElementById("diasAntiguos")?.value);
+  let data = calcularLpnsAntiguos().filter(r =>
+    r.antiguedad >= minDias &&
+    (!q || [r.lpn, r.codigo, r.desc, r.ubicacion].join(" ").toLowerCase().includes(q))
+  ).sort((a, b) => b.antiguedad - a.antiguedad);
+
+  const paletero = data.filter(r => r.ubicacion === "PALETERO").length;
+  const buffer = data.length - paletero;
+  const hechos = data.filter(r => r.estado === "HECHO").length;
+  const dataPaletero = data.filter(r => r.ubicacion === "PALETERO");
+  const dataBuffer = data.filter(r => r.ubicacion !== "PALETERO");
+
+  document.getElementById("antiguosKpis").innerHTML = `
+    <section class="kpi-grid compact">${kpi("Total", fmt(data.length))}${kpi("Paletero", fmt(paletero), "", "danger")}${kpi("Buffer", fmt(buffer))}${kpi("Hechos", fmt(hechos))}${kpi("Avance", `${pct(hechos, data.length).toFixed(1)}%`)}</section>
+    <div class="mode-switch">
+      <button onclick="cambiarModoAntiguos('UND')">UND</button>
+      <button onclick="cambiarModoAntiguos('BUL')">BUL</button>
+      <span>Disponibilidad en ${modoAntiguos}</span>
+    </div>
+  `;
+  document.getElementById("antiguosTabla").innerHTML = `
+    <section class="card subcard">
+      <div class="section-head">
+        <h2>Vacios / Paletero</h2>
+        <span class="badge danger">${dataPaletero.length} LPNs</span>
+      </div>
+      ${tablaAntiguos(dataPaletero)}
+    </section>
+    <section class="card subcard">
+      <div class="section-head">
+        <h2>Buffer</h2>
+        <span class="badge">${dataBuffer.length} LPNs</span>
+      </div>
+      ${tablaAntiguos(dataBuffer)}
+    </section>
+  `;
+}
+
+function tablaAntiguos(data) {
+  return tabla(["Estado", "Fecha", "Antiguedad", "LPN", "Codigo", "Descripcion", "Bultos", "Ubicacion", "Ubicacion activa", `Disponible ${modoAntiguos}`], data.map(r => `
+    <tr class="${r.estado === "HECHO" ? "ok" : r.antiguedad >= 10 ? "bad" : "warn"}">
+      <td>
+        <select onchange="guardarEstadoAntiguo('${r.lpn}', this.value)">
+          <option ${r.estado === "PENDIENTE" ? "selected" : ""}>PENDIENTE</option>
+          <option ${r.estado === "REVISANDO" ? "selected" : ""}>REVISANDO</option>
+          <option ${r.estado === "HECHO" ? "selected" : ""}>HECHO</option>
+        </select>
+      </td>
+      <td>${r.fecha}</td>
+      <td><strong>${r.antiguedad}</strong></td>
+      <td>${r.lpn}</td>
+      <td>${r.codigo}</td>
+      <td>${r.desc}</td>
+      <td>${fmt(r.bultos)}</td>
+      <td>${r.ubicacion}</td>
+      <td>${r.ubicacionActiva}</td>
+      <td class="number">${fmt(modoAntiguos === "BUL" ? r.disponibleBul : r.disponible)}</td>
+    </tr>
+  `));
+}
+
+function cambiarModoAntiguos(modo) {
+  modoAntiguos = modo;
+  renderLpnsAntiguos();
+}
+
+function guardarEstadoAntiguo(lpn, estado) {
+  estadoAntiguos[lpn] = estado;
+  localStorage.setItem("operaciones_estadoAntiguos", JSON.stringify(estadoAntiguos));
+  renderLpnsAntiguos();
+}
+
+function reiniciarEstadosAntiguos() {
+  if (!confirm("Reiniciar estados de LPNs antiguos?")) return;
+  estadoAntiguos = {};
+  localStorage.removeItem("operaciones_estadoAntiguos");
+  renderLpnsAntiguos();
+}
+
+function verPuntosControl() {
+  document.getElementById("modulo").innerHTML = `
+    <div class="section-head">
+      <h2>Puntos de control</h2>
+      <div class="filters">
+        <input class="search" id="filtroControl" placeholder="Buscar zona, ubicacion, producto, LPN o descripcion..." oninput="renderPuntosControl()">
+        <button onclick="exportarControlExcel()">Excel</button>
+        <button onclick="exportarDetallePuntosControlGeneral()">Excel detalle general</button>
+      </div>
+    </div>
+    <div id="controlKpis"></div>
+    <div id="controlDashboard"></div>
+    <div id="modalPuntoControl" class="modal-backdrop" hidden></div>
+  `;
+  renderPuntosControl();
+}
+
+const bucketsControl = [
+  { key: "mas7", label: "+7 dias" },
+  { key: "d36", label: "3-6 dias" },
+  { key: "d2", label: "2 Dias" },
+  { key: "d1", label: "1 Dia" },
+  { key: "hoy", label: "Hoy" }
+];
+
+function bucketControl(dias) {
+  if (dias >= 7) return "mas7";
+  if (dias >= 3) return "d36";
+  if (dias === 2) return "d2";
+  if (dias === 1) return "d1";
+  return "hoy";
+}
+
+function clasificarZonaControl(ubicacion) {
+  const ubi = limpiar(ubicacion).toUpperCase();
+  if (!ubi) return "SIN UBICACION";
+  if (ubi.startsWith("MASS")) return "MASS";
+  if (ubi.startsWith("STAGING")) return "STAGING";
+  if (ubi.includes("BLOQUEADO") || ubi.includes("BLOQUEO") || ubi.includes("CIRCUITO") || ubi.includes("PTS")) return "DROP CIRCUITO PTS";
+  if (ubi.startsWith("DROP-BUFR") || ubi.includes("BUFFER")) return "BUFFER";
+  if (ubi.startsWith("DROP")) return "DROP";
+  return "OTRAS UBICACIONES";
+}
+
+function ordenZonaControl(zona) {
+  const orden = ["STAGING", "SIN UBICACION", "DROP CIRCUITO PTS", "BUFFER", "DROP", "OTRAS UBICACIONES", "MASS"];
+  const idx = orden.indexOf(zona);
+  return idx === -1 ? 99 : idx;
+}
+
+function pasilloMass(ubicacion) {
+  const partes = limpiar(ubicacion).split("-");
+  return partes.length > 1 ? limpiar(partes[1]).padStart(2, "0") : "SIN PASILLO";
+}
+
+function calcularPuntosControl() {
+  return lpnsOperativos().map(r => {
+    const ubicacionRaw = limpiar(r.UBICACION);
+    const ubicacion = ubicacionRaw || "SIN UBICACION";
+    const antiguedad = diasLaboralesSinDomingos(r.FECHA);
+    const zona = clasificarZonaControl(ubicacionRaw);
+    return {
+      zona,
+      ubicacion,
+      lpn: limpiar(r.LPN),
+      codigo: normalizar(r.CODIGO),
+      desc: limpiar(r.DESCRIPCION),
+      estadoLpn: limpiar(r.ESTADO),
+      fecha: limpiar(r.FECHA),
+      antiguedad,
+      bucket: bucketControl(antiguedad),
+      bultos: num(r.BULTOS)
+    };
+  });
+}
+
+function totalBucketControl(data, key) {
+  return data.filter(r => r.bucket === key).reduce((a, b) => a + b.bultos, 0);
+}
+
+function filaControl(zona, ubicacion, data, clase = "", detalleKey = "") {
+  const total = data.reduce((a, b) => a + b.bultos, 0);
+  const botonDetalle = detalleKey
+    ? `<button class="compact" onclick="abrirDetallePuntoControl(${argumentoSeguro(detalleKey)})">Ver</button>`
+    : "";
+  return `
+    <tr class="${clase}">
+      <td class="${zona ? "zone-cell" : ""}">${htmlSeguro(zona)}</td>
+      <td>${htmlSeguro(ubicacion)}</td>
+      ${bucketsControl.map(b => `<td class="number age-cell">${fmt(totalBucketControl(data, b.key))}</td>`).join("")}
+      <td class="number age-total">${fmt(total)}</td>
+      <td>${botonDetalle}</td>
+    </tr>
+  `;
+}
+
+function renderPuntosControl() {
+  const q = limpiar(document.getElementById("filtroControl")?.value).toLowerCase();
+  const base = calcularPuntosControl().filter(r =>
+    !q || [r.zona, r.ubicacion, r.lpn, r.codigo, r.desc].join(" ").toLowerCase().includes(q)
+  );
+  const massExcluido = base.filter(r => r.zona === "MASS");
+  const data = base.filter(r => r.zona !== "MASS");
+
+  const totalBultos = data.reduce((a, b) => a + b.bultos, 0);
+  const criticos = data.filter(r => r.antiguedad >= 7);
+  const hoy = data.filter(r => r.bucket === "hoy");
+  const zonasMap = new Map();
+  data.forEach(r => {
+    if (!zonasMap.has(r.zona)) zonasMap.set(r.zona, new Map());
+    const porUbicacion = zonasMap.get(r.zona);
+    if (!porUbicacion.has(r.ubicacion)) porUbicacion.set(r.ubicacion, []);
+    porUbicacion.get(r.ubicacion).push(r);
+  });
+
+  const productoMap = new Map();
+  data.forEach(r => {
+    if (!productoMap.has(r.codigo)) productoMap.set(r.codigo, { codigo: r.codigo, desc: r.desc, lpns: 0, bultos: 0, maxDias: 0, zonas: new Set() });
+    const p = productoMap.get(r.codigo);
+    p.lpns += 1;
+    p.bultos += r.bultos;
+    p.maxDias = Math.max(p.maxDias, r.antiguedad);
+    p.zonas.add(r.zona);
+  });
+  const productos = Array.from(productoMap.values()).sort((a, b) => b.bultos - a.bultos || b.maxDias - a.maxDias).slice(0, 20);
+
+  const massPasillos = new Map();
+  massExcluido.forEach(r => {
+    const pasillo = pasilloMass(r.ubicacion);
+    if (!massPasillos.has(pasillo)) massPasillos.set(pasillo, { pasillo, ubicaciones: new Set(), lpns: 0, bultos: 0 });
+    const item = massPasillos.get(pasillo);
+    item.ubicaciones.add(r.ubicacion);
+    item.lpns += 1;
+    item.bultos += r.bultos;
+  });
+  const resumenMass = Array.from(massPasillos.values()).sort((a, b) => Number(a.pasillo) - Number(b.pasillo));
+
+  const rows = [];
+  detallePuntosControl = new Map();
+  Array.from(zonasMap.entries())
+    .sort((a, b) => ordenZonaControl(a[0]) - ordenZonaControl(b[0]) || a[0].localeCompare(b[0]))
+    .forEach(([zona, ubicaciones]) => {
+      const ubicacionesOrdenadas = Array.from(ubicaciones.entries()).sort((a, b) => ordenarUbicacion(a[0], b[0]));
+      let totalZona = [];
+      ubicacionesOrdenadas.forEach(([ubicacion, arr], index) => {
+        totalZona = totalZona.concat(arr);
+        const detalleKey = `${zona}|${ubicacion}`;
+        detallePuntosControl.set(detalleKey, { zona, ubicacion, data: arr });
+        rows.push(filaControl(index === 0 ? zona : "", ubicacion, arr, "", detalleKey));
+      });
+      rows.push(filaControl("", "Total", totalZona, "total-row"));
+    });
+  rows.push(filaControl("Total", "", data, "grand-total-row"));
+
+  document.getElementById("controlKpis").innerHTML = `
+    <section class="kpi-grid compact">
+      ${kpi("Bultos control", fmt(totalBultos))}
+      ${kpi("LPNs control", fmt(data.length))}
+      ${kpi("+7 dias", fmt(criticos.reduce((a, b) => a + b.bultos, 0)), `${criticos.length} LPNs`, "danger")}
+      ${kpi("Hoy", fmt(hoy.reduce((a, b) => a + b.bultos, 0)), `${hoy.length} LPNs`)}
+      ${kpi("Productos", fmt(productoMap.size))}
+      ${kpi("MASS excluido", fmt(massExcluido.reduce((a, b) => a + b.bultos, 0)), `${massExcluido.length} LPNs`)}
+    </section>
+  `;
+
+  document.getElementById("controlDashboard").innerHTML = `
+    <section class="card">
+      <div class="section-head">
+        <h2>Matriz de antiguedad por punto</h2>
+        <button onclick="exportarImagen('controlDashboard', 'puntos-control')">Imagen</button>
+      </div>
+      <div class="table-wrap control-wrap">
+        <table id="tablaPuntosControl" class="control-matrix">
+          <thead>
+            <tr>
+              <th>Zona</th>
+              <th>Ubicacion</th>
+              ${bucketsControl.map(b => `<th>${b.label}</th>`).join("")}
+              <th>Total</th>
+              <th>Ver detalle</th>
+            </tr>
+          </thead>
+          <tbody>${rows.join("")}</tbody>
+        </table>
+      </div>
+    </section>
+    <section class="dashboard-layout">
+      <div class="card">
+        <h2>Productos con mayor carga en control</h2>
+        ${tabla(["Codigo", "Descripcion", "Zonas", "LPNs", "Bultos", "Max dias"], productos.map(p => `
+          <tr class="${p.maxDias >= 10 ? "bad" : "warn"}">
+            <td><strong>${p.codigo}</strong></td>
+            <td>${p.desc}</td>
+            <td>${Array.from(p.zonas).join(" / ")}</td>
+            <td>${p.lpns}</td>
+            <td>${fmt(p.bultos)}</td>
+            <td class="number">${p.maxDias}</td>
+          </tr>
+        `))}
+      </div>
+      <div class="card">
+        <h2>Lectura rapida</h2>
+        ${barra("+7 dias", criticos.reduce((a, b) => a + b.bultos, 0), totalBultos)}
+        ${barra("Hoy", hoy.reduce((a, b) => a + b.bultos, 0), totalBultos)}
+        ${barra("Productos concentrados", productos.slice(0, 5).reduce((a, b) => a + b.bultos, 0), totalBultos)}
+      </div>
+    </section>
+    <section class="card">
+      <div class="section-head">
+        <h2>MASS excluido del control</h2>
+        <span class="muted-note">Reserva y activo se resumen por pasillo para no cargar la matriz.</span>
+      </div>
+      ${tabla(["Pasillo", "Ubicaciones", "LPNs", "Bultos"], resumenMass.map(r => `
+        <tr>
+          <td><strong>${r.pasillo}</strong></td>
+          <td>${fmt(r.ubicaciones.size)}</td>
+          <td>${fmt(r.lpns)}</td>
+          <td class="number">${fmt(r.bultos)}</td>
+        </tr>
+      `), "Sin ubicaciones MASS en el filtro actual")}
+    </section>
+  `;
+}
+
+function detallePuntoControlFilas(data) {
+  const activoPorProducto = new Map();
+  inventarioComparable().forEach(r => {
+    if (!activoPorProducto.has(r.codigo)) activoPorProducto.set(r.codigo, []);
+    activoPorProducto.get(r.codigo).push(r);
+  });
+
+  return data
+    .slice()
+    .sort((a, b) => b.antiguedad - a.antiguedad || b.bultos - a.bultos)
+    .map(r => {
+      const activo = activoPorProducto.get(r.codigo) || [];
+      const ubicacionActivo = activo.length
+        ? activo.map(a => a.ubicacion).sort(ordenarUbicacion).join(", ")
+        : "SIN UBICACION ACTIVA";
+      const disponibleUnd = activo.reduce((acc, a) => acc + num(a.disponible), 0);
+      const disponibleBul = activo.reduce((acc, a) => acc + (num(a.disponible) / (a.uxb || 1)), 0);
+      return {
+        ...r,
+        ubicacionActivo,
+        disponibleUnd,
+        disponibleBul
+      };
+    });
+}
+
+function abrirDetallePuntoControl(detalleKey) {
+  const detalle = detallePuntosControl.get(detalleKey);
+  const destino = document.getElementById("modalPuntoControl");
+  if (!destino) return;
+
+  if (!detalle) {
+    destino.innerHTML = `<div class="modal-card"><button class="ghost" onclick="cerrarDetallePuntoControl()">Cerrar</button><p>Sin detalle para mostrar.</p></div>`;
+    destino.hidden = false;
+    return;
+  }
+
+  const rows = detallePuntoControlFilas(detalle.data);
+  const totalBultos = rows.reduce((a, b) => a + b.bultos, 0);
+  destino.innerHTML = `
+    <div class="modal-card">
+      <div class="section-head">
+        <div>
+          <h2>${htmlSeguro(detalle.ubicacion)}</h2>
+          <p class="muted-note">${htmlSeguro(detalle.zona)} | ${fmt(rows.length)} LPNs | ${fmt(totalBultos)} bultos</p>
+        </div>
+        <div class="filters">
+          <button onclick="exportarTablaVisible('tablaDetallePuntoControl', 'detalle_punto_control')">Excel detalle</button>
+          <button onclick="copiarTablaVisible('tablaDetallePuntoControl')">Copiar</button>
+          <button class="ghost" onclick="cerrarDetallePuntoControl()">Cerrar</button>
+        </div>
+      </div>
+      ${tablaConId("tablaDetallePuntoControl", ["Ubicacion", "LPN", "Estado LPN", "Codigo", "Descripcion", "Stock", "Ubicacion activo", "Disp activo UND", "Disp activo BUL", "Antiguedad dias"], rows.map(r => `
+        <tr class="${r.antiguedad >= 7 ? "bad" : r.antiguedad >= 3 ? "warn" : ""}">
+          <td>${htmlSeguro(r.ubicacion)}</td>
+          <td><strong>${htmlSeguro(r.lpn)}</strong></td>
+          <td><strong>${htmlSeguro(r.estadoLpn)}</strong></td>
+          <td>${htmlSeguro(r.codigo)}</td>
+          <td>${htmlSeguro(r.desc)}</td>
+          <td class="number">${fmt(r.bultos)}</td>
+          <td>${htmlSeguro(r.ubicacionActivo || "SIN ACTIVO")}</td>
+          <td>${fmt(r.disponibleUnd)}</td>
+          <td>${fmt(r.disponibleBul)}</td>
+          <td>${fmt(r.antiguedad)}</td>
+        </tr>
+      `), "Sin LPNs para esta ubicacion.")}
+    </div>
+  `;
+  destino.hidden = false;
+}
+
+function cerrarDetallePuntoControl() {
+  const destino = document.getElementById("modalPuntoControl");
+  if (!destino) return;
+  destino.hidden = true;
+  destino.innerHTML = "";
+}
+
+function exportarControlExcel() {
+  const tablaControl = document.getElementById("tablaPuntosControl");
+  if (!tablaControl) return alert("No hay tabla para exportar");
+  descargarExcel("puntos-control", tablaControl.outerHTML);
+}
+
+function exportarDetallePuntosControlGeneral() {
+  const q = limpiar(document.getElementById("filtroControl")?.value).toLowerCase();
+  const data = calcularPuntosControl().filter(r =>
+    r.zona !== "MASS" &&
+    (!q || [r.zona, r.ubicacion, r.lpn, r.codigo, r.desc].join(" ").toLowerCase().includes(q))
+  );
+  const rows = detallePuntoControlFilas(data);
+
+  if (!rows.length) return alert("No hay detalle para exportar");
+
+  const html = `
+    <table border="1">
+      <tr>
+        <th>UBICACION</th>
+        <th>LPN</th>
+        <th>ESTADO LPN</th>
+        <th>CODIGO</th>
+        <th>DESCRIPCION</th>
+        <th>STOCK</th>
+        <th>UBICACION ACTIVO</th>
+        <th>DISP ACTIVO UND</th>
+        <th>DISP ACTIVO BUL</th>
+        <th>ANTIGUEDAD DIAS</th>
+      </tr>
+      ${rows.map(r => `
+        <tr>
+          ${excelCellText(r.ubicacion)}
+          ${excelCellText(r.lpn)}
+          <td>${htmlSeguro(r.estadoLpn)}</td>
+          ${excelCellText(r.codigo)}
+          <td>${htmlSeguro(r.desc)}</td>
+          <td>${fmt(r.bultos)}</td>
+          <td>${htmlSeguro(r.ubicacionActivo)}</td>
+          <td>${fmt(r.disponibleUnd)}</td>
+          <td>${fmt(r.disponibleBul)}</td>
+          <td>${fmt(r.antiguedad)}</td>
+        </tr>
+      `).join("")}
+    </table>
+  `;
+
+  descargarExcel("puntos_control_detalle_general", html);
+}
+
+function verProductos() {
+  verInventario();
+}
+
+let modoInventario = "UND";
+let filtroEstadoInventario = "TODOS";
+
+function verInventario() {
+  document.getElementById("modulo").innerHTML = `
+    <div class="section-head">
+      <h2>Inventario</h2>
+      <div class="filters">
+        <input class="search" id="filtroInventario" placeholder="Buscar codigo, descripcion o ubicacion..." oninput="renderInventarioGeneral()">
+        <button onclick="setFiltroInventario('TODOS')">Todo</button>
+        <button onclick="setFiltroInventario('SATURADO')">Saturado</button>
+        <button onclick="setFiltroInventario('LIBERA')">Libera</button>
+        <button onclick="cambiarModoInventario('UND')">UND</button>
+        <button onclick="cambiarModoInventario('BUL')">BUL</button>
+      </div>
+    </div>
+    <div class="tabs slim">
+      <button onclick="renderInventarioGeneral()">General</button>
+      <button onclick="renderInventarioPasillos()">Pasillos</button>
+      <button onclick="renderInventarioMulti()">Multiubicacion</button>
+    </div>
+    <div id="inventarioKpis"></div>
+    <div id="inventarioVista"></div>
+  `;
+  renderInventarioGeneral();
+}
+
+function cambiarModoInventario(modo) {
+  modoInventario = modo;
+  renderInventarioGeneral();
+}
+
+function setFiltroInventario(filtro) {
+  filtroEstadoInventario = filtro;
+  renderInventarioGeneral();
+}
+
+function datosInventarioFiltrados() {
+  const q = limpiar(document.getElementById("filtroInventario")?.value).toLowerCase();
+  return consolidarInventario().filter(r => {
+    const estadoOk =
+      filtroEstadoInventario === "TODOS" ||
+      (filtroEstadoInventario === "SATURADO" && r.estado === "Saturado") ||
+      (filtroEstadoInventario === "LIBERA" && r.estado === "Libera");
+    return estadoOk && (!q || [r.codigo, r.desc, r.ubicacion, r.estado].join(" ").toLowerCase().includes(q));
+  });
+}
+
+function renderInventarioGeneral() {
+  const data = datosInventarioFiltrados();
+  const pasillo10 = inventarioPasillo10();
+  const totalPasillo10Und = pasillo10.reduce((a, b) => a + b.unact, 0);
+  const totalPasillo10Bul = pasillo10.reduce((a, b) => a + b.unact / (b.uxb || 1), 0);
+  const saturadas = data.filter(r => r.estado === "Saturado").length;
+  const libera = data.filter(r => r.estado === "Libera").length;
+  const disponibles = data.filter(r => r.disponible > 0).length;
+  const productos = new Set(data.map(r => r.codigo).filter(Boolean)).size;
+  const ocupacionPromedio = data.length > 0
+    ? data.reduce((a, b) => a + pct(b.unact, b.uniMax || b.unact), 0) / data.length
+    : 0;
+
+  document.getElementById("inventarioKpis").innerHTML = `<section class="kpi-grid compact">${kpi("Ubicaciones", fmt(data.length))}${kpi("Productos", fmt(productos))}${kpi("Disponibles", fmt(disponibles))}${kpi("Saturadas", fmt(saturadas), "", "danger")}${kpi("Libera", fmt(libera), "", "warn")}${kpi("Pasillo 10 UND", fmt(totalPasillo10Und), "no operativo", totalPasillo10Und > 0 ? "danger" : "")}${kpi("Ocupacion prom.", `${ocupacionPromedio.toFixed(1)}%`)}</section>`;
+  const alertaPasillo10 = pasillo10.length ? `
+    <div class="notice danger">
+      MASS-10 no debe tener mercaderia. Se encontro stock en ${fmt(pasillo10.length)} ubicaciones: ${fmt(totalPasillo10Und)} unidades / ${fmt(totalPasillo10Bul)} bultos.
+      <button onclick="exportarInventarioPasillo10()">Excel pasillo 10</button>
+    </div>
+  ` : "";
+  document.getElementById("inventarioVista").innerHTML = alertaPasillo10 + tabla(["Codigo", "Descripcion", "Ubicacion", "UXB", "Actual", "Asignado", "Disponible", "Futuro", "Estado"], data.map(r => {
+    const actual = modoInventario === "BUL" ? r.unact / (r.uxb || 1) : r.unact;
+    const asignado = modoInventario === "BUL" ? r.uniAsig / (r.uxb || 1) : r.uniAsig;
+    const disponible = modoInventario === "BUL" ? r.disponible / (r.uxb || 1) : r.disponible;
+    const futuro = modoInventario === "BUL" ? r.futuro / (r.uxb || 1) : r.futuro;
+    return `
+      <tr class="${r.estado === "Saturado" ? "bad" : r.estado === "Libera" ? "warn" : ""}">
+        <td><strong>${r.codigo}</strong></td>
+        <td>${r.desc}</td>
+        <td>${r.ubicacion}</td>
+        <td>${fmt(r.uxb)}</td>
+        <td>${fmt(actual)}</td>
+        <td>${fmt(asignado)}</td>
+        <td class="number">${fmt(disponible)}</td>
+        <td>${fmt(futuro)}</td>
+        <td><strong>${r.estado}</strong></td>
+      </tr>
+    `;
+  }));
+}
+
+function exportarInventarioPasillo10() {
+  const data = inventarioPasillo10();
+  if (!data.length) return alert("No hay stock en MASS-10 para exportar");
+
+  const html = `
+    <table border="1">
+      <tr>
+        <th>CODIGO</th>
+        <th>DESCRIPCION</th>
+        <th>UBICACION</th>
+        <th>UXB</th>
+        <th>UNIDADES</th>
+        <th>BULTOS</th>
+        <th>ESTADO</th>
+      </tr>
+      ${data.map(r => `
+        <tr>
+          ${excelCellText(r.codigo)}
+          <td>${htmlSeguro(r.desc)}</td>
+          ${excelCellText(r.ubicacion)}
+          <td>${fmt(r.uxb)}</td>
+          <td>${fmt(r.unact)}</td>
+          <td>${fmt(r.unact / (r.uxb || 1))}</td>
+          <td>PASILLO NO OPERATIVO</td>
+        </tr>
+      `).join("")}
+    </table>
+  `;
+  descargarExcel("inventario_mass_10_no_operativo", html);
+}
+
+function renderInventarioPasillos() {
+  const data = datosInventarioFiltrados().filter(r => r.ubicacion.toUpperCase().startsWith("MASS-"));
+  const html = Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, "0")).map(pasillo => {
+    const filas = data.filter(r => limpiar(r.ubicacion.split("-")[1]).padStart(2, "0") === pasillo);
+    if (!filas.length) return "";
+    const saturadas = filas.filter(r => r.estado === "Saturado").length;
+    const libera = filas.filter(r => r.estado === "Libera").length;
+    return `
+      <section class="card subcard">
+        <div class="section-head">
+          <h2>Pasillo ${Number(pasillo)}</h2>
+          <span class="badge">Total ${filas.length} | Saturadas ${saturadas} | Libera ${libera}</span>
+        </div>
+        ${tabla(["Codigo", "Descripcion", "Ubicacion", "Disponible", "Estado"], filas.map(r => `
+          <tr class="${r.estado === "Saturado" ? "bad" : r.estado === "Libera" ? "warn" : ""}">
+            <td>${r.codigo}</td><td>${r.desc}</td><td>${r.ubicacion}</td><td class="number">${fmt(modoInventario === "BUL" ? r.disponible / (r.uxb || 1) : r.disponible)}</td><td>${r.estado}</td>
+          </tr>
+        `))}
+      </section>
+    `;
+  }).join("");
+  document.getElementById("inventarioVista").innerHTML = html || `<div class="loading">Sin datos por pasillo.</div>`;
+}
+
+function renderInventarioMulti() {
+  const mapa = new Map();
+  consolidarInventario().forEach(r => {
+    if (!mapa.has(r.codigo)) mapa.set(r.codigo, { codigo: r.codigo, desc: r.desc, ubicaciones: [], total: 0 });
+    const item = mapa.get(r.codigo);
+    item.ubicaciones.push(r.ubicacion);
+    item.total += r.unact;
+  });
+  const data = Array.from(mapa.values()).filter(r => r.ubicaciones.length > 1).sort((a, b) => b.ubicaciones.length - a.ubicaciones.length);
+  document.getElementById("inventarioKpis").innerHTML = `<section class="kpi-grid compact">${kpi("Productos multi", fmt(data.length))}${kpi("Criticos >=5", fmt(data.filter(r => r.ubicaciones.length >= 5).length), "", "danger")}${kpi("Dispersos 3-4", fmt(data.filter(r => r.ubicaciones.length >= 3 && r.ubicaciones.length < 5).length), "", "warn")}</section>`;
+  document.getElementById("inventarioVista").innerHTML = tabla(["Codigo", "Descripcion", "Cant ubicaciones", "Ubicaciones", "Total UND", "Alerta"], data.map(r => `
+    <tr class="${r.ubicaciones.length >= 5 ? "bad" : r.ubicaciones.length >= 3 ? "warn" : ""}">
+      <td><strong>${r.codigo}</strong></td>
+      <td>${r.desc}</td>
+      <td>${r.ubicaciones.length}</td>
+      <td>${r.ubicaciones.join(" / ")}</td>
+      <td>${fmt(r.total)}</td>
+      <td>${r.ubicaciones.length >= 5 ? "CRITICO" : r.ubicaciones.length >= 3 ? "DISPERSO" : "NORMAL"}</td>
+    </tr>
+  `));
+}
+
+function verUbicaciones() {
+  const inv = consolidarInventario();
+  document.getElementById("modulo").innerHTML = `
+    <div class="section-head">
+      <h2>Ubicaciones e inventario activo</h2>
+      <input class="search" id="filtroUbi" placeholder="Buscar codigo, descripcion o ubicacion..." oninput="renderUbicaciones()">
+    </div>
+    <div id="ubicacionesKpis"></div>
+    <div id="ubicacionesTabla"></div>
+  `;
+  renderUbicaciones(inv);
+}
+
+function renderUbicaciones(invBase) {
+  const inv = invBase || consolidarInventario();
+  const q = limpiar(document.getElementById("filtroUbi")?.value).toLowerCase();
+  const data = inv.filter(r => !q || [r.codigo, r.desc, r.ubicacion, r.estado].join(" ").toLowerCase().includes(q));
+  const saturadas = data.filter(r => r.estado === "Saturado").length;
+  const libera = data.filter(r => r.estado === "Libera").length;
+  const vacias = data.filter(r => r.estado === "Vacio").length;
+
+  document.getElementById("ubicacionesKpis").innerHTML = `<section class="kpi-grid compact">${kpi("Ubicaciones", fmt(data.length))}${kpi("Disponibles", fmt(data.filter(r => r.disponible > 0).length))}${kpi("Saturadas", fmt(saturadas), "", "danger")}${kpi("Libera", fmt(libera), "", "warn")}${kpi("Vacias", fmt(vacias))}</section>`;
+  document.getElementById("ubicacionesTabla").innerHTML = tabla(["Codigo", "Descripcion", "Ubicacion", "UNACT", "ASIG", "Disp", "Futuro", "Estado"], data.map(r => `
+    <tr class="${r.estado === "Saturado" ? "bad" : r.estado === "Libera" ? "warn" : ""}">
+      <td><strong>${r.codigo}</strong></td>
+      <td>${r.desc}</td>
+      <td>${r.ubicacion}</td>
+      <td>${fmt(r.unact)}</td>
+      <td>${fmt(r.uniAsig)}</td>
+      <td class="number">${fmt(r.disponible)}</td>
+      <td>${fmt(r.futuro)}</td>
+      <td><strong>${r.estado}</strong></td>
+    </tr>
+  `));
+}
+
+function productosSinUbicacionActivo() {
+  const productosLpn = new Map();
+  const bloqueados = codigosProductoBloqueados();
+  const invActivoPorProducto = new Map();
+
+  dataInventario.forEach(i => {
+    const codigo = normalizar(i.PRODUCTO);
+    const ubicacion = limpiar(i.UBICACION);
+    if (!codigo || !ubicacion || esMassPasillo10(ubicacion)) return;
+    if (!invActivoPorProducto.has(codigo)) invActivoPorProducto.set(codigo, []);
+    invActivoPorProducto.get(codigo).push(ubicacion);
+  });
+
+  lpnsOperativos().forEach(l => {
+    const codigo = normalizar(l.CODIGO);
+    const ubi = limpiar(l.UBICACION).toUpperCase();
+    if (!codigo) return;
+    if (bloqueados.has(codigo)) return;
+    if (!ubi.startsWith("MASS") && !ubi.startsWith("BUFFER") && !ubi.startsWith("STOCK-DESBLOQUEO") && !ubi.startsWith("RAMPA") && ubi !== "") return;
+    if (!productosLpn.has(codigo)) productosLpn.set(codigo, { codigo, desc: l.DESCRIPCION || "", bultos: 0 });
+    productosLpn.get(codigo).bultos += num(l.BULTOS);
+  });
+
+  const ubicacionesPorProducto = new Map();
+  dataUbicaciones.forEach(u => {
+    const codigo = normalizar(u.PRODUCTO);
+    const ubicacion = limpiar(u.MASCARA);
+    const tipo = tipoUbicacion(u);
+    if (!codigo || codigo === "-----------") return;
+    if (esMassPasillo10(ubicacion)) return;
+    if (!ubicacionesPorProducto.has(codigo)) ubicacionesPorProducto.set(codigo, []);
+    ubicacionesPorProducto.get(codigo).push({ ubicacion, tipo });
+  });
+
+  return Array.from(productosLpn.values()).map(p => {
+    const ubicacionesInvActivo = invActivoPorProducto.get(p.codigo) || [];
+    const ubicaciones = ubicacionesPorProducto.get(p.codigo) || [];
+    const permanentes = ubicaciones.filter(u => u.tipo === "PERMANENTE");
+    const dinamicas = ubicaciones.filter(u => u.tipo === "DINAMICA");
+    return {
+      ...p,
+      estaEnInvActivo: ubicacionesInvActivo.length > 0,
+      ubicacionesInvActivo,
+      ubicacionesActivas: ubicaciones,
+      ubicacionesPermanentes: permanentes,
+      ubicacionesDinamicas: dinamicas,
+      estadoUbicacion: ubicacionesInvActivo.length > 0
+        ? "TIENE UBICACION EN INV_ACTIVO"
+        : permanentes.length > 0
+          ? "TIENE PERMANENTE EN MAESTRO"
+          : dinamicas.length > 0
+            ? "SOLO DINAMICA EN MAESTRO"
+            : "SIN UBICACION ACTIVA"
+    };
+  }).filter(p => p.ubicacionesInvActivo.length === 0 && p.ubicacionesPermanentes.length === 0);
+}
+
+function diagnosticoAptitudSlotting() {
+  const bloqueados = codigosProductoBloqueados();
+  const productosLpn = new Set();
+  lpnsOperativos().forEach(l => {
+    const codigo = normalizar(l.CODIGO);
+    const ubi = limpiar(l.UBICACION).toUpperCase();
+    if (!codigo) return;
+    if (!ubi.startsWith("MASS") && !ubi.startsWith("BUFFER") && !ubi.startsWith("STOCK-DESBLOQUEO") && !ubi.startsWith("RAMPA") && ubi !== "") return;
+    productosLpn.add(codigo);
+  });
+
+  const invActivo = new Set(dataInventario.filter(i => !esMassPasillo10(i.UBICACION)).map(i => normalizar(i.PRODUCTO)).filter(Boolean));
+  const pedido = new Set(dataPedido.map(p => normalizar(p.PRODUCTO)).filter(Boolean));
+  const aptos = productosSinUbicacionActivo();
+
+  return {
+    baseLpn: productosLpn.size,
+    bloqueados: Array.from(productosLpn).filter(c => bloqueados.has(c)).length,
+    conInvActivo: Array.from(productosLpn).filter(c => invActivo.has(c)).length,
+    conPedido: aptos.filter(p => pedido.has(p.codigo)).length,
+    aptosFinal: aptos.filter(p => pedido.has(p.codigo)).length
+  };
+}
+
+function codigosProductoBloqueados() {
+  const productosPorAlt = new Map();
+  dataProductos.forEach(p => {
+    const alt = normalizar(p.CODIGO_ALT || p.COD_ALT || p.COD_ALTERNATIVO || p["CODIGO ALTERNATIVO"] || p["Cod Alternat"]);
+    const codigo = normalizar(p.CODIGO);
+    if (alt && codigo) productosPorAlt.set(alt, codigo);
+  });
+
+  const bloqueados = new Set();
+  (dataBloqueo || []).forEach(b => {
+    const alt = normalizar(b.COD_ALTERNATIVO || b.COD_ALT || b.CODIGO_ALT || b.ALTERNATIVO);
+    const codigo = productosPorAlt.get(alt);
+    if (codigo) bloqueados.add(codigo);
+  });
+
+  return bloqueados;
+}
+
+function productosCriticosSlotting() {
+  const sinUbi = productosSinUbicacionActivo();
+  const pedido = new Map();
+  dataPedido.forEach(p => {
+    const codigo = normalizar(p.PRODUCTO);
+    if (!codigo) return;
+    if (!pedido.has(codigo)) pedido.set(codigo, 0);
+    pedido.set(codigo, pedido.get(codigo) + num(campo(p, ["BULTOS_PEDIDO", "BULTOS_REAL"])));
+  });
+  const base = sinUbi
+    .filter(p => pedido.has(p.codigo))
+    .map(p => ({ ...p, bultosPedido: pedido.get(p.codigo) }));
+  const promedio = base.reduce((a, b) => a + b.bultosPedido, 0) / (base.length || 1);
+  return base.map(p => ({ ...p, demanda: p.bultosPedido >= promedio ? "ALTO" : "BAJO" }));
+}
+
+function tipoUbicacion(row) {
+  const tipo = limpiar(row.TIPO_UBICACION || row.TIPO || row.TIPOUBICACION)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase();
+  if (tipo.includes("DIN")) return "DINAMICA";
+  if (tipo.includes("PER")) return "PERMANENTE";
+  return tipo || "SIN TIPO";
+}
+
+function productoPorCodigo(codigo) {
+  const cod = normalizar(codigo);
+  return dataProductos.find(p => normalizar(p.CODIGO) === cod);
+}
+
+function reportePasillo10NoOperativo() {
+  const filas = [];
+  const maestroPorUbicacion = new Map();
+
+  dataUbicaciones.forEach(u => {
+    const ubicacion = limpiar(u.MASCARA || u.UBICACION);
+    if (!esMassPasillo10(ubicacion)) return;
+
+    const tipo = tipoUbicacion(u);
+    const codigo = normalizar(u.PRODUCTO);
+    const productoSeteado = codigo && codigo !== "-----------" ? codigo : "";
+    const prod = productoPorCodigo(productoSeteado);
+    maestroPorUbicacion.set(ubicacion, { tipo, productoSeteado });
+    if (tipo !== "DINAMICA" && tipo !== "PERMANENTE" && !productoSeteado) return;
+
+    filas.push({
+      origen: "MAESTRO UBICACIONES",
+      ubicacion,
+      tipo,
+      codigo: productoSeteado,
+      descripcion: prod?.DESCRIPCION || limpiar(u.DESCRIPCION),
+      unidades: 0,
+      bultos: 0,
+      alerta: productoSeteado
+        ? "PRODUCTO SETEADO EN PASILLO NO OPERATIVO"
+        : "UBICACION SETEADA EN PASILLO NO OPERATIVO"
+    });
+  });
+
+  inventarioPasillo10().forEach(i => {
+    const maestro = maestroPorUbicacion.get(i.ubicacion) || {};
+    filas.push({
+      origen: "INV_ACTIVO",
+      ubicacion: i.ubicacion,
+      tipo: maestro.tipo || "SIN MAESTRO",
+      codigo: i.codigo,
+      descripcion: i.desc,
+      unidades: i.unact,
+      bultos: i.unact / (i.uxb || 1),
+      alerta: "STOCK EN PASILLO NO OPERATIVO"
+    });
+  });
+
+  return filas.sort((a, b) => ordenarUbicacion(a.ubicacion, b.ubicacion) || a.origen.localeCompare(b.origen));
+}
+
+function exportarPasillo10NoOperativo() {
+  const data = reportePasillo10NoOperativo();
+  if (!data.length) return alert("No se encontraron ubicaciones seteadas ni stock en MASS-10");
+
+  const html = `
+    <table border="1">
+      <tr>
+        <th>ORIGEN</th>
+        <th>UBICACION</th>
+        <th>TIPO</th>
+        <th>CODIGO SETEADO/STOCK</th>
+        <th>DESCRIPCION</th>
+        <th>UNIDADES</th>
+        <th>BULTOS</th>
+        <th>ALERTA</th>
+      </tr>
+      ${data.map(r => `
+        <tr>
+          <td>${htmlSeguro(r.origen)}</td>
+          ${excelCellText(r.ubicacion)}
+          <td>${htmlSeguro(r.tipo)}</td>
+          ${excelCellText(r.codigo)}
+          <td>${htmlSeguro(r.descripcion)}</td>
+          <td>${fmt(r.unidades)}</td>
+          <td>${fmt(r.bultos)}</td>
+          <td>${htmlSeguro(r.alerta)}</td>
+        </tr>
+      `).join("")}
+    </table>
+  `;
+  descargarExcel("mass_10_no_operativo", html);
+}
+
+function ubicacionesSeteadasBloqueadas(codigosBloqueados = codigosProductoBloqueados()) {
+  const codigos = codigosBloqueados instanceof Set ? codigosBloqueados : new Set(codigosBloqueados || []);
+  return dataUbicaciones
+    .map(u => {
+      const codigo = normalizar(u.PRODUCTO);
+      const ubicacion = limpiar(u.MASCARA || u.UBICACION);
+      if (!codigo || codigo === "-----------" || !codigos.has(codigo)) return null;
+      const prod = productoPorCodigo(codigo);
+      const tipo = tipoUbicacion(u);
+      return {
+        codigo,
+        descripcion: prod?.DESCRIPCION || limpiar(u.DESCRIPCION),
+        ubicacion,
+        tipo,
+        pasillo: pasilloMass(ubicacion) || "-",
+        estado: esMassPasillo10(ubicacion)
+          ? "BLOQUEADO SETEADO EN MASS-10"
+          : "BLOQUEADO SETEADO EN ACTIVO"
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.codigo.localeCompare(b.codigo) || ordenarUbicacion(a.ubicacion, b.ubicacion));
+}
+
+function exportarSeteadosBloqueados() {
+  const data = ubicacionesSeteadasBloqueadas();
+  if (!data.length) return alert("No hay productos bloqueados seteados en ubicaciones activas");
+
+  const html = `
+    <table border="1">
+      <tr>
+        <th>CODIGO</th>
+        <th>DESCRIPCION</th>
+        <th>UBICACION SETEADA</th>
+        <th>TIPO UBICACION</th>
+        <th>PASILLO</th>
+        <th>ESTADO</th>
+      </tr>
+      ${data.map(r => `
+        <tr>
+          ${excelCellText(r.codigo)}
+          <td>${htmlSeguro(r.descripcion)}</td>
+          ${excelCellText(r.ubicacion)}
+          <td>${htmlSeguro(r.tipo)}</td>
+          <td>${htmlSeguro(r.pasillo)}</td>
+          <td>${htmlSeguro(r.estado)}</td>
+        </tr>
+      `).join("")}
+    </table>
+  `;
+  descargarExcel("bloqueo_productos_seteados_activo", html);
+}
+
+function mapaPasillosSlotting() {
+  const mapa = new Map();
+  dataInventario.forEach(i => {
+    const ubi = limpiar(i.UBICACION);
+    if (!ubi.toUpperCase().startsWith("MASS-")) return;
+    const pasillo = limpiar(ubi.split("-")[1]).padStart(2, "0");
+    if (pasillo === "10") return;
+    const codigo = normalizar(i.PRODUCTO);
+    const prod = dataProductos.find(p => normalizar(p.CODIGO) === codigo);
+    const jerarquia = limpiar(prod?.JERARQUIA1) || "SIN_J1";
+    if (!mapa.has(pasillo)) mapa.set(pasillo, { pasillo, total: 0, jerarquias: {}, productos: [], libres: 0, ocupadas: 0 });
+    const item = mapa.get(pasillo);
+    item.total += 1;
+    item.jerarquias[jerarquia] = (item.jerarquias[jerarquia] || 0) + 1;
+    item.productos.push({
+      codigo,
+      descripcion: i.DESCRIPCION || prod?.DESCRIPCION || "",
+      jerarquia
+    });
+  });
+
+  const ubicacionesLibres = [];
+  const ubicacionesOcupadas = [];
+  dataUbicaciones.forEach(u => {
+    const ubi = limpiar(u.MASCARA);
+    if (!ubi.toUpperCase().startsWith("MASS-")) return;
+    const pasillo = limpiar(ubi.split("-")[1]).padStart(2, "0");
+    if (pasillo === "10") return;
+    const tipo = tipoUbicacion(u);
+    if (tipo !== "DINAMICA") return;
+    if (!mapa.has(pasillo)) mapa.set(pasillo, { pasillo, total: 0, jerarquias: {}, productos: [], libres: 0, ocupadas: 0 });
+    const producto = normalizar(u.PRODUCTO);
+    if (!producto || producto === "-----------") {
+      ubicacionesLibres.push({ ubicacion: ubi, pasillo, tipo });
+      mapa.get(pasillo).libres += 1;
+    } else {
+      ubicacionesOcupadas.push({ ubicacion: ubi, pasillo, producto });
+      mapa.get(pasillo).ocupadas += 1;
+    }
+  });
+
+  const pasillos = Array.from(mapa.values()).map(p => {
+    const top = Object.entries(p.jerarquias).sort((a, b) => b[1] - a[1])[0] || ["SIN_J1", 0];
+    p.predominante = top[0];
+    p.porcentaje = p.total > 0 ? (top[1] / p.total) * 100 : 0;
+    return p;
+  }).sort((a, b) => Number(a.pasillo) - Number(b.pasillo));
+
+  return { pasillos, ubicacionesLibres, ubicacionesOcupadas };
+}
+
+function calcularSlotting() {
+  const criticos = productosCriticosSlotting();
+  const { pasillos, ubicacionesLibres, ubicacionesOcupadas } = mapaPasillosSlotting();
+  const usadas = new Set();
+
+  const resultado = criticos.map(p => {
+    const prod = dataProductos.find(x => normalizar(x.CODIGO) === p.codigo);
+    const jerarquia = limpiar(prod?.JERARQUIA1) || "SIN_J1";
+    const uxb = num(prod?.UXB) || 1;
+    const candidatos = pasillos.map(ps => {
+      let score = 0;
+      const detalle = [];
+      const similares = ps.productos
+        .map(prodPasillo => ({
+          ...prodPasillo,
+          similitud: similitudTexto(`${p.desc} ${jerarquia}`, `${prodPasillo.descripcion} ${prodPasillo.jerarquia}`)
+        }))
+        .filter(x => x.similitud > 0)
+        .sort((a, b) => b.similitud - a.similitud);
+      const similitud = similares[0]?.similitud || 0;
+      if (ps.predominante === jerarquia) {
+        score += 50;
+        detalle.push("jerarquia");
+      }
+      if (similitud > 0) {
+        const puntosSimilitud = Math.round(similitud * 30);
+        score += puntosSimilitud;
+        detalle.push(`similitud +${puntosSimilitud}`);
+      }
+      score += Math.min(ps.libres + ps.ocupadas, 20);
+      if (ps.porcentaje >= 70) score += 20;
+      if (p.demanda === "ALTO") score += 10;
+      return { ...ps, score, detalle, similitud, similarTop: similares[0] || null };
+    }).sort((a, b) => b.score - a.score);
+
+    const top = candidatos[0];
+    const buscarEnPasillos = lista => {
+      for (const cand of candidatos) {
+        const found = lista.find(u => u.pasillo === cand.pasillo && !usadas.has(u.ubicacion));
+        if (found) return found;
+      }
+      return null;
+    };
+    const ubicacionLibre = buscarEnPasillos(ubicacionesLibres);
+    const ubicacionOcupada = ubicacionLibre ? null : buscarEnPasillos(ubicacionesOcupadas);
+    const ubicacion = ubicacionLibre || ubicacionOcupada;
+    if (ubicacion) usadas.add(ubicacion.ubicacion);
+
+    return {
+      ...p,
+      jerarquia,
+      uxb,
+      top1: top,
+      top2: candidatos[1],
+      top3: candidatos[2],
+      ubicacionSugerida: ubicacion?.ubicacion || "-",
+      accionSlotting: ubicacionLibre
+        ? "USAR LIBRE"
+        : ubicacionOcupada
+          ? `LIBERAR DINAMICA (${ubicacionOcupada.producto})`
+          : "SIN DINAMICA DISPONIBLE",
+      ocupanteActual: ubicacionOcupada?.producto || ""
+    };
+  }).sort((a, b) => (b.top1?.score || 0) - (a.top1?.score || 0));
+
+  return { resultado, pasillos, ubicacionesLibres, ubicacionesOcupadas };
+}
+
+function verSlotting() {
+  const { resultado, pasillos, ubicacionesLibres, ubicacionesOcupadas } = calcularSlotting();
+  const diag = diagnosticoAptitudSlotting();
+  const altos = resultado.filter(x => x.demanda === "ALTO").length;
+  const libresSugeridas = resultado.filter(x => x.accionSlotting === "USAR LIBRE").length;
+  const liberarSugeridas = resultado.filter(x => x.accionSlotting.startsWith("LIBERAR")).length;
+  const totalDinamicas = ubicacionesLibres.length + ubicacionesOcupadas.length;
+
+  document.getElementById("modulo").innerHTML = `
+    <div class="section-head">
+      <div>
+        <h2>Slotting Inteligente</h2>
+        <p>Validacion de ubicaciones dinamicas, pasillos y productos sin ubicacion activa.</p>
+      </div>
+      <div class="filters">
+        <input class="search" id="filtroSlotting" placeholder="Buscar producto, descripcion o pasillo..." oninput="filtrarTabla('tablaSlotting', this.value)">
+        <button onclick="copiarTablaVisible('tablaSlotting')">Copiar visible</button>
+        <button onclick="exportarTablaVisible('tablaSlotting', 'slotting_visible')">Excel visible</button>
+        <button onclick="exportarSlottingDinamicas()">Excel dinamicas</button>
+        <button onclick="exportarSlottingPasillos()">Excel pasillos</button>
+        <button onclick="exportarSlottingSugerencias()">Excel sugerencias</button>
+      </div>
+    </div>
+    <section class="kpi-grid compact">
+      ${kpi("Productos criticos", fmt(resultado.length))}
+      ${kpi("Demanda alta", fmt(altos), "", "danger")}
+      ${kpi("Demanda baja", fmt(resultado.length - altos), "", "warn")}
+      ${kpi("Dinamicas libres", fmt(ubicacionesLibres.length))}
+      ${kpi("Dinamicas ocupadas", fmt(ubicacionesOcupadas.length), `${pct(ubicacionesOcupadas.length, totalDinamicas).toFixed(1)}%`)}
+      ${kpi("Pasillos evaluados", fmt(pasillos.length))}
+      ${kpi("Usar libres", fmt(libresSugeridas))}
+      ${kpi("Liberar dinamicas", fmt(liberarSugeridas), "", "warn")}
+      ${kpi("Excluidos bloqueo", fmt(diag.bloqueados), "", "danger")}
+      ${kpi("Con INV activo", fmt(diag.conInvActivo))}
+    </section>
+    <section class="card slotting-visual">
+      <div>
+        <h2>Disponibilidad dinamica</h2>
+        <div class="stack tall">
+          <div style="width:${pct(ubicacionesLibres.length, totalDinamicas)}%"></div>
+          <div style="width:${pct(ubicacionesOcupadas.length, totalDinamicas)}%"></div>
+        </div>
+        <div class="legend">
+          <span><b class="dot green"></b>Libres ${ubicacionesLibres.length}</span>
+          <span><b class="dot red"></b>Ocupadas ${ubicacionesOcupadas.length}</span>
+        </div>
+      </div>
+      <div>
+        <h2>Decision sugerida</h2>
+        ${barra("Usar ubicacion libre", libresSugeridas, resultado.length)}
+        ${barra("Liberar dinamica", liberarSugeridas, resultado.length)}
+      </div>
+    </section>
+    <section class="dashboard-layout">
+      <div class="card">
+        <h2>Productos sugeridos</h2>
+        ${tablaConId("tablaSlotting", ["Codigo", "Descripcion", "Bultos pedido", "Max", "Min", "Estado ubicacion", "INV activo", "Demanda", "Top 1", "Similitud", "Ubicacion sugerida", "Accion", "Score", "Top 2", "Top 3"], resultado.map((r, index) => `
+          <tr class="${r.demanda === "ALTO" ? "bad" : "warn"}">
+            <td><strong>${r.codigo}</strong></td>
+            <td>${r.desc}</td>
+            <td>${fmt(r.bultosPedido)}</td>
+            <td><input class="mini-input" id="slotMax_${index}" type="number" value="${Math.ceil(r.bultosPedido)}" oninput="actualizarMinSlotting(${index})"></td>
+            <td><input class="mini-input readonly" id="slotMin_${index}" type="number" value="${Math.ceil(r.bultosPedido / 2)}" readonly></td>
+            <td>${r.estadoUbicacion}</td>
+            <td>${r.estaEnInvActivo ? "SI" : "NO"}</td>
+            <td>${r.demanda}</td>
+            <td>${r.top1?.pasillo || "-"}</td>
+            <td>${r.top1?.similarTop ? `${r.top1.similarTop.codigo} (${Math.round(r.top1.similitud * 100)}%)` : "-"}</td>
+            <td class="number">${r.ubicacionSugerida}</td>
+            <td><strong>${r.accionSlotting}</strong></td>
+            <td><strong>${r.top1?.score || 0}</strong></td>
+            <td>${r.top2?.pasillo || "-"}</td>
+            <td>${r.top3?.pasillo || "-"}</td>
+          </tr>
+        `))}
+      </div>
+      <div class="card">
+        <h2>Resumen pasillos</h2>
+        ${tabla(["Pasillo", "Predominante", "%", "Libres", "Ocupadas", "Estado"], pasillos.map(p => `
+          <tr class="${p.libres <= 5 ? "bad" : p.libres <= 20 ? "warn" : ""}">
+            <td><strong>${p.pasillo}</strong></td>
+            <td>${p.predominante}</td>
+            <td>${p.porcentaje.toFixed(1)}%</td>
+            <td class="number">${p.libres}</td>
+            <td>${p.ocupadas}</td>
+            <td>${p.libres <= 5 ? "Critico" : p.libres <= 20 ? "Medio" : "Disponible"}</td>
+          </tr>
+        `))}
+      </div>
+    </section>
+  `;
+}
+
+function excelCellText(valor) {
+  return `<td style="mso-number-format:'\\@';">${htmlSeguro(valor ?? "")}</td>`;
+}
+
+function exportarSlottingDinamicas() {
+  const { ubicacionesLibres, ubicacionesOcupadas } = calcularSlotting();
+  const filas = [
+    ...ubicacionesLibres.map(u => ({ ...u, producto: "-----------", estado: "LIBRE" })),
+    ...ubicacionesOcupadas.map(u => ({ ...u, estado: "OCUPADA" }))
+  ].sort((a, b) => ordenarUbicacion(a.ubicacion, b.ubicacion));
+
+  const html = `
+    <table border="1">
+      <tr>
+        <th>UBICACION</th>
+        <th>PASILLO</th>
+        <th>TIPO</th>
+        <th>PRODUCTO</th>
+        <th>ESTADO</th>
+      </tr>
+      ${filas.map(r => `
+        <tr>
+          ${excelCellText(r.ubicacion)}
+          <td>${r.pasillo}</td>
+          <td>${r.tipo}</td>
+          ${excelCellText(r.producto || "")}
+          <td>${r.estado}</td>
+        </tr>
+      `).join("")}
+    </table>
+  `;
+
+  descargarExcel("slotting_dinamicas", html);
+}
+
+function exportarSlottingPasillos() {
+  const { pasillos } = calcularSlotting();
+  const html = `
+    <table border="1">
+      <tr>
+        <th>PASILLO</th>
+        <th>PREDOMINANTE</th>
+        <th>PREDOMINANCIA %</th>
+        <th>LIBRES</th>
+        <th>OCUPADAS</th>
+        <th>TOTAL DINAMICAS</th>
+        <th>TOP JERARQUIAS</th>
+        <th>ESTADO</th>
+      </tr>
+      ${pasillos.map(p => {
+        const topJerarquias = Object.entries(p.jerarquias)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 8)
+          .map(([j, c]) => `${j}: ${c}`)
+          .join(" | ");
+        return `
+          <tr>
+            <td>${p.pasillo}</td>
+            <td>${p.predominante}</td>
+            <td>${p.porcentaje.toFixed(1)}%</td>
+            <td>${p.libres}</td>
+            <td>${p.ocupadas}</td>
+            <td>${p.libres + p.ocupadas}</td>
+            <td>${topJerarquias}</td>
+            <td>${p.libres <= 5 ? "CRITICO" : p.libres <= 20 ? "MEDIO" : "DISPONIBLE"}</td>
+          </tr>
+        `;
+      }).join("")}
+    </table>
+  `;
+
+  descargarExcel("slotting_resumen_pasillos", html);
+}
+
+function exportarSlottingSugerencias() {
+  const { resultado } = calcularSlotting();
+  const html = `
+    <table border="1">
+      <tr>
+        <th>CODIGO</th>
+        <th>DESCRIPCION</th>
+        <th>BULTOS_PEDIDO</th>
+        <th>MAX</th>
+        <th>MIN</th>
+        <th>ESTADO_UBICACION</th>
+        <th>INV_ACTIVO</th>
+        <th>DEMANDA</th>
+        <th>JERARQUIA</th>
+        <th>TOP_1_PASILLO</th>
+        <th>PRODUCTO_SIMILAR</th>
+        <th>SIMILITUD</th>
+        <th>UBICACION_SUGERIDA</th>
+        <th>ACCION</th>
+        <th>OCUPANTE_ACTUAL</th>
+        <th>SCORE</th>
+        <th>TOP_2</th>
+        <th>TOP_3</th>
+      </tr>
+      ${resultado.map(r => `
+        <tr>
+          ${excelCellText(r.codigo)}
+          <td>${r.desc}</td>
+          <td>${r.bultosPedido}</td>
+          <td>${Math.ceil(r.bultosPedido)}</td>
+          <td>${Math.ceil(r.bultosPedido / 2)}</td>
+          <td>${r.estadoUbicacion}</td>
+          <td>${r.estaEnInvActivo ? "SI" : "NO"}</td>
+          <td>${r.demanda}</td>
+          <td>${r.jerarquia}</td>
+          <td>${r.top1?.pasillo || ""}</td>
+          ${excelCellText(r.top1?.similarTop?.codigo || "")}
+          <td>${r.top1?.similitud ? `${Math.round(r.top1.similitud * 100)}%` : ""}</td>
+          ${excelCellText(r.ubicacionSugerida)}
+          <td>${r.accionSlotting}</td>
+          ${excelCellText(r.ocupanteActual || "")}
+          <td>${r.top1?.score || 0}</td>
+          <td>${r.top2?.pasillo || ""}</td>
+          <td>${r.top3?.pasillo || ""}</td>
+        </tr>
+      `).join("")}
+    </table>
+  `;
+
+  descargarExcel("slotting_sugerencias", html);
+}
+
+function filtrarTabla(id, valor) {
+  const q = limpiar(valor).toLowerCase();
+  document.querySelectorAll(`#${id} tbody tr`).forEach(tr => {
+    tr.style.display = tr.innerText.toLowerCase().includes(q) ? "" : "none";
+  });
+}
+
+function actualizarMinSlotting(index) {
+  const max = num(document.getElementById(`slotMax_${index}`)?.value);
+  const min = document.getElementById(`slotMin_${index}`);
+  if (min) min.value = Math.ceil(max / 2);
+}
+
+function filtrarBloqueo() {
+  const q = limpiar(document.getElementById("filtroBloqueo")?.value).toLowerCase();
+  const estado = document.getElementById("estadoBloqueo")?.value || "todos";
+
+  document.querySelectorAll("#tablaBloqueo tbody tr").forEach(tr => {
+    const coincideTexto = !q || tr.innerText.toLowerCase().includes(q);
+    const coincideEstado = estado === "todos" || tr.dataset.estado === estado;
+    tr.style.display = coincideTexto && coincideEstado ? "" : "none";
+  });
+}
+
+function esUbicacionReservaBloqueo(ubicacion) {
+  return limpiar(ubicacion).toUpperCase().startsWith("MASS-");
+}
+
+function esUbicacionBloqueoSeparado(ubicacion) {
+  const ubi = limpiar(ubicacion).toUpperCase();
+  return ubi.includes("BLOQUEO") || ubi.includes("BLOQUEADO") || ubi.includes("CIRCUITO") || ubi.includes("PTS");
+}
+
+function resumenOperativoBloqueado(codigo, activo, lpnsBloqueados) {
+  const lpnProducto = lpnsBloqueados.filter(r => normalizar(r.CODIGO) === codigo);
+  const activoProducto = activo.filter(r => r.codigo === codigo);
+  const mass = lpnProducto.filter(r => esUbicacionReservaBloqueo(r.UBICACION));
+  const separado = lpnProducto.filter(r => esUbicacionBloqueoSeparado(r.UBICACION));
+  const otras = lpnProducto.filter(r =>
+    !esUbicacionReservaBloqueo(r.UBICACION) &&
+    !esUbicacionBloqueoSeparado(r.UBICACION)
+  );
+  const bultosMass = mass.reduce((a, b) => a + num(b.BULTOS), 0);
+  const bultosSeparado = separado.reduce((a, b) => a + num(b.BULTOS), 0);
+  const bultosOtras = otras.reduce((a, b) => a + num(b.BULTOS), 0);
+  const bultosActivo = activoProducto.reduce((a, b) => a + b.unact / (b.uxb || 1), 0);
+  const lpnsExtraer = [...mass, ...otras];
+  const ubicacionesExtraer = [...new Set(lpnsExtraer.map(r => limpiar(r.UBICACION) || "PALETERO"))];
+
+  return {
+    bultosMass,
+    bultosSeparado,
+    bultosOtras,
+    bultosActivo,
+    lpnsExtraer,
+    ubicacionesExtraer,
+    estado: bultosMass > 0
+      ? "RETIRAR DE MASS"
+      : bultosOtras > 0
+        ? "REVISAR OTRA UBICACION"
+        : bultosActivo > 0
+          ? "REVISAR ACTIVO"
+          : bultosSeparado > 0
+            ? "YA SEPARADO"
+            : "SIN STOCK OPERATIVO"
+  };
+}
+
+function verBloqueo() {
+  const codigos = new Set(dataBloqueo.map(r => normalizar(r.COD_ALT)).filter(Boolean));
+  const porAlt = new Map(dataProductos.map(p => [normalizar(p.CODIGO_ALT || p.COD_ALT || p.COD_ALTERNATIVO || p["CODIGO ALTERNATIVO"] || p["Cod Alternat"]), p]));
+  const productos = Array.from(codigos).map(alt => {
+    const prod = porAlt.get(alt);
+    return {
+      alt,
+      codigo: normalizar(prod?.CODIGO),
+      desc: prod?.DESCRIPCION || dataBloqueo.find(b => normalizar(b.COD_ALT) === alt)?.DESCRIPCION || "No encontrado",
+      encontrado: Boolean(prod)
+    };
+  });
+
+  const codigoSet = new Set(productos.map(p => p.codigo).filter(Boolean));
+  const activo = inventarioComparable().filter(r => codigoSet.has(r.codigo));
+  const lpnsBloqueados = lpnsOperativos().filter(r => codigoSet.has(normalizar(r.CODIGO)));
+  productos.forEach(p => {
+    p.operativo = p.codigo ? resumenOperativoBloqueado(p.codigo, activo, lpnsBloqueados) : null;
+  });
+  const reserva = lpnsBloqueados.filter(r => esUbicacionReservaBloqueo(r.UBICACION));
+  const separado = lpnsBloqueados.filter(r => esUbicacionBloqueoSeparado(r.UBICACION));
+  const otrasUbicaciones = lpnsBloqueados.filter(r =>
+    !esUbicacionReservaBloqueo(r.UBICACION) &&
+    !esUbicacionBloqueoSeparado(r.UBICACION)
+  );
+  const totalActivo = activo.reduce((a, b) => a + b.unact / (b.uxb || 1), 0);
+  const totalReserva = reserva.reduce((a, b) => a + num(b.BULTOS), 0);
+  const totalSeparado = separado.reduce((a, b) => a + num(b.BULTOS), 0);
+  const totalOtras = otrasUbicaciones.reduce((a, b) => a + num(b.BULTOS), 0);
+  const pasillo10 = reportePasillo10NoOperativo();
+  const totalPasillo10Stock = pasillo10.reduce((a, b) => a + num(b.bultos), 0);
+  const seteadosBloqueados = ubicacionesSeteadasBloqueadas(codigoSet);
+
+  document.getElementById("modulo").innerHTML = `
+    <section class="kpi-grid compact">
+      ${kpi("Bloqueados", fmt(productos.length))}
+      ${kpi("Encontrados", fmt(productos.filter(p => p.encontrado).length))}
+      ${kpi("Activo BUL", fmt(totalActivo))}
+      ${kpi("Reserva MASS BUL", fmt(totalReserva))}
+      ${kpi("Ya separado BUL", fmt(totalSeparado))}
+      ${kpi("Otras ubic. BUL", fmt(totalOtras), "", totalOtras > 0 ? "warn" : "")}
+      ${kpi("Por retirar", fmt(totalActivo + totalReserva + totalOtras), "activo + MASS + otras")}
+      ${kpi("MASS-10 alertas", fmt(pasillo10.length), `${fmt(totalPasillo10Stock)} bultos`, pasillo10.length ? "danger" : "")}
+      ${kpi("Seteados activo", fmt(seteadosBloqueados.length), "bloqueados", seteadosBloqueados.length ? "danger" : "")}
+    </section>
+    ${pasillo10.length ? `
+      <div class="notice danger">
+        MASS-10 no es operativo. Hay ubicaciones seteadas o stock en ese pasillo y no se considera como activo disponible.
+        <button onclick="exportarPasillo10NoOperativo()">Detectar y descargar MASS-10</button>
+      </div>
+    ` : `
+      <div class="notice">
+        MASS-10 sin ubicaciones seteadas ni stock detectado.
+        <button onclick="exportarPasillo10NoOperativo()">Detectar y descargar MASS-10</button>
+      </div>
+    `}
+    <div class="card">
+      <div class="section-head">
+        <h2>Productos bloqueados</h2>
+        <div class="filters">
+          <input class="search" id="filtroBloqueo" placeholder="Buscar codigo alt, codigo o descripcion..." oninput="filtrarBloqueo()">
+          <select class="select-filter" id="estadoBloqueo" onchange="filtrarBloqueo()">
+            <option value="todos">Todos</option>
+            <option value="encontrado">Encontrados</option>
+            <option value="noEncontrado">No encontrados</option>
+          </select>
+          <button onclick="copiarTablaVisible('tablaBloqueo')">Copiar</button>
+          <button onclick="exportarTablaVisible('tablaBloqueo', 'bloqueo_visible')">Excel visible</button>
+        </div>
+      </div>
+      ${tablaConId("tablaBloqueo", ["Codigo alt", "Codigo", "Descripcion", "Estado", "LPNs extraer", "Ubicacion extraer", "Bultos extraer", "Separado"], productos.map(p => {
+        const op = p.operativo;
+        const bultosExtraer = op ? op.bultosMass + op.bultosOtras : 0;
+        const clase = !p.encontrado ? "bad" : bultosExtraer > 0 ? "warn" : op?.bultosSeparado > 0 ? "" : "bad";
+        return `
+        <tr class="${clase}" data-estado="${p.encontrado ? "encontrado" : "noEncontrado"}">
+          <td>${htmlSeguro(p.alt)}</td>
+          <td><strong>${htmlSeguro(p.codigo || "-")}</strong></td>
+          <td>${htmlSeguro(p.desc)}</td>
+          <td><strong>${htmlSeguro(p.encontrado ? op.estado : "No encontrado")}</strong></td>
+          <td>${op ? fmt(op.lpnsExtraer.length) : ""}</td>
+          <td>${htmlSeguro(op ? op.ubicacionesExtraer.join(", ") : "")}</td>
+          <td class="number">${op ? fmt(bultosExtraer) : ""}</td>
+          <td>${op ? fmt(op.bultosSeparado) : ""}</td>
+        </tr>
+      `}))}
+    </div>
+    <div class="dashboard-layout">
+      <div class="card">
+        <div class="section-head">
+          <h2>Bloqueados seteados en activo</h2>
+          <div class="filters">
+            <button onclick="exportarTablaVisible('tablaBloqueoSeteados', 'bloqueo_seteados_activo_visible')">Excel visible</button>
+            <button onclick="exportarSeteadosBloqueados()">Excel completo</button>
+            <button onclick="copiarTablaVisible('tablaBloqueoSeteados')">Copiar</button>
+          </div>
+        </div>
+        ${tablaConId("tablaBloqueoSeteados", ["Codigo", "Descripcion", "Ubicacion seteada", "Tipo", "Pasillo", "Estado"], seteadosBloqueados.map(r => `
+          <tr class="bad">
+            <td><strong>${htmlSeguro(r.codigo)}</strong></td>
+            <td>${htmlSeguro(r.descripcion)}</td>
+            <td>${htmlSeguro(r.ubicacion)}</td>
+            <td>${htmlSeguro(r.tipo)}</td>
+            <td>${htmlSeguro(r.pasillo)}</td>
+            <td><strong>${htmlSeguro(r.estado)}</strong></td>
+          </tr>
+        `), "Ningun producto bloqueado esta seteado en ubicaciones activas.")}
+      </div>
+      <div class="card">
+        <div class="section-head">
+          <h2>Inventario activo bloqueado</h2>
+          <div class="filters">
+            <button onclick="exportarTablaVisible('tablaBloqueoActivo', 'bloqueo_detalle_activo')">Excel detalle activo</button>
+            <button onclick="copiarTablaVisible('tablaBloqueoActivo')">Copiar</button>
+          </div>
+        </div>
+        ${tablaConId("tablaBloqueoActivo", ["Codigo", "Descripcion", "Ubicacion", "Unidades", "Bultos"], activo.map(r => `
+          <tr>
+            <td>${htmlSeguro(r.codigo)}</td>
+            <td>${htmlSeguro(r.desc)}</td>
+            <td>${htmlSeguro(r.ubicacion)}</td>
+            <td>${fmt(r.unact)}</td>
+            <td>${fmt(r.unact / (r.uxb || 1))}</td>
+          </tr>
+        `), "Sin inventario activo para productos bloqueados.")}
+      </div>
+      <div class="card">
+        <div class="section-head">
+          <h2>Reserva bloqueada MASS</h2>
+          <div class="filters">
+            <button onclick="exportarTablaVisible('tablaBloqueoLpns', 'bloqueo_detalle_lpns')">Excel detalle LPNs</button>
+            <button onclick="copiarTablaVisible('tablaBloqueoLpns')">Copiar</button>
+          </div>
+        </div>
+        ${tablaConId("tablaBloqueoLpns", ["Codigo", "Descripcion", "LPN", "Ubicacion", "Bultos"], reserva.map(r => `
+          <tr>
+            <td>${htmlSeguro(normalizar(r.CODIGO))}</td>
+            <td>${htmlSeguro(limpiar(r.DESCRIPCION))}</td>
+            <td>${htmlSeguro(limpiar(r.LPN))}</td>
+            <td>${htmlSeguro(limpiar(r.UBICACION) || "PALETERO")}</td>
+            <td>${fmt(num(r.BULTOS))}</td>
+          </tr>
+        `), "Sin LPNs en reserva MASS para productos bloqueados.")}
+      </div>
+    </div>
+    <div class="dashboard-layout">
+      <div class="card">
+        <div class="section-head">
+          <h2>Ya separado en bloqueo/control</h2>
+          <div class="filters">
+            <button onclick="exportarTablaVisible('tablaBloqueoSeparado', 'bloqueo_ya_separado')">Excel</button>
+            <button onclick="copiarTablaVisible('tablaBloqueoSeparado')">Copiar</button>
+          </div>
+        </div>
+        ${tablaConId("tablaBloqueoSeparado", ["Codigo", "Descripcion", "LPN", "Ubicacion", "Bultos"], separado.map(r => `
+          <tr>
+            <td>${htmlSeguro(normalizar(r.CODIGO))}</td>
+            <td>${htmlSeguro(limpiar(r.DESCRIPCION))}</td>
+            <td>${htmlSeguro(limpiar(r.LPN))}</td>
+            <td>${htmlSeguro(limpiar(r.UBICACION))}</td>
+            <td>${fmt(num(r.BULTOS))}</td>
+          </tr>
+        `), "Sin LPNs ya separados en ubicaciones de bloqueo/control.")}
+      </div>
+      <div class="card">
+        <div class="section-head">
+          <h2>Otras ubicaciones bloqueadas</h2>
+          <div class="filters">
+            <button onclick="exportarTablaVisible('tablaBloqueoOtras', 'bloqueo_otras_ubicaciones')">Excel</button>
+            <button onclick="copiarTablaVisible('tablaBloqueoOtras')">Copiar</button>
+          </div>
+        </div>
+        ${tablaConId("tablaBloqueoOtras", ["Codigo", "Descripcion", "LPN", "Ubicacion", "Bultos"], otrasUbicaciones.map(r => `
+          <tr>
+            <td>${htmlSeguro(normalizar(r.CODIGO))}</td>
+            <td>${htmlSeguro(limpiar(r.DESCRIPCION))}</td>
+            <td>${htmlSeguro(limpiar(r.LPN))}</td>
+            <td>${htmlSeguro(limpiar(r.UBICACION) || "PALETERO")}</td>
+            <td>${fmt(num(r.BULTOS))}</td>
+          </tr>
+        `), "Sin LPNs bloqueados en otras ubicaciones.")}
+      </div>
+    </div>
+  `;
+}

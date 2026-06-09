@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ANC Logistica | Panel Operacional</title>
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <section id="loginView" class="login-view">
+    <form class="login-card" onsubmit="login(event)">
+      <div class="brand-mark">ANC</div>
+      <span class="eyebrow">Plataforma integrada</span>
+      <h1>Panel Operacional</h1>
+      <p>Accede a todos los modulos desde un solo lugar.</p>
+      <label>Usuario<input id="usuario" autocomplete="username" required></label>
+      <label>Contrasena<input id="password" type="password" autocomplete="current-password" required></label>
+      <button type="submit">Ingresar</button>
+      <div id="loginError" class="login-error"></div>
+    </form>
+  </section>
+
+  <section id="appView" class="app-view" hidden>
+    <header class="app-header">
+      <div class="header-main">
+        <div class="side-brand">
+        <div class="brand-mark small">ANC</div>
+        <div class="side-brand-text"><strong>Panel Operacional</strong><span>Plataforma integrada</span></div>
+        </div>
+        <div class="header-user">
+          <span id="usuarioActivo"></span>
+          <button onclick="logout()">Cerrar sesion</button>
+        </div>
+      </div>
+      <nav id="moduleNav" class="module-nav"></nav>
+    </header>
+
+    <main class="workspace">
+      <header class="topbar">
+        <div>
+          <strong id="pageTitle">Panel principal</strong>
+          <span id="pageSubtitle">Selecciona un modulo para comenzar</span>
+        </div>
+        <button id="homeButton" class="home-button" onclick="mostrarInicio()" hidden>Panel principal</button>
+      </header>
+
+      <section id="homeView" class="home-view">
+        <div class="hero">
+          <span class="eyebrow">Centro de operaciones</span>
+          <h1>Todos tus modulos, una sola sesion.</h1>
+          <p>Selecciona una herramienta para abrirla sin salir del panel operacional.</p>
+        </div>
+        <div id="moduleGrid" class="module-grid"></div>
+      </section>
+
+      <section id="moduleView" class="module-view" hidden>
+        <div id="moduleFrames" class="module-frames"></div>
+      </section>
+    </main>
+  </section>
+
+  <script src="js/app.js"></script>
+</body>
+</html>

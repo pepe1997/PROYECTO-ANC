@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tareas Asignacion</title>
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <section id="loginView" class="login-view">
+    <form class="login-card" onsubmit="login(event)">
+      <div class="brand-mark">T</div>
+      <h1>Tareas Asignacion</h1>
+      <p>Reportes de tareas desde la hoja ASIGNACION.</p>
+      <label>Usuario<input id="usuario" autocomplete="username" required></label>
+      <label>Contrasena<input id="password" type="password" autocomplete="current-password" required></label>
+      <button>Ingresar</button>
+      <div id="loginError" class="login-error"></div>
+    </form>
+  </section>
+
+  <section id="appView" hidden>
+    <header class="topbar">
+      <div>
+        <strong>Tareas Asignacion</strong>
+        <span id="estadoCarga">Esperando datos...</span>
+      </div>
+      <div class="topbar-actions">
+        <span id="usuarioActivo" class="user-pill"></span>
+        <button onclick="recargarDatos()">Actualizar</button>
+        <button class="ghost" onclick="logout()">Salir</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel">
+        <div class="module-head">
+          <div>
+            <h1>Control de tareas</h1>
+            <p>Reportes operativos reconstruidos desde la data principal de asignacion.</p>
+          </div>
+          <button class="soft" onclick="exportarImagen('modulo', 'tareas-asignacion')">Imagen</button>
+        </div>
+
+        <nav class="tabs">
+          <button onclick="verResumen()">Resumen</button>
+          <button onclick="verModuloReporte('CASE')">Case</button>
+          <button onclick="verModuloReporte('UNIDADES')">Picking Unitario</button>
+          <button onclick="verModuloReporte('DIGEMID')">Digemid</button>
+          <button onclick="verModuloReporte('REABASTO')">Prime / Reabasto</button>
+          <button onclick="verModuloReporte('CODPLUS')">CodPlus</button>
+          <button onclick="verModuloReporte('EXTRACCIONES')">Extracciones</button>
+          <button onclick="verModuloReporte('PTS')">PTS</button>
+          <button onclick="verDestino()">Destino</button>
+          <button onclick="verBase()">Base</button>
+        </nav>
+
+        <div id="modulo">
+          <div class="loading">Preparando modulo...</div>
+        </div>
+      </section>
+    </main>
+  </section>
+
+  <script src="js/data.js"></script>
+  <script src="js/app.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
+</body>
+</html>
