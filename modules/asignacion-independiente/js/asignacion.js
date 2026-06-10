@@ -1010,13 +1010,19 @@ function verReserva() {
 }
 
 function requerimientoFormato(row) {
-  return numeroReal(row.requerimientoTotal || row.requerido);
+  return numeroReal(row.asignar);
 }
 
 function ordenarFormatoTabla(a, b) {
   return ordenarReserva(a, b) ||
     String(a.ubicacion || "").localeCompare(String(b.ubicacion || ""), "es", { numeric: true }) ||
     String(a.desc || "").localeCompare(String(b.desc || ""), "es");
+}
+
+function datosFormatoDesdeExcel(tipo) {
+  return datosExportacion(tipo)
+    .filter(row => numeroReal(row.asignar) > 0)
+    .map(row => ({ ...row, bultosRequerido: numeroReal(row.asignar) }));
 }
 
 function crearTablaFormatoImagen(data) {
@@ -1042,7 +1048,7 @@ function crearTablaFormatoImagen(data) {
               <td>${htmlSeguro(r.desc)}</td>
               <td>${htmlSeguro(r.lpn)}</td>
               <td>${htmlSeguro(r.ubicacion || "VACIO")}</td>
-              <td>${formatoDecimal(requerimientoFormato(r))}</td>
+              <td>${formatoDecimal(r.bultosRequerido ?? requerimientoFormato(r))}</td>
               <td>${formatoDecimal(r.cs || r.bultos)}</td>
             </tr>
           `).join("")}
@@ -1058,7 +1064,7 @@ function crearBloqueFormatoImagen(titulo, data, id) {
       <div class="subsection-head">
         <div>
           <h3>${htmlSeguro(titulo)}</h3>
-          <span>${data.length} filas ordenadas por ubicacion</span>
+          <span>${data.length} LPN seleccionados por la asignacion</span>
         </div>
         <button onclick="descargarImagenTabla(${argumentoSeguro(id)}, ${argumentoSeguro(id)})">Descargar imagen</button>
       </div>
@@ -1074,27 +1080,24 @@ function verFormatoTablas() {
   vistaActual = "formatoTablas";
   procesarDatos();
 
-  const reserva = [...(window.reservaData || [])].sort(ordenarFormatoTabla);
-  const otras = [...(window.otrasData || [])].sort(ordenarFormatoTabla);
-  const separar = data => ({
-    mayores: data.filter(r => requerimientoFormato(r) >= 30),
-    menores: data.filter(r => requerimientoFormato(r) < 30)
-  });
-  const gruposReserva = separar(reserva);
-  const gruposOtras = separar(otras);
+  const reserva = datosFormatoDesdeExcel("reserva").sort(ordenarFormatoTabla);
+  const otras = datosFormatoDesdeExcel("otras").sort(ordenarFormatoTabla);
+  const gruposReserva = {
+    mayores: reserva.filter(r => r.bultosRequerido >= 30),
+    menores: reserva.filter(r => r.bultosRequerido < 30)
+  };
 
   document.getElementById("contenido").innerHTML = `
     <div class="section-head">
       <div>
         <h2>Formato de tablas para imagen</h2>
-        <p>Requerimiento basado en bultos no asignados. Orden desde Mass-01 en adelante.</p>
+        <p>Mismos LPN y cantidades ASIGNAR del Excel detalle. Orden desde Mass-01 en adelante.</p>
       </div>
     </div>
     <div class="formato-imagen-grid">
       ${crearBloqueFormatoImagen("RESERVA - MAYORES O IGUALES A 30", gruposReserva.mayores, "formato-reserva-mayores-30")}
       ${crearBloqueFormatoImagen("RESERVA - MENORES A 30", gruposReserva.menores, "formato-reserva-menores-30")}
-      ${crearBloqueFormatoImagen("OTRAS UBICACIONES - MAYORES O IGUALES A 30", gruposOtras.mayores, "formato-otras-mayores-30")}
-      ${crearBloqueFormatoImagen("OTRAS UBICACIONES - MENORES A 30", gruposOtras.menores, "formato-otras-menores-30")}
+      ${crearBloqueFormatoImagen("OTRAS UBICACIONES", otras, "formato-otras-ubicaciones")}
     </div>
   `;
 }

@@ -2,6 +2,7 @@ let estadoAntiguos = JSON.parse(localStorage.getItem("operaciones_estadoAntiguos
 let modoAntiguos = "UND";
 let ubicacionReservaActiva = "";
 let detallePuntosControl = new Map();
+let detalleOptimizacionReserva = new Map();
 
 function limpiar(valor) {
   if (valor === null || valor === undefined) return "";
@@ -1233,6 +1234,368 @@ function exportarReservaMassExcel() {
     </table>
   `;
   descargarExcel("reserva_mass_incidencias", html);
+}
+
+function consolidarReservaParaOptimizar() {
+  const lpns = new Map();
+  lpnsOperativos()
+    .filter(r => limpiar(r.UBICACION).toUpperCase().startsWith("MASS-"))
+    .forEach(r => {
+      const lpn = limpiar(r.LPN);
+      const codigo = normalizar(r.CODIGO);
+      const ubicacion = limpiar(r.UBICACION);
+      if (!lpn || !codigo || !ubicacion) return;
+      const key = `${lpn}|${codigo}|${ubicacion}`;
+      if (!lpns.has(key)) {
+        lpns.set(key, { lpn, codigo, desc: limpiar(r.DESCRIPCION), ubicacion, bultos: 0 });
+      }
+      lpns.get(key).bultos += num(r.BULTOS);
+    });
+
+  const ubicaciones = new Map();
+  lpns.forEach(r => {
+    const key = `${r.codigo}|${r.ubicacion}`;
+    if (!ubicaciones.has(key)) {
+      ubicaciones.set(key, {
+        codigo: r.codigo,
+        desc: r.desc,
+        ubicacion: r.ubicacion,
+        bultos: 0,
+        lpns: new Set(),
+        detalleLpns: []
+      });
+    }
+    const item = ubicaciones.get(key);
+    item.bultos += r.bultos;
+    item.lpns.add(r.lpn);
+    item.detalleLpns.push(r);
+  });
+  return Array.from(ubicaciones.values());
+}
+
+function registroPalletMaximo() {
+  try {
+    return JSON.parse(localStorage.getItem("operaciones_pallet_maximo") || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function validacionesPresencialesReserva() {
+  try {
+    return JSON.parse(localStorage.getItem("operaciones_validacion_reserva") || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function guardarValidacionPresencial(codigo) {
+  const capacidad = num(document.getElementById("validacionCapacidadReserva")?.value);
+  const observacion = limpiar(document.getElementById("validacionObservacionReserva")?.value);
+  if (capacidad <= 15) return alert("Ingresa una capacidad total mayor a 15.");
+  const validaciones = validacionesPresencialesReserva();
+  validaciones[codigo] = { capacidad, observacion, actualizado: new Date().toISOString() };
+  localStorage.setItem("operaciones_validacion_reserva", JSON.stringify(validaciones));
+  cerrarDetalleOptimizacion();
+  verOptimizarReserva();
+}
+
+function calcularPalletMaximo(ubicaciones) {
+  const guardado = registroPalletMaximo();
+  const validados = validacionesPresencialesReserva();
+  const porProducto = new Map();
+  ubicaciones.forEach(r => {
+    if (!porProducto.has(r.codigo)) porProducto.set(r.codigo, []);
+    porProducto.get(r.codigo).push(r);
+  });
+
+  const aprendidos = {};
+  porProducto.forEach((rows, codigo) => {
+    const frecuencias = new Map();
+    rows.filter(r => r.bultos > 15).forEach(r => {
+      const valor = String(Number(r.bultos.toFixed(3)));
+      frecuencias.set(valor, (frecuencias.get(valor) || 0) + 1);
+    });
+    const repetidos = Array.from(frecuencias.entries())
+      .filter(([, veces]) => veces >= 2)
+      .sort((a, b) => b[1] - a[1] || Number(b[0]) - Number(a[0]));
+    if (repetidos.length) {
+      aprendidos[codigo] = {
+        maximo: Number(repetidos[0][0]),
+        repeticiones: repetidos[0][1],
+        desc: rows[0]?.desc || "",
+        actualizado: new Date().toISOString()
+      };
+    }
+  });
+  Object.entries(validados).forEach(([codigo, r]) => {
+    if (num(r.capacidad) > 15) {
+      aprendidos[codigo] = {
+        maximo: num(r.capacidad),
+        repeticiones: 0,
+        desc: porProducto.get(codigo)?.[0]?.desc || "",
+        actualizado: r.actualizado,
+        origen: "VALIDADO PRESENCIALMENTE",
+        observacion: r.observacion || ""
+      };
+    }
+  });
+  const registro = { ...guardado, ...aprendidos };
+  localStorage.setItem("operaciones_pallet_maximo", JSON.stringify(registro));
+  return registro;
+}
+
+function inventarioActivoPorProducto() {
+  const mapa = new Map();
+  inventarioComparable().forEach(r => {
+    if (!r.codigo || !r.ubicacion) return;
+    if (!mapa.has(r.codigo)) mapa.set(r.codigo, []);
+    mapa.get(r.codigo).push({
+      ubicacion: r.ubicacion,
+      disponibleUnd: r.disponible,
+      disponibleBul: r.disponible / (r.uxb || 1),
+      estado: r.estado
+    });
+  });
+  return mapa;
+}
+
+function analizarOptimizacionReserva() {
+  const ubicaciones = consolidarReservaParaOptimizar();
+  const maximos = calcularPalletMaximo(ubicaciones);
+  const activo = inventarioActivoPorProducto();
+  const porProducto = new Map();
+  ubicaciones.forEach(r => {
+    if (!porProducto.has(r.codigo)) porProducto.set(r.codigo, []);
+    porProducto.get(r.codigo).push(r);
+  });
+
+  const liberables = [];
+  const noAcoplables = [];
+  const criticos = [];
+  detalleOptimizacionReserva = new Map();
+
+  porProducto.forEach((rows, codigo) => {
+    const maximo = num(maximos[codigo]?.maximo);
+    const activas = activo.get(codigo) || [];
+    const disponibleActivoBul = activas.reduce((a, b) => a + b.disponibleBul, 0);
+    const proyectado = new Map(rows.map(r => [r.ubicacion, r.bultos]));
+    const liberadas = new Set();
+    const fuentes = rows.filter(r => r.bultos <= 15).sort((a, b) => a.bultos - b.bultos || ordenarUbicacion(a.ubicacion, b.ubicacion));
+
+    if (rows.length === 1 && activas.length && disponibleActivoBul >= rows[0].bultos) {
+      const origen = rows[0];
+      liberadas.add(origen.ubicacion);
+      liberables.push({
+        ...origen,
+        maximo,
+        destino: activas.map(a => a.ubicacion).join(", "),
+        stockDestino: 0,
+        stockFinal: origen.bultos,
+        accion: "INGRESAR A ACTIVO"
+      });
+    }
+
+    if (maximo > 15) {
+      fuentes.filter(origen => !liberadas.has(origen.ubicacion)).forEach(origen => {
+        const destinosMayores = rows
+          .filter(destino => destino.ubicacion !== origen.ubicacion && !liberadas.has(destino.ubicacion))
+          .filter(destino => destino.bultos > 15);
+        const destinos = destinosMayores
+          .filter(destino => proyectado.get(destino.ubicacion) + origen.bultos <= maximo)
+          .sort((a, b) => proyectado.get(b.ubicacion) - proyectado.get(a.ubicacion));
+        const destino = destinos[0];
+        if (!destino) {
+          noAcoplables.push({
+            ...origen,
+            maximo,
+            motivo: destinosMayores.length
+              ? "SIN CAPACIDAD: superaria el maximo del pallet"
+              : "SIN DESTINO: no existe otra ubicacion del producto con stock mayor a 15"
+          });
+          return;
+        }
+        const antes = proyectado.get(destino.ubicacion);
+        proyectado.set(destino.ubicacion, antes + origen.bultos);
+        liberadas.add(origen.ubicacion);
+        liberables.push({
+          ...origen,
+          maximo,
+          destino: destino.ubicacion,
+          stockDestino: antes,
+          stockFinal: antes + origen.bultos,
+          accion: "ACOPLAR EN RESERVA"
+        });
+      });
+    } else {
+      fuentes.filter(origen => !liberadas.has(origen.ubicacion)).forEach(origen => {
+        noAcoplables.push({
+          ...origen,
+          maximo: 0,
+          motivo: "VALIDAR PRESENCIALMENTE: no hay un stock mayor a 15 repetido en dos o mas ubicaciones",
+          requiereValidacion: true
+        });
+      });
+    }
+
+    rows.filter(r => r.bultos <= 5).forEach(r => {
+      const disponibleBul = disponibleActivoBul;
+      criticos.push({
+        ...r,
+        activas,
+        disponibleBul,
+        estado: !activas.length ? "SIN UBICACION ACTIVA" : disponibleBul >= r.bultos ? "INGRESAR A ACTIVO" : "ACTIVO SIN CAPACIDAD"
+      });
+    });
+
+    detalleOptimizacionReserva.set(codigo, {
+      codigo,
+      desc: rows[0]?.desc || "",
+      maximo,
+      ubicaciones: rows.slice().sort((a, b) => ordenarUbicacion(a.ubicacion, b.ubicacion)),
+      activas
+    });
+  });
+
+  return {
+    ubicaciones,
+    maximos,
+    liberables: liberables.sort((a, b) => ordenarUbicacion(a.ubicacion, b.ubicacion)),
+    noAcoplables: noAcoplables.sort((a, b) => ordenarUbicacion(a.ubicacion, b.ubicacion)),
+    criticos: criticos.sort((a, b) => a.bultos - b.bultos || ordenarUbicacion(a.ubicacion, b.ubicacion))
+  };
+}
+
+function verOptimizarReserva() {
+  const analisis = analizarOptimizacionReserva();
+  const productosMaximo = Object.entries(analisis.maximos)
+    .filter(([, r]) => num(r.maximo) > 15)
+    .sort((a, b) => num(b[1].maximo) - num(a[1].maximo));
+  const sinActivo = analisis.criticos.filter(r => r.estado === "SIN UBICACION ACTIVA");
+  const conActivo = analisis.criticos.filter(r => r.estado === "INGRESAR A ACTIVO");
+  const bultosLiberables = analisis.liberables.reduce((a, b) => a + b.bultos, 0);
+
+  document.getElementById("modulo").innerHTML = `
+    <div class="section-head">
+      <div>
+        <h2>Optimizacion de reserva MASS</h2>
+        <p class="muted-note">Consolida LPN repetidos, aprende el pallet completo por producto y propone ubicaciones que pueden liberarse.</p>
+      </div>
+    </div>
+    <section class="kpi-grid compact">
+      ${kpi("Ubicaciones liberables", fmt(analisis.liberables.length), `${fmt(bultosLiberables)} bultos`, analisis.liberables.length ? "warn" : "")}
+      ${kpi("No acoplables <= 15", fmt(analisis.noAcoplables.length), "con motivo identificado", analisis.noAcoplables.length ? "danger" : "")}
+      ${kpi("Criticos <= 5", fmt(analisis.criticos.length), "ubicaciones MASS", analisis.criticos.length ? "danger" : "")}
+      ${kpi("Mover a activo", fmt(conActivo.length), "con capacidad disponible")}
+      ${kpi("Sin activo", fmt(sinActivo.length), "requieren alerta", sinActivo.length ? "danger" : "")}
+      ${kpi("Maximos aprendidos", fmt(productosMaximo.length), "productos con pallet completo")}
+    </section>
+
+    <section class="card subcard">
+      <div class="section-head">
+        <div><h2>Ubicaciones <= 15 que no pueden acoplarse</h2><span class="muted-note">Se muestra la causa exacta por la que no se recomienda liberar la ubicacion.</span></div>
+        <button onclick="exportarTablaVisible('tablaNoAcoplablesReserva', 'ubicaciones_no_acoplables_reserva')">Excel</button>
+      </div>
+      ${tablaConId("tablaNoAcoplablesReserva", ["Codigo", "Descripcion", "Ubicacion", "Stock", "Max pallet", "Motivo", "Accion"], analisis.noAcoplables.map(r => `
+        <tr class="bad">
+          <td><strong>${htmlSeguro(r.codigo)}</strong></td><td>${htmlSeguro(r.desc)}</td>
+          <td>${htmlSeguro(r.ubicacion)}</td><td class="number">${fmt(r.bultos)}</td><td>${fmt(r.maximo)}</td>
+          <td><strong>${htmlSeguro(r.motivo)}</strong></td>
+          <td><button class="soft" onclick="abrirDetalleOptimizacion(${argumentoSeguro(r.codigo)}, ${r.requiereValidacion ? "true" : "false"})">${r.requiereValidacion ? "Validar" : "Ver"}</button></td>
+        </tr>
+      `), "Todas las ubicaciones con stock menor o igual a 15 pueden consolidarse.")}
+    </section>
+
+    <section class="card subcard">
+      <div class="section-head">
+        <div><h2>Ubicaciones que se pueden liberar</h2><span class="muted-note">Stock origen <= 15 y consolidacion sin superar el pallet maximo aprendido.</span></div>
+        <button onclick="exportarTablaVisible('tablaLiberarReserva', 'ubicaciones_liberables_reserva')">Excel</button>
+      </div>
+      ${tablaConId("tablaLiberarReserva", ["Accion", "Codigo", "Descripcion", "Ubicacion liberar", "Stock", "Mover a", "Stock destino", "Stock final", "Max pallet", "Ver"], analisis.liberables.map(r => `
+        <tr class="warn">
+          <td><strong>${htmlSeguro(r.accion || "ACOPLAR EN RESERVA")}</strong></td>
+          <td><strong>${htmlSeguro(r.codigo)}</strong></td><td>${htmlSeguro(r.desc)}</td>
+          <td>${htmlSeguro(r.ubicacion)}</td><td class="number">${fmt(r.bultos)}</td>
+          <td><strong>${htmlSeguro(r.destino)}</strong></td><td>${fmt(r.stockDestino)}</td>
+          <td>${fmt(r.stockFinal)}</td><td>${fmt(r.maximo)}</td>
+          <td><button class="soft" onclick="abrirDetalleOptimizacion(${argumentoSeguro(r.codigo)})">Ver</button></td>
+        </tr>
+      `), "No se detectaron ubicaciones que puedan consolidarse de forma segura.")}
+    </section>
+
+    <section class="card subcard">
+      <div class="section-head">
+        <div><h2>Criticos de reserva <= 5</h2><span class="muted-note">Prioriza ingreso a activo y alerta los productos sin ubicacion activa.</span></div>
+        <button onclick="exportarTablaVisible('tablaCriticosReserva', 'criticos_reserva')">Excel</button>
+      </div>
+      ${tablaConId("tablaCriticosReserva", ["Estado", "Codigo", "Descripcion", "Ubicacion MASS", "Stock", "Ubicaciones activo", "Capacidad activo BUL", "Ver"], analisis.criticos.map(r => `
+        <tr class="${r.estado === "SIN UBICACION ACTIVA" ? "bad" : r.estado === "ACTIVO SIN CAPACIDAD" ? "warn" : ""}">
+          <td><strong>${htmlSeguro(r.estado)}</strong></td><td>${htmlSeguro(r.codigo)}</td><td>${htmlSeguro(r.desc)}</td>
+          <td>${htmlSeguro(r.ubicacion)}</td><td class="number">${fmt(r.bultos)}</td>
+          <td>${htmlSeguro(r.activas.map(a => a.ubicacion).join(", ") || "SIN ACTIVO")}</td><td>${fmt(r.disponibleBul)}</td>
+          <td><button class="soft" onclick="abrirDetalleOptimizacion(${argumentoSeguro(r.codigo)})">Ver</button></td>
+        </tr>
+      `), "No se detectaron ubicaciones criticas con stock menor o igual a 5.")}
+    </section>
+
+    <section class="card subcard">
+      <div class="section-head">
+        <div><h2>Registro de pallet completo aprendido</h2><span class="muted-note">Stock mayor a 15 repetido en dos o mas ubicaciones del mismo producto.</span></div>
+        <button onclick="exportarTablaVisible('tablaPalletMaximo', 'registro_pallet_maximo')">Excel</button>
+      </div>
+      ${tablaConId("tablaPalletMaximo", ["Codigo", "Descripcion", "Max pallet", "Origen", "Repeticiones", "Ver"], productosMaximo.map(([codigo, r]) => `
+        <tr><td><strong>${htmlSeguro(codigo)}</strong></td><td>${htmlSeguro(r.desc)}</td><td class="number">${fmt(r.maximo)}</td><td>${htmlSeguro(r.origen || "APRENDIDO POR REPETICION")}</td><td>${fmt(r.repeticiones || 0)}</td>
+        <td><button class="soft" onclick="abrirDetalleOptimizacion(${argumentoSeguro(codigo)})">Ver</button></td></tr>
+      `), "Aun no hay productos con un pallet completo repetido.")}
+    </section>
+    <div id="modalOptimizacionReserva" class="modal-backdrop" hidden></div>
+  `;
+}
+
+function abrirDetalleOptimizacion(codigo, mostrarValidacion = false) {
+  const detalle = detalleOptimizacionReserva.get(String(codigo));
+  const destino = document.getElementById("modalOptimizacionReserva");
+  if (!destino) return;
+  if (!detalle) {
+    destino.innerHTML = `<div class="modal-card"><button class="ghost" onclick="cerrarDetalleOptimizacion()">Cerrar</button><p>Sin detalle.</p></div>`;
+  } else {
+    destino.innerHTML = `
+      <div class="modal-card">
+        <div class="section-head">
+          <div><h2>${htmlSeguro(detalle.codigo)} | ${htmlSeguro(detalle.desc)}</h2><p class="muted-note">Max pallet aprendido: ${fmt(detalle.maximo || 0)}</p></div>
+          <button class="ghost" onclick="cerrarDetalleOptimizacion()">Cerrar</button>
+        </div>
+        ${tabla(["Ubicacion MASS", "LPNs consolidados", "Stock"], detalle.ubicaciones.map(r => `
+          <tr class="${r.bultos <= 5 ? "bad" : r.bultos <= 15 ? "warn" : ""}">
+            <td><strong>${htmlSeguro(r.ubicacion)}</strong></td><td>${htmlSeguro(Array.from(r.lpns).join(", "))}</td><td class="number">${fmt(r.bultos)}</td>
+          </tr>
+        `))}
+        <h3>Ubicaciones activas</h3>
+        ${tabla(["Ubicacion", "Estado", "Capacidad UND", "Capacidad BUL"], detalle.activas.map(r => `
+          <tr><td>${htmlSeguro(r.ubicacion)}</td><td>${htmlSeguro(r.estado)}</td><td>${fmt(r.disponibleUnd)}</td><td class="number">${fmt(r.disponibleBul)}</td></tr>
+        `), "Producto sin ubicacion activa.")}
+        ${mostrarValidacion ? `
+          <section class="detail-box">
+            <h3>Validacion presencial de capacidad</h3>
+            <p class="muted-note">Visita la ubicacion y registra la capacidad total real que admite un pallet de este producto.</p>
+            <div class="filters">
+              <label>Capacidad total pallet<input id="validacionCapacidadReserva" type="number" min="16" step="1" placeholder="Ejemplo: 60"></label>
+              <label>Observacion<input id="validacionObservacionReserva" placeholder="Resultado de la validacion"></label>
+              <button onclick="guardarValidacionPresencial(${argumentoSeguro(detalle.codigo)})">Guardar validacion</button>
+            </div>
+          </section>
+        ` : ""}
+      </div>
+    `;
+  }
+  destino.hidden = false;
+}
+
+function cerrarDetalleOptimizacion() {
+  const destino = document.getElementById("modalOptimizacionReserva");
+  if (!destino) return;
+  destino.hidden = true;
+  destino.innerHTML = "";
 }
 
 function calcularLpnsAntiguos() {

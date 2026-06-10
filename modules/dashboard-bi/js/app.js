@@ -44,6 +44,10 @@ function pct(a, b) {
   return b > 0 ? (a / b) * 100 : 0;
 }
 
+function pctCumplimiento(a, b) {
+  return Math.min(100, pct(a, b));
+}
+
 function fechaValor(valor) {
   const texto = limpiar(valor);
   if (!texto) return null;
@@ -83,7 +87,11 @@ function descripcionIniciaConFruta(descripcion) {
 }
 
 function pickingEsValido(row) {
+  const orden = normalizar(row.orden);
+  const descripcion = normalizar(row.descripcion);
   if (normalizar(row.lpn).startsWith("ILE")) return false;
+  if (orden.startsWith("TFC")) return false;
+  if (orden.startsWith("TRF") && descripcion.startsWith("JABA")) return false;
   if (descripcionIniciaConFruta(row.descripcion)) return false;
   return true;
 }
@@ -394,7 +402,7 @@ function resumenRecepcion(data) {
     totalProgramado,
     totalRecibido,
     diferencia: totalProgramado - totalRecibido,
-    cumplimiento: pct(totalRecibido, totalProgramado),
+    cumplimiento: pctCumplimiento(totalRecibido, totalProgramado),
     asnUnicos,
     palletsTotal: pallets.length,
     mono: pallets.filter(p => p.tipo === "MONOPALLET").length,
@@ -492,7 +500,7 @@ function resumenProveedoresRecepcion(data) {
   return Array.from(mapa.values()).map(x => ({
     ...x,
     diferencia: x.programado - x.recibido,
-    cumplimiento: pct(x.recibido, x.programado),
+    cumplimiento: pctCumplimiento(x.recibido, x.programado),
     asnUnicos: x.asns.size
   })).sort((a, b) => b.recibido - a.recibido);
 }
@@ -1600,11 +1608,18 @@ function visualColumns(title, data, total, color = "#6d28d9") {
 function visualLine(title, data, total, color = "#2563eb") {
   const max = Math.max(...data.map(x => x.valor), 1);
   const points = data.map((x, i) => {
-    const xPos = data.length === 1 ? 50 : (i / (data.length - 1)) * 100;
-    const yPos = 86 - (x.valor / max) * 72;
+    const xPos = data.length === 1 ? 500 : 20 + (i / (data.length - 1)) * 960;
+    const yPos = 220 - (x.valor / max) * 190;
     return { ...x, x: xPos, y: yPos };
   });
-  const poly = points.map(p => `${p.x},${p.y}`).join(" ");
+  const path = points.length
+    ? points.reduce((d, point, index) => {
+        if (index === 0) return `M ${point.x} ${point.y}`;
+        const anterior = points[index - 1];
+        const mitad = (anterior.x + point.x) / 2;
+        return `${d} C ${mitad} ${anterior.y}, ${mitad} ${point.y}, ${point.x} ${point.y}`;
+      }, "")
+    : "";
   return `
     <article class="visual-panel main-chart">
       <div class="visual-panel-head">
@@ -1612,11 +1627,13 @@ function visualLine(title, data, total, color = "#2563eb") {
         <span>${fmt(total)}</span>
       </div>
       <div class="visual-line">
-        <svg viewBox="0 0 100 100" preserveAspectRatio="none">
-          <line x1="0" y1="86" x2="100" y2="86"></line>
-          <line x1="0" y1="62" x2="100" y2="62"></line>
-          <line x1="0" y1="38" x2="100" y2="38"></line>
-          <polyline points="${poly}" style="stroke:${color}"></polyline>
+        <svg viewBox="0 0 1000 240" preserveAspectRatio="none">
+          <line x1="20" y1="220" x2="980" y2="220"></line>
+          <line x1="20" y1="157" x2="980" y2="157"></line>
+          <line x1="20" y1="94" x2="980" y2="94"></line>
+          <line x1="20" y1="31" x2="980" y2="31"></line>
+          <path d="${path}" style="stroke:${color}"></path>
+          ${points.map(p => `<circle cx="${p.x}" cy="${p.y}" r="5" style="fill:${color}"></circle>`).join("")}
         </svg>
         <div class="visual-line-axis">
           ${points.map(p => `<span><b>${fmt(p.valor)}</b><small>${p.label}</small></span>`).join("")}
@@ -1628,7 +1645,7 @@ function visualLine(title, data, total, color = "#2563eb") {
 
 function visualDonut(title, data, total) {
   return `
-    <article class="visual-panel">
+    <article class="visual-panel visual-donut-panel">
       <div class="visual-panel-head">
         <h3>${title}</h3>
       </div>
@@ -1655,6 +1672,64 @@ function visualTurnoResumen(title, data, total) {
   `;
 }
 
+let proveedoresRecepcionSeleccionados = null;
+
+function proveedoresRecepcionVisibles(proveedores) {
+  if (proveedoresRecepcionSeleccionados === null) return proveedores;
+  return proveedores.filter(p => proveedoresRecepcionSeleccionados.has(`${p.codigo} | ${p.proveedor}`));
+}
+
+function alternarProveedorRecepcion(valorCodificado, seleccionado) {
+  const proveedorKey = decodeURIComponent(valorCodificado);
+  if (proveedoresRecepcionSeleccionados === null) {
+    proveedoresRecepcionSeleccionados = new Set(
+      resumenProveedoresRecepcion(modeloRecepcion()).map(p => `${p.codigo} | ${p.proveedor}`)
+    );
+  }
+  if (seleccionado) proveedoresRecepcionSeleccionados.add(proveedorKey);
+  else proveedoresRecepcionSeleccionados.delete(proveedorKey);
+}
+
+function seleccionarProveedoresRecepcion(modo) {
+  proveedoresRecepcionSeleccionados = modo === "todos" ? null : new Set();
+  verRecepcionCompacto();
+}
+
+function filtroProveedoresRecepcion(proveedores) {
+  const visibles = proveedoresRecepcionVisibles(proveedores);
+  return `
+    <div class="provider-filter-bar">
+      <div>
+        <strong>Proveedores visibles</strong>
+        <span>${fmt(visibles.length)} de ${fmt(proveedores.length)} seleccionados. Los totales generales no cambian.</span>
+      </div>
+      <details class="provider-filter">
+        <summary>Escoger proveedores</summary>
+        <div class="provider-filter-menu">
+          <div class="provider-filter-actions">
+            <button type="button" onclick="verRecepcionCompacto()">Aplicar seleccion</button>
+            <button type="button" onclick="seleccionarProveedoresRecepcion('todos')">Todos</button>
+            <button type="button" class="ghost" onclick="seleccionarProveedoresRecepcion('ninguno')">Ninguno</button>
+          </div>
+          <div class="provider-filter-options">
+            ${proveedores.map(p => {
+              const key = `${p.codigo} | ${p.proveedor}`;
+              const checked = proveedoresRecepcionSeleccionados === null || proveedoresRecepcionSeleccionados.has(key);
+              return `
+                <label>
+                  <input type="checkbox" value="${encodeURIComponent(key)}" ${checked ? "checked" : ""}
+                    onchange="alternarProveedorRecepcion(this.value, this.checked)">
+                  <span>${key}</span>
+                </label>
+              `;
+            }).join("")}
+          </div>
+        </div>
+      </details>
+    </div>
+  `;
+}
+
 function providerCompactPanel(proveedores) {
   return `
     <article class="visual-panel main-chart">
@@ -1663,19 +1738,19 @@ function providerCompactPanel(proveedores) {
         <span>Programado vs recibido</span>
       </div>
       <div class="provider-compact">
-        ${proveedores.slice(0, 6).map(p => {
+        ${proveedores.map(p => {
           const estado = p.diferencia === 0 ? "COMPLETO" : p.diferencia > 0 ? "FALTO" : "DE MAS";
           return `
             <div class="provider-compact-row ${estado === "COMPLETO" ? "ok" : "alert"}">
               <div>
-                <strong>${p.codigo} | ${corto(p.proveedor, 28)}</strong>
+                <strong>${p.codigo} | ${p.proveedor}</strong>
                 <span>${estado} | ${p.cumplimiento.toFixed(1)}%</span>
               </div>
               <b>${fmt(p.recibido)}</b>
               <small>Prog. ${fmt(p.programado)} | Dif. ${fmt(p.diferencia)}</small>
             </div>
           `;
-        }).join("")}
+        }).join("") || `<div class="provider-empty">Selecciona al menos un proveedor para mostrarlo.</div>`}
       </div>
     </article>
   `;
@@ -1755,6 +1830,7 @@ function verRecepcionCompacto() {
   const data = modeloRecepcion();
   const resumen = resumenRecepcionVisual(resumenRecepcion(data));
   const proveedoresDetalle = resumenProveedoresRecepcion(data);
+  const proveedoresVisibles = proveedoresRecepcionVisibles(proveedoresDetalle);
   const proveedores = proveedoresDetalle.map(p => ({ label: `${p.codigo} | ${p.proveedor}`, valor: p.recibido, registros: p.registros }));
   const foco917 = [
     { label: "Recibido 917", valor: resumen.recibido917, registros: 0 },
@@ -1773,13 +1849,14 @@ function verRecepcionCompacto() {
           ${visualKpi("ASN 917", fmt(resumen.asn917))}
         </div>
       </div>
+      ${filtroProveedoresRecepcion(proveedoresDetalle)}
       <div class="visual-body">
         <aside class="visual-side">
           <span>PROVEEDOR FOCO</span><b>917 PUNTA NEGRA</b>
           <span>PALETEROS 917</span><b>${fmt(resumen.pallets917)}</b>
           <span>MONO / MULTI</span><b>${fmt(resumen.mono917)} / ${fmt(resumen.multi917)}</b>
         </aside>
-        ${providerCompactPanel(proveedoresDetalle)}
+        ${providerCompactPanel(proveedoresVisibles)}
         ${visualDonut("FOCO 917", foco917, Math.max(resumen.recibido917, resumen.mono917 + resumen.multi917, 1))}
       </div>
       <div class="visual-gauge-row">
@@ -2213,7 +2290,20 @@ function exportarImagen(id, nombre) {
   if (typeof html2canvas === "undefined") return alert("No se cargo html2canvas");
   const el = document.getElementById(id);
   if (!el) return alert("No se encontro la seccion");
-  html2canvas(el).then(canvas => {
+  const ancho = Math.max(el.scrollWidth, el.offsetWidth);
+  html2canvas(el, {
+    scale: 2,
+    backgroundColor: "#ffffff",
+    useCORS: true,
+    width: ancho,
+    windowWidth: ancho,
+    onclone: documento => {
+      documento.querySelectorAll(".provider-compact").forEach(panel => {
+        panel.style.maxHeight = "none";
+        panel.style.overflow = "visible";
+      });
+    }
+  }).then(canvas => {
     const a = document.createElement("a");
     a.href = canvas.toDataURL("image/png");
     a.download = `${nombre}.png`;
