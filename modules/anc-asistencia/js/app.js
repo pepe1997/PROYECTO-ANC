@@ -124,7 +124,14 @@ function esSinMarcaFecha(valor) {
 
 async function cargarHoja(nombre) {
   const url = `https://opensheet.elk.sh/${SHEET_ID}/${encodeURIComponent(nombre)}`;
-  const res = await fetch(url);
+  try {
+    if (location.protocol === "file:") throw new Error("carga local");
+    if (window.parent !== window && typeof window.parent.ancCargarJson === "function") {
+      const data = await window.parent.ancCargarJson(url);
+      return Array.isArray(data) ? data.map(r => ({ ...r, __hoja: nombre })) : [];
+    }
+  } catch (error) {}
+  const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) throw new Error(`No se pudo cargar hoja ${nombre}`);
   const data = await res.json();
   return Array.isArray(data) ? data.map(r => ({ ...r, __hoja: nombre })) : [];
@@ -559,8 +566,18 @@ function consolidarPersonal() {
   })).sort((a, b) => a.apellido.localeCompare(b.apellido) || a.nombre.localeCompare(b.nombre));
 }
 
+function restaurarCursorBusqueda(id, posicion) {
+  const input = document.getElementById(id);
+  if (!input) return;
+  input.focus({ preventScroll: true });
+  const cursor = Math.min(Number.isFinite(posicion) ? posicion : input.value.length, input.value.length);
+  input.setSelectionRange(cursor, cursor);
+}
+
 function verPersonal() {
-  const q = normalizar(document.getElementById("filtroPersonal")?.value || "");
+  const filtroActivo = document.getElementById("filtroPersonal");
+  const cursorFiltro = filtroActivo?.selectionStart;
+  const q = normalizar(filtroActivo?.value || "");
   const turno = document.getElementById("turnoPersonal")?.value || "TODOS";
   const grupo = document.getElementById("grupoPersonal")?.value || "TODOS";
   const base = consolidarPersonal();
@@ -611,6 +628,7 @@ function verPersonal() {
       `), "Sin personal para los filtros seleccionados.")}
     </section>
   `;
+  if (filtroActivo) restaurarCursorBusqueda("filtroPersonal", cursorFiltro);
 }
 
 function verDashboard() {
@@ -790,7 +808,9 @@ function verDiario() {
 }
 
 function verGlobal() {
-  const q = normalizar(document.getElementById("filtroGlobal")?.value || "");
+  const filtroActivo = document.getElementById("filtroGlobal");
+  const cursorFiltro = filtroActivo?.selectionStart;
+  const q = normalizar(filtroActivo?.value || "");
   const data = filas.filter(r => !q || [r.dni, r.nombre, r.apellido, r.cliente, r.turno, r.resultado, r.cargo].map(normalizar).join(" ").includes(q));
   const r = resumen(data);
   document.getElementById("app").innerHTML = `
@@ -836,6 +856,7 @@ function verGlobal() {
       ${tablaInasistenciaPorTurno("tablaInasistenciaGlobal", data)}
     </section>
   `;
+  if (filtroActivo) restaurarCursorBusqueda("filtroGlobal", cursorFiltro);
 }
 
 function filasRegularizacion(fecha = "", turno = "TODOS") {

@@ -13,7 +13,26 @@ const USUARIOS = [
 const SESION_KEY = "anc_panel_usuario";
 const DURACION_SESION_MS = 12 * 60 * 60 * 1000;
 const modulosCargados = new Set();
+const cacheDatosCompartidos = new Map();
 let precargaProgramada = false;
+let actualizacionGeneralActiva = false;
+
+async function ancCargarRecurso(url, tipo = "json") {
+  const key = `${tipo}:${url}`;
+  if (!cacheDatosCompartidos.has(key)) {
+    cacheDatosCompartidos.set(key, fetch(url, { cache: "no-store" }).then(async response => {
+      if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText || ""}`.trim());
+      return tipo === "text" ? response.text() : response.json();
+    }).catch(error => {
+      cacheDatosCompartidos.delete(key);
+      throw error;
+    }));
+  }
+  return cacheDatosCompartidos.get(key);
+}
+
+window.ancCargarJson = async url => structuredClone(await ancCargarRecurso(url, "json"));
+window.ancCargarTexto = url => ancCargarRecurso(url, "text");
 
 async function sha256(texto) {
   const bytes = new TextEncoder().encode(texto);
@@ -61,10 +80,55 @@ function obtenerFrame(modulo) {
   frame.className = "module-frame";
   frame.title = modulo.nombre;
   frame.hidden = true;
+  frame.addEventListener("load", () => {
+    frame.dataset.loaded = "1";
+  });
   frame.src = modulo.ruta;
   document.getElementById("moduleFrames").appendChild(frame);
   modulosCargados.add(modulo.id);
   return frame;
+}
+
+function esperarFrame(frame) {
+  if (frame.dataset.loaded === "1") return Promise.resolve(frame);
+  return new Promise(resolve => frame.addEventListener("load", () => resolve(frame), { once: true }));
+}
+
+async function actualizarTodo() {
+  if (actualizacionGeneralActiva) return;
+  actualizacionGeneralActiva = true;
+  const boton = document.getElementById("globalRefreshButton");
+  if (boton) {
+    boton.disabled = true;
+    boton.textContent = "Leyendo Google Sheets...";
+  }
+
+  // Solo renueva la data externa. No elimina avances, ajustes ni historial local.
+  cacheDatosCompartidos.clear();
+  const frames = MODULOS.map(obtenerFrame);
+  await Promise.all(frames.map(esperarFrame));
+  const resultados = await Promise.allSettled(frames.map(frame => {
+    try {
+      const win = frame.contentWindow;
+      if (typeof win.recargarDatos === "function") return win.recargarDatos();
+      if (typeof win.cargarDatos === "function") return win.cargarDatos();
+    } catch (error) {
+      const ruta = frame.getAttribute("src");
+      frame.dataset.loaded = "";
+      frame.src = ruta;
+      return esperarFrame(frame);
+    }
+    return Promise.resolve();
+  }));
+
+  actualizacionGeneralActiva = false;
+  if (boton) {
+    boton.disabled = false;
+    boton.textContent = resultados.some(x => x.status === "rejected") ? "Actualizar con errores" : "Datos actualizados";
+    setTimeout(() => {
+      if (boton && !actualizacionGeneralActiva) boton.textContent = "Actualizar datos";
+    }, 2200);
+  }
 }
 
 function ocultarFrames() {

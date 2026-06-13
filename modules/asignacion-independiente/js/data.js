@@ -8,7 +8,14 @@ let datosListos = false;
 
 async function cargarHoja(nombre) {
   try {
-    const res = await fetch(`https://opensheet.elk.sh/${SHEET_ID}/${nombre}`);
+    const url = `https://opensheet.elk.sh/${SHEET_ID}/${nombre}`;
+    try {
+      if (location.protocol === "file:") throw new Error("carga local");
+      if (window.parent !== window && typeof window.parent.ancCargarJson === "function") {
+        return await window.parent.ancCargarJson(url);
+      }
+    } catch (error) {}
+    const res = await fetch(url, { cache: "no-store" });
     if (!res.ok) throw new Error(`Respuesta ${res.status}`);
     return res.json();
   } catch (error) {

@@ -7,7 +7,13 @@ let hojaAsignacionUsada = "";
 async function cargarHoja(nombre) {
   const url = `https://opensheet.elk.sh/${SHEET_ID}/${encodeURIComponent(nombre)}`;
   try {
-    const res = await fetch(url);
+    try {
+      if (location.protocol === "file:") throw new Error("carga local");
+      if (window.parent !== window && typeof window.parent.ancCargarJson === "function") {
+        return await window.parent.ancCargarJson(url);
+      }
+    } catch (error) {}
+    const res = await fetch(url, { cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText || ""}`.trim());
     return await res.json();
   } catch (error) {
@@ -64,9 +70,18 @@ function csvAObjetos(csv) {
 async function cargarHojaCsv(nombre) {
   const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(nombre)}`;
   try {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText || ""}`.trim());
-    const csv = await res.text();
+    let csv = "";
+    try {
+      if (location.protocol === "file:") throw new Error("carga local");
+      if (window.parent !== window && typeof window.parent.ancCargarTexto === "function") {
+        csv = await window.parent.ancCargarTexto(url);
+      }
+    } catch (error) {}
+    if (!csv) {
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText || ""}`.trim());
+      csv = await res.text();
+    }
     const data = csvAObjetos(csv);
     if (!data.length) throw new Error("CSV sin filas");
     return data;

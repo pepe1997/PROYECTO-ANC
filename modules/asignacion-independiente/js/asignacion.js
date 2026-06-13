@@ -480,7 +480,9 @@ function calcularProgresoProducto(codigo, tipo = "") {
       ? (window.otrasData || [])
       : [...(window.reservaData || []), ...(window.otrasData || [])];
   const filas = origen.filter(r => r.codigo === codigo);
-  const total = filas.reduce((acc, r) => acc + numeroReal(r.asignar), 0);
+  const totalAsignado = filas.reduce((acc, r) => acc + numeroReal(r.asignar), 0);
+  const requerido = Math.max(...filas.map(r => numeroReal(r.requerido)), 0);
+  const total = tipo === "otras" && requerido > 0 ? requerido : totalAsignado;
   const completado = filas.reduce((acc, r) => {
     const key = `${r.lpn}_${r.codigo}`;
     return acc + (estadoOperarios[key] === "completo" ? numeroReal(r.asignar) : 0);
@@ -488,6 +490,7 @@ function calcularProgresoProducto(codigo, tipo = "") {
 
   return {
     total,
+    totalAsignado,
     completado,
     porcentaje: total > 0 ? Math.min(100, (completado / total) * 100) : 0,
     estado: total > 0 && completado >= total ? "Completado" : completado > 0 ? "En proceso" : "Pendiente"

@@ -738,7 +738,6 @@ function verDiagnostico() {
         <p class="muted-note">Revision rapida de hojas, columnas y datos que pueden distorsionar los reportes.</p>
       </div>
       <div class="filters">
-        <button onclick="recargarDatos()">Actualizar data</button>
         <button onclick="exportarTablaVisible('tablaDiagnosticoProblemas', 'diagnostico_problemas')">Excel problemas</button>
       </div>
     </div>
