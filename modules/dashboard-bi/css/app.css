@@ -2299,16 +2299,26 @@ h2 {
 
 .general-report-grid {
   display: grid;
-  grid-template-columns: minmax(260px, .8fr) minmax(520px, 1.55fr) minmax(250px, .75fr);
-  grid-template-rows: auto 1fr;
-  gap: 20px 24px;
-  align-items: start;
+  grid-template-columns: minmax(300px, .85fr) minmax(560px, 1.5fr) minmax(300px, .85fr);
+  grid-template-areas:
+    "asistencia recepcion recepcion-kpis"
+    "despacho picking pedido";
+  grid-template-rows: minmax(350px, auto) minmax(330px, auto);
+  gap: 18px;
+  align-items: stretch;
 }
 
 .general-block,
 .general-side-kpis {
   min-width: 0;
 }
+
+.asistencia-block { grid-area: asistencia; }
+.recepcion-block { grid-area: recepcion; }
+.general-side-kpis { grid-area: recepcion-kpis; }
+.despacho-block { grid-area: despacho; }
+.pedido-operativo-block { grid-area: picking; }
+.pedido-block { grid-area: pedido; }
 
 .general-block h3 {
   display: inline-grid;
@@ -2323,6 +2333,12 @@ h2 {
 }
 
 .general-block {
+  min-height: 100%;
+  padding: 14px;
+  border: 1px solid #dbe3ec;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .92);
+  box-shadow: 0 9px 24px rgba(15, 23, 42, .07);
   text-align: center;
 }
 
@@ -2377,7 +2393,7 @@ h2 {
 }
 
 .general-reception-table-wrap {
-  max-height: 315px;
+  max-height: 286px;
   overflow: auto;
   border: 1px solid #d7dce2;
   border-radius: 8px;
@@ -2410,14 +2426,14 @@ h2 {
   padding: 7px 8px;
   background: #222;
   color: white;
-  font-size: 12px;
+  font-size: 13px;
   text-align: left;
 }
 
 .general-mini-table td {
-  padding: 6px 8px;
+  padding: 8px;
   border-bottom: 1px solid #d7dce2;
-  font-size: 12px;
+  font-size: 13px;
   text-align: left;
 }
 
@@ -2456,13 +2472,14 @@ h2 {
 
 .general-side-kpis {
   display: grid;
+  grid-template-rows: repeat(3, minmax(0, 1fr));
   gap: 10px;
-  padding-top: 2px;
 }
 
 .general-side-kpis .general-value-box {
-  min-height: 72px;
-  padding: 10px 12px;
+  min-height: 0;
+  height: 100%;
+  padding: 14px;
   box-shadow: 0 8px 18px rgba(15, 23, 42, .1);
 }
 
@@ -2472,12 +2489,12 @@ h2 {
 }
 
 .general-side-kpis .general-value-box strong {
-  font-size: 27px;
+  font-size: clamp(29px, 2.5vw, 38px);
 }
 
 .general-side-kpis .general-value-box span {
-  margin-top: 3px;
-  font-size: 12px;
+  margin-top: 5px;
+  font-size: 13px;
 }
 
 .general-side-kpis .general-value-box small {
@@ -2534,7 +2551,7 @@ h2 {
   position: relative;
   z-index: 1;
   color: #292929;
-  font-size: 30px;
+  font-size: clamp(29px, 2.4vw, 38px);
   line-height: 1;
 }
 
@@ -2595,7 +2612,8 @@ h2 {
 }
 
 .despacho-general-table td {
-  padding: 9px 10px;
+  padding: 15px 12px;
+  font-size: 14px;
   text-align: right;
 }
 
@@ -2607,10 +2625,13 @@ h2 {
 
 .despacho-general-table td strong {
   color: #1d4ed8;
-  font-size: 14px;
+  font-size: 17px;
 }
 
 .pedido-operativo-block .general-stack-card {
+  display: grid;
+  grid-template-rows: repeat(3, minmax(0, 1fr));
+  height: calc(100% - 46px);
   border: 1px solid #666;
   border-radius: 8px;
   background: white;
@@ -2618,14 +2639,15 @@ h2 {
 }
 
 .pedido-operativo-block .general-value-box {
-  min-height: 78px;
+  min-height: 0;
+  height: 100%;
   border: 0;
   border-bottom: 1px solid #666;
   box-shadow: none;
 }
 
 .pedido-operativo-block .general-value-box strong {
-  font-size: 32px;
+  font-size: clamp(30px, 2.7vw, 40px);
 }
 
 .pedido-operativo-block .general-value-box span {
@@ -2647,24 +2669,26 @@ h2 {
   padding: 8px 12px;
   border-radius: 8px;
   background: #eef2ff;
-  font-size: 18px;
+  font-size: 19px;
   font-weight: 900;
 }
 
 .general-pedido-boxes {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-rows: repeat(2, minmax(0, 1fr));
   gap: 10px;
+  height: calc(100% - 98px);
 }
 
 .general-pedido-boxes .general-value-box {
-  min-height: 84px;
+  min-height: 0;
+  height: 100%;
   padding: 11px;
   box-shadow: 0 9px 20px rgba(15, 23, 42, .1);
 }
 
 .general-pedido-boxes .general-value-box strong {
-  font-size: 31px;
+  font-size: clamp(30px, 2.7vw, 40px);
 }
 
 .general-pedido-boxes .general-value-box span {
@@ -3564,8 +3588,8 @@ tr:nth-child(even) {
 }
 
 .integrado .general-report-grid {
-  grid-template-columns: minmax(220px, .8fr) minmax(360px, 1.4fr) minmax(220px, .8fr);
-  gap: 20px;
+  grid-template-columns: minmax(280px, .85fr) minmax(500px, 1.5fr) minmax(280px, .85fr);
+  gap: 16px;
 }
 
 .integrado .general-block {
@@ -3584,10 +3608,17 @@ tr:nth-child(even) {
 @media (max-width: 1180px) {
   .integrado .general-report-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas:
+      "asistencia recepcion"
+      "recepcion-kpis recepcion-kpis"
+      "despacho picking"
+      "pedido pedido";
+    grid-template-rows: auto;
   }
 
   .integrado .general-side-kpis {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-rows: 1fr;
     grid-column: 1 / -1;
   }
 }
@@ -3607,7 +3638,18 @@ tr:nth-child(even) {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .integrado .general-report-grid {
+    grid-template-areas:
+      "asistencia"
+      "recepcion"
+      "recepcion-kpis"
+      "despacho"
+      "picking"
+      "pedido";
+  }
+
   .integrado .general-side-kpis {
+    grid-template-rows: repeat(3, minmax(90px, auto));
     grid-column: auto;
   }
 }

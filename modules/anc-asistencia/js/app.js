@@ -18,6 +18,8 @@ let vistaDia = "";
 let turnoInicioSeleccionado = "DIA";
 let horaCorteInicio = "07:20";
 let turnoRegularizacion = "TODOS";
+let informeAsistenciaTipo = "GENERAL";
+let informeAsistenciaTurno = "TODOS";
 let regularizaciones = JSON.parse(localStorage.getItem("anc_asistencia_regularizaciones") || "{}");
 
 function limpiar(valor) {
@@ -807,6 +809,155 @@ function verDiario() {
   `;
 }
 
+function estadoInformeInicio(row) {
+  const limite = horaLimiteTurno(row.turno);
+  return clasificarInicioTurno(row, limite);
+}
+
+function filaInformeAsistencia(row, estado) {
+  return `
+    <tr>
+      <td>${htmlSeguro(row.dni)}</td>
+      <td>${htmlSeguro(row.nombre)}</td>
+      <td>${htmlSeguro(row.apellido)}</td>
+      <td><strong>${htmlSeguro(estado)}</strong></td>
+      <td>${htmlSeguro(row.cargo)}</td>
+      <td><strong>${htmlSeguro(row.turno)}</strong></td>
+    </tr>
+  `;
+}
+
+function resumenAsistenciaPorCargo(asistencias) {
+  const mapa = new Map();
+  asistencias.forEach(row => {
+    const turno = row.turno || "SIN TURNO";
+    const cargo = row.cargo || "SIN CARGO";
+    const key = `${turno}|${cargo}`;
+    if (!mapa.has(key)) mapa.set(key, { turno, cargo, asistencia: 0, puntuales: 0, tardanzas: 0 });
+    const item = mapa.get(key);
+    item.asistencia += 1;
+    if (row.tarde || row.estadoInforme === "TARDANZA") item.tardanzas += 1;
+    else item.puntuales += 1;
+  });
+  const ordenTurno = { DIA: 1, TARDE: 2, NOCHE: 3, "SIN TURNO": 4 };
+  return Array.from(mapa.values()).sort((a, b) =>
+    (ordenTurno[a.turno] || 9) - (ordenTurno[b.turno] || 9) ||
+    b.asistencia - a.asistencia ||
+    a.cargo.localeCompare(b.cargo)
+  );
+}
+
+function tablaAsistenciaPorCargo(asistencias) {
+  const cargos = resumenAsistenciaPorCargo(asistencias);
+  const turnos = [...new Set(cargos.map(item => item.turno))];
+  const filas = turnos.map(turno => {
+    const grupo = cargos.filter(item => item.turno === turno);
+    const subtotal = grupo.reduce((total, item) => total + item.asistencia, 0);
+    return `
+      ${grupo.map((item, index) => `
+        <tr>
+          <td><strong>${index === 0 ? htmlSeguro(fechaCorta(vistaDia)) : ""}</strong></td>
+          <td><strong>${index === 0 ? htmlSeguro(turno) : ""}</strong></td>
+          <td>${htmlSeguro(item.cargo)}</td>
+          <td class="number"><strong>${fmt(item.asistencia)}</strong></td>
+          <td>${htmlSeguro(`${fmt(item.puntuales)} puntuales | ${fmt(item.tardanzas)} tardanzas`)}</td>
+        </tr>
+      `).join("")}
+      <tr class="attendance-turn-subtotal">
+        <td colspan="3">SUBTOTAL ${htmlSeguro(turno)}</td>
+        <td>${fmt(subtotal)}</td>
+        <td>${fmt(grupo.length)} cargos</td>
+      </tr>
+    `;
+  }).join("");
+  return `
+    <div class="table-wrap">
+      <table id="tablaInformeAsistencia" class="attendance-summary-table">
+        <thead><tr><th>Fecha</th><th>Turno</th><th>Cargo</th><th>Asistencia</th><th>Observacion</th></tr></thead>
+        <tbody>
+          ${filas || `<tr><td colspan="5">Sin asistencias para los filtros seleccionados.</td></tr>`}
+        </tbody>
+        <tfoot>
+          <tr><th colspan="3">TOTAL ASISTENCIA</th><th>${fmt(asistencias.length)}</th><th>${fmt(cargos.length)} combinaciones turno/cargo</th></tr>
+        </tfoot>
+      </table>
+    </div>
+  `;
+}
+
+function verInformeAsistencia() {
+  const fechas = fechasDisponibles();
+  if (!vistaDia && fechas.length) vistaDia = fechas[fechas.length - 1];
+
+  const base = filas
+    .filter(r => r.fecha === vistaDia)
+    .filter(r => informeAsistenciaTurno === "TODOS" || r.turno === informeAsistenciaTurno);
+
+  const data = base.map(r => ({
+    ...r,
+    estadoInforme: informeAsistenciaTipo === "INICIO" ? estadoInformeInicio(r) : r.resultado
+  }));
+
+  const esAsistencia = row => informeAsistenciaTipo === "INICIO"
+    ? ["ASISTIO", "TARDANZA"].includes(row.estadoInforme)
+    : row.asistio;
+  const esInasistencia = row => informeAsistenciaTipo === "INICIO"
+    ? ["FALTA AL INICIO", "JUSTIFICADO"].includes(row.estadoInforme)
+    : !row.asistio;
+
+  const asistencias = data.filter(esAsistencia).sort((a, b) => a.turno.localeCompare(b.turno) || a.apellido.localeCompare(b.apellido));
+  const inasistencias = data.filter(esInasistencia).sort((a, b) => a.turno.localeCompare(b.turno) || a.apellido.localeCompare(b.apellido));
+  const pendientes = data.length - asistencias.length - inasistencias.length;
+
+  document.getElementById("app").innerHTML = `
+    <div class="section-head">
+      <div>
+        <h2>Informe diario de asistencia</h2>
+        <p class="muted">Asistencias e inasistencias separadas por fecha y turno.</p>
+      </div>
+      <div class="filters">
+        <select onchange="vistaDia=this.value;verInformeAsistencia()">
+          ${fechas.map(f => `<option value="${htmlSeguro(f)}" ${f === vistaDia ? "selected" : ""}>${htmlSeguro(nombreDia(f))} ${htmlSeguro(fechaCorta(f))}</option>`).join("")}
+        </select>
+        <select onchange="informeAsistenciaTipo=this.value;verInformeAsistencia()">
+          <option value="GENERAL" ${informeAsistenciaTipo === "GENERAL" ? "selected" : ""}>Informe general</option>
+          <option value="INICIO" ${informeAsistenciaTipo === "INICIO" ? "selected" : ""}>Inicio de turno</option>
+        </select>
+        <select onchange="informeAsistenciaTurno=this.value;verInformeAsistencia()">
+          ${["TODOS", "DIA", "TARDE", "NOCHE"].map(turno => `<option value="${turno}" ${turno === informeAsistenciaTurno ? "selected" : ""}>${turno === "TODOS" ? "Todos los turnos" : turno}</option>`).join("")}
+        </select>
+        <button onclick="exportarTablaVisible('tablaInformeAsistencia', 'informe_asistencia_por_cargo_${vistaDia}')">Excel asistencia</button>
+        <button onclick="exportarElementoImagen('informeAsistenciaCargo', 'informe_asistencia_por_cargo_${vistaDia}')">Imagen asistencia</button>
+        <button onclick="exportarTablaVisible('tablaInformeInasistencia', 'informe_inasistencia_${vistaDia}')">Excel inasistencia</button>
+      </div>
+    </div>
+    <section class="kpi-grid daily-kpis">
+      ${kpi("Personal evaluado", fmt(data.length), informeAsistenciaTurno)}
+      ${kpi("Asistencias", fmt(asistencias.length))}
+      ${kpi("Inasistencias", fmt(inasistencias.length), "", inasistencias.length ? "danger" : "")}
+      ${kpi("Pendientes", fmt(pendientes), informeAsistenciaTipo === "INICIO" ? "Turno aun no evaluado" : "")}
+      ${kpi("Fecha", fechaCorta(vistaDia), nombreDia(vistaDia))}
+      ${kpi("Tipo informe", informeAsistenciaTipo === "INICIO" ? "Inicio turno" : "General")}
+    </section>
+    <section class="report-stack attendance-report-stack">
+      <article class="card report-card" id="informeAsistenciaCargo">
+        <div class="section-head">
+          <div><h2>Asistencia agrupada por cargo</h2><p class="muted">${htmlSeguro(informeAsistenciaTurno)} | ${htmlSeguro(fechaCorta(vistaDia))}</p></div>
+          <span class="badge">${fmt(asistencias.length)} personas</span>
+        </div>
+        ${tablaAsistenciaPorCargo(asistencias)}
+      </article>
+      <article class="card report-card">
+        <div class="section-head">
+          <div><h2>Inasistencia</h2><p class="muted">${htmlSeguro(informeAsistenciaTurno)} | ${htmlSeguro(fechaCorta(vistaDia))}</p></div>
+          <span class="badge danger-badge">${fmt(inasistencias.length)} personas</span>
+        </div>
+        ${tablaConId("tablaInformeInasistencia", ["DNI", "Nombre", "Apellido", "Estado", "Cargo", "Turno"], inasistencias.map(r => filaInformeAsistencia(r, r.estadoInforme)), "Sin inasistencias para los filtros seleccionados.")}
+      </article>
+    </section>
+  `;
+}
+
 function verGlobal() {
   const filtroActivo = document.getElementById("filtroGlobal");
   const cursorFiltro = filtroActivo?.selectionStart;
@@ -1041,6 +1192,52 @@ function exportarTablaVisible(id, nombre) {
   const table = document.getElementById(id);
   if (!table) return alert("No hay tabla para exportar");
   descargarExcel(nombre, table.outerHTML);
+}
+
+async function exportarElementoImagen(id, nombre) {
+  const elemento = document.getElementById(id);
+  if (!elemento) return alert("No hay contenido para exportar");
+  if (typeof html2canvas !== "function") return alert("No se pudo iniciar la exportacion de imagen");
+  const contenedores = [elemento, ...elemento.querySelectorAll(".table-wrap")];
+  const estilos = contenedores.map(contenedor => ({
+    contenedor,
+    height: contenedor.style.height,
+    maxHeight: contenedor.style.maxHeight,
+    overflow: contenedor.style.overflow,
+    overflowX: contenedor.style.overflowX,
+    overflowY: contenedor.style.overflowY
+  }));
+
+  contenedores.forEach(contenedor => {
+    contenedor.style.height = "auto";
+    contenedor.style.maxHeight = "none";
+    contenedor.style.overflow = "visible";
+    contenedor.style.overflowX = "visible";
+    contenedor.style.overflowY = "visible";
+  });
+
+  try {
+    const canvas = await html2canvas(elemento, {
+      backgroundColor: "#ffffff",
+      scale: 2,
+      width: elemento.scrollWidth,
+      height: elemento.scrollHeight,
+      windowWidth: Math.max(document.documentElement.clientWidth, elemento.scrollWidth),
+      windowHeight: Math.max(document.documentElement.clientHeight, elemento.scrollHeight)
+    });
+    const enlace = document.createElement("a");
+    enlace.download = `${nombre}.png`;
+    enlace.href = canvas.toDataURL("image/png");
+    enlace.click();
+  } finally {
+    estilos.forEach(item => {
+      item.contenedor.style.height = item.height;
+      item.contenedor.style.maxHeight = item.maxHeight;
+      item.contenedor.style.overflow = item.overflow;
+      item.contenedor.style.overflowX = item.overflowX;
+      item.contenedor.style.overflowY = item.overflowY;
+    });
+  }
 }
 
 cargarDatos().catch(error => {

@@ -59,6 +59,42 @@ function fechaValor(valor) {
   return new Date(Number(partes[3]), Number(partes[2]) - 1, Number(partes[1]), Number(partes[4] || 0), Number(partes[5] || 0));
 }
 
+function fechaValorPedido(valor) {
+  const texto = limpiar(valor);
+  if (!texto) return null;
+  if (/^\d{4}-\d{1,2}-\d{1,2}/.test(texto)) return fechaValor(texto);
+
+  const partes = texto.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2}))?/);
+  if (!partes) return fechaValor(texto);
+
+  const primero = Number(partes[1]);
+  const segundo = Number(partes[2]);
+  const anio = Number(partes[3]);
+  const hora = Number(partes[4] || 0);
+  const minuto = Number(partes[5] || 0);
+  const candidatos = [];
+
+  if (primero >= 1 && primero <= 12 && segundo >= 1 && segundo <= 31) {
+    candidatos.push(new Date(anio, primero - 1, segundo, hora, minuto));
+  }
+  if (segundo >= 1 && segundo <= 12 && primero >= 1 && primero <= 31) {
+    candidatos.push(new Date(anio, segundo - 1, primero, hora, minuto));
+  }
+
+  const validos = candidatos.filter(fecha =>
+    fecha.getFullYear() === anio &&
+    fecha.getHours() === hora &&
+    fecha.getMinutes() === minuto
+  );
+  if (!validos.length) return fechaValor(texto);
+
+  const hoy = new Date();
+  hoy.setHours(23, 59, 59, 999);
+  const noFuturos = validos.filter(fecha => fecha <= hoy);
+  const base = noFuturos.length ? noFuturos : validos;
+  return base.sort((a, b) => Math.abs(hoy - a) - Math.abs(hoy - b))[0];
+}
+
 function fechaCorta(fecha) {
   if (!fecha) return "";
   return fecha.toLocaleDateString("es-PE", { day: "2-digit", month: "2-digit", year: "numeric" });
@@ -899,8 +935,8 @@ function modeloPedido() {
   if (modeloPedido.cache && modeloPedido.firma === firma) return modeloPedido.cache;
 
   modeloPedido.firma = firma;
-  modeloPedido.cache = base.map((r, index) => {
-    const fecha = fechaValor(campo(r, ["Fecha Orden", "FECHA ORDEN", "Fecha", "FECHA"]));
+  const rows = base.map((r, index) => {
+    const fecha = fechaValorPedido(campo(r, ["Fecha Orden", "FECHA ORDEN", "Fecha", "FECHA"]));
     return {
       index,
       fecha,
@@ -915,9 +951,20 @@ function modeloPedido() {
       asignado: num(campo(r, ["Bultos Asig", "BULTOS_ASIGNADOS", "BULTOS ASIG", "Un Asig"])),
       picking: num(campo(r, ["Bultos Emp", "BULTOS_EMP", "BULTOS PICKING", "Un Emp"])),
       despacho: num(campo(r, ["Bultos Env", "BULTOS_ENV", "BULTOS DESPACHO", "Un Env"])),
-      noAsignado: num(campo(r, ["Bultos No Asig", "BULTOS_NO_ASIGNADO", "BULTOS NO ASIG", "Un No asignadas"]))
+      noAsignadoFuente: num(campo(r, ["Bultos No Asig", "BULTOS_NO_ASIGNADO", "BULTOS NO ASIG", "Un No asignadas"]))
     };
-  }).filter(r => r.pedido || r.asignado || r.picking || r.despacho || r.noAsignado);
+  }).filter(r => r.pedido || r.asignado || r.picking || r.despacho || r.noAsignadoFuente);
+
+  const asignadoPorFecha = new Map();
+  rows.forEach(r => {
+    const key = r.fechaTexto || "SIN FECHA";
+    asignadoPorFecha.set(key, (asignadoPorFecha.get(key) || 0) + r.asignado);
+  });
+
+  modeloPedido.cache = rows.map(r => ({
+    ...r,
+    noAsignado: (asignadoPorFecha.get(r.fechaTexto || "SIN FECHA") || 0) > 0 ? r.noAsignadoFuente : 0
+  }));
   pedidoCache = null;
   return modeloPedido.cache;
 }
@@ -1079,7 +1126,7 @@ function verPedidoCompacto() {
         <div class="alert"><span>No asignado</span><strong>${fmt(resumen.noAsignado)}</strong><small>${pct(resumen.noAsignado, resumen.pedido).toFixed(1)}% del pedido</small></div>
       </div>
       <div class="pedido-main-grid">
-        ${visualLine("TENDENCIA DEL PEDIDO", fechas, resumenGeneral.pedido, "#2563eb", true)}
+        ${visualLine("TENDENCIA DEL PEDIDO", fechas, resumen.pedido, "#2563eb", true)}
         <article class="visual-panel pedido-pending-card">
           <span>NO ASIGNADO</span>
           <strong>${fmt(resumen.noAsignado)}</strong>

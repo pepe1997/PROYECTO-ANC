@@ -149,6 +149,11 @@ async function cargarDatos() {
     VALOR: r["BULTOS"],
     DESTINO: r["LOCAL"]
   }));
+  if (typeof modeloPedido === "function") {
+    modeloPedido.cache = null;
+    modeloPedido.firma = "";
+  }
+  if (typeof pedidoCache !== "undefined") pedidoCache = null;
   datosListos = true;
   estado(`PICKING ${dataPicking.length} | RECEPCION ${dataRecepcion.length} | DESPACHO ${dataDespacho.length} | PEDIDO ${dataPedido.length}`);
 }

@@ -339,6 +339,81 @@ tr.bad {
   font-weight: 800;
 }
 
+.attendance-report-stack .report-card {
+  border-top: 5px solid #16a34a;
+}
+
+.attendance-report-stack {
+  max-width: 1350px;
+  margin-inline: auto;
+}
+
+.attendance-report-stack .report-card {
+  padding: 16px 18px;
+}
+
+.attendance-report-stack .report-card:last-child {
+  border-top-color: #dc2626;
+}
+
+.attendance-report-stack .report-card:last-child tbody tr {
+  background: #fff7f7;
+}
+
+.danger-badge {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.attendance-summary-table td {
+  padding: 8px 10px;
+}
+
+.attendance-summary-table th:nth-child(1),
+.attendance-summary-table td:nth-child(1) {
+  width: 120px;
+}
+
+.attendance-summary-table th:nth-child(2),
+.attendance-summary-table td:nth-child(2) {
+  width: 90px;
+}
+
+.attendance-summary-table th:nth-child(4),
+.attendance-summary-table td:nth-child(4) {
+  width: 110px;
+  text-align: center;
+}
+
+.attendance-summary-table th:nth-child(5),
+.attendance-summary-table td:nth-child(5) {
+  width: 250px;
+}
+
+.attendance-turn-subtotal td {
+  border-top: 2px solid #86efac;
+  background: #f0fdf4;
+  color: #166534;
+  font-weight: 900;
+}
+
+.attendance-turn-subtotal td:nth-child(4) {
+  text-align: center;
+}
+
+.attendance-summary-table tfoot th {
+  padding: 12px;
+  background: #dcfce7;
+  color: #166534;
+  font-size: 13px;
+  text-align: left;
+}
+
+.attendance-summary-table tfoot th:nth-child(2),
+.attendance-summary-table tfoot th:nth-child(3) {
+  text-align: center;
+}
+
 .loading,
 .notice {
   padding: 14px 16px;
