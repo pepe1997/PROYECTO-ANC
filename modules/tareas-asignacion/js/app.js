@@ -44,6 +44,25 @@ function pct(a, b) {
   return b > 0 ? (a / b) * 100 : 0;
 }
 
+function cantidadAsignada(row) {
+  return num(campo(row, [
+    "QtyAsgn Cases",
+    "Qty Asgn Cases",
+    "QTY_ASGN_CASES",
+    "BULTOS_ASIGNADOS",
+    "BULTOS ASIGNADOS",
+    "BULTOS ASIG",
+    "BULTOS_ASIG",
+    "BULTOS ASIGNADO",
+    "CS_ASIGNADO",
+    "CS ASIGNADO",
+    "CANTIDAD_ASIGNADA_BULTOS",
+    "CANTIDAD ASIGNADA BULTOS",
+    "CANTIDAD_ASIGNADA_BUL",
+    "CANTIDAD ASIGNADA BUL"
+  ]));
+}
+
 function kpi(label, value, note = "", clase = "") {
   return `<div class="kpi ${clase}"><span>${label}</span><strong>${value}</strong>${note ? `<small>${note}</small>` : ""}</div>`;
 }
@@ -166,6 +185,7 @@ function tareasBase() {
       fecha: limpiar(campo(row, ["Fe Y Hr Modif", "Fe y Hr Creac", "FECHA", "FECHA_TAREA", "FECHA_ORDEN"])),
       unidades: num(campo(row, ["UNI_ASIGNADA", "Un Asig", "UNIDADES", "CANTIDAD", "QTY"])),
       bultos: num(campo(row, ["BULTOS", "QtyAsgn Cases", "BULTOS_PEDIDO", "CASES"])),
+      asignado: cantidadAsignada(row),
       estado,
       comentario: comentariosLocales[id] || limpiar(campo(row, ["COMENTARIO", "OBSERVACION", "OBSERVACIONES"]))
     };
@@ -352,6 +372,7 @@ function pasilloOperativo(t, modulo) {
 }
 
 function medidaTrabajo(t, modulo = "") {
+  if (modulo === "PTS") return t.asignado;
   return modulo === "UNIDADES" ? t.unidades : t.bultos;
 }
 
@@ -397,8 +418,9 @@ function verResumen() {
   const porModulo = modulosReporte.map(m => ({ ...m, data: dataReporte(m.id) })).map(m => ({ ...m, resumen: resumenReporte(m.data, m.id) }));
   const porEstado = agruparPor(data, estadoReporte);
   const porAsignacion = agruparPor(data, t => t.asignacion || "SIN ASIGNACION");
-  const porDestino = agruparPor(data, t => t.destino || "SIN DESTINO").slice(0, 12);
   const porTarea = agruparPor(data, t => t.tarea || "SIN TAREA").slice(0, 12);
+  const porLpn = agruparPor(data, t => t.lpnEntrada || t.lpn || "SIN LPN").slice(0, 12);
+  const porUbicacion = agruparPor(data, t => t.ubicacion || t.ubicLpn || t.ubicActivo || "SIN UBICACION").slice(0, 12);
   const totalValor = porModulo.reduce((a, b) => a + b.resumen.valor, 0);
 
   document.getElementById("modulo").innerHTML = `
@@ -435,7 +457,7 @@ function verResumen() {
         <div class="exec-grid">
           <div><strong>${porModulo[0]?.nombre || "-"}</strong><span>Modulo con mas registros</span></div>
           <div><strong>${porTarea[0]?.label || "-"}</strong><span>Tarea con mas asignacion</span></div>
-          <div><strong>${porDestino[0]?.label || "-"}</strong><span>Destino con mas carga</span></div>
+          <div><strong>${porLpn[0]?.label || "-"}</strong><span>LPN con mas asignacion</span></div>
         </div>
       </div>
     </section>
@@ -451,12 +473,12 @@ function verResumen() {
     </section>
     <section class="dashboard-layout collapsed-summary">
       <div class="card">
-        <h2>Ranking destino</h2>
-        ${tabla(["Destino", "Registros", "Bultos"], porDestino.map(x => filaGrupoValor(x)))}
+        <h2>LPNs con mas asignacion</h2>
+        ${tabla(["LPN", "Registros", "Bultos"], porLpn.map(x => filaGrupoValor(x)))}
       </div>
       <div class="card">
-        <h2>Tareas con mas asignacion</h2>
-        ${tabla(["Tarea", "Registros", "Bultos"], porTarea.map(x => filaGrupoValor(x)))}
+        <h2>Ubicaciones con mas asignacion</h2>
+        ${tabla(["Ubicacion", "Registros", "Bultos"], porUbicacion.map(x => filaGrupoValor(x)))}
       </div>
     </section>
   `;
@@ -874,7 +896,7 @@ function focosOperativos(data, modulo) {
 function tablaReporte(data, modulo = "", limit = 300) {
   const label = etiquetaMedida(modulo);
   const agrupada = agruparTareasOperativas(data, modulo);
-  return tabla(["Estado", "Tarea", "LPN", "Ubicacion", "Codigo", "Descripcion", label, "Destinos"], agrupada.slice(0, limit).map(t => `
+  return tabla(["Estado", "Tarea", "LPN", "Ubicacion", "Codigo", "Descripcion", label], agrupada.slice(0, limit).map(t => `
     <tr class="${normalizar(estadoReporte(t)) === "TERMINADO" ? "ok" : normalizar(estadoReporte(t)).includes("PROCES") ? "warn" : ""}">
       <td><strong>${estadoReporte(t)}</strong></td>
       <td>${t.tarea}</td>
@@ -883,7 +905,6 @@ function tablaReporte(data, modulo = "", limit = 300) {
       <td>${t.codigo}</td>
       <td>${t.descripcion}</td>
       <td class="number">${fmt(t.totalTrabajo)}</td>
-      <td>${t.destinos.size}</td>
     </tr>
   `));
 }
@@ -980,8 +1001,6 @@ function filtrosActivosImagen() {
 
 function tablaImagenFiltrada(modulo) {
   const unicos = new Map();
-  const tareasVistas = new Set();
-  const lpnsVistos = new Set();
   filtrarReporte(dataReporte(modulo), modulo).forEach((t, index) => {
     const ubicacion = limpiar(t.ubicLpn || t.ubicActivo || ubicacionOperativa(t, modulo));
     const pasillo = pasilloUbicacion(ubicacion);
@@ -992,12 +1011,8 @@ function tablaImagenFiltrada(modulo) {
     const identificador = tarea === "-" && lpnEntrada === "-"
       ? `sin-identificador-${index}`
       : `${normalizar(tarea)}|${normalizar(lpnEntrada)}`;
-    const claveTarea = tarea === "-" ? "" : normalizar(tarea);
-    const claveLpn = lpnEntrada === "-" ? "" : normalizar(lpnEntrada);
 
-    if (!unicos.has(identificador) &&
-        (!claveTarea || !tareasVistas.has(claveTarea)) &&
-        (!claveLpn || !lpnsVistos.has(claveLpn))) {
+    if (!unicos.has(identificador)) {
       unicos.set(identificador, {
         pasillo,
         ubicacion,
@@ -1005,11 +1020,11 @@ function tablaImagenFiltrada(modulo) {
         lpnEntrada,
         codigo: limpiar(t.codigo) || "-",
         descripcion: limpiar(t.descripcion) || "-",
-        bultos: Number(t.bultos) || 0
+        bultos: 0
       });
-      if (claveTarea) tareasVistas.add(claveTarea);
-      if (claveLpn) lpnsVistos.add(claveLpn);
     }
+    const item = unicos.get(identificador);
+    item.bultos += medidaTrabajo(t, modulo);
   });
 
   const data = Array.from(unicos.values()).sort((a, b) =>
@@ -1087,77 +1102,6 @@ function exportarTablaPorId(id, nombre) {
   descargarExcel(nombre, el.innerHTML);
 }
 
-function verDestino() {
-  const data = tareasBase();
-  const q = limpiar(document.getElementById("filtroDestino")?.value).toLowerCase();
-  const filtrada = data.filter(t => !q || [t.destino, t.tarea, t.lpn, t.codigo, t.descripcion, t.ubicacion].join(" ").toLowerCase().includes(q));
-  const porDestino = agruparPor(filtrada, t => t.destino || "SIN DESTINO").slice(0, 30);
-  const porDestinoTarea = agruparDestinoTarea(filtrada).slice(0, 500);
-  const total = resumenReporte(filtrada);
-
-  document.getElementById("modulo").innerHTML = `
-    <div class="section-head">
-      <div>
-        <h2>Tareas por destino</h2>
-        <p class="muted-note">Vista separada para distribucion por tienda/destino.</p>
-      </div>
-      <div class="filters">
-        <input class="search" id="filtroDestino" placeholder="Buscar destino, tarea, LPN o producto..." value="${limpiar(document.getElementById("filtroDestino")?.value)}" oninput="verDestino()">
-        <button onclick="exportarTablaPorId('tablaDestinoDetalle', 'tareas_por_destino')">Excel</button>
-      </div>
-    </div>
-    <section class="kpi-grid compact">
-      ${kpi("Destinos", fmt(porDestino.length))}
-      ${kpi("Registros", fmt(total.registros))}
-      ${kpi("Tareas agrupadas", fmt(total.tareas))}
-      ${kpi("Bultos", fmt(total.bultos))}
-      ${kpi("Unidades", fmt(total.unidades))}
-    </section>
-    <section class="dashboard-layout">
-      <div class="card">
-        <h2>Ranking destino</h2>
-        ${tabla(["Destino", "Registros", "Bultos"], porDestino.map(x => filaGrupoValor(x)))}
-      </div>
-      <div class="card" id="tablaDestinoDetalle">
-        <h2>Detalle destino / tarea</h2>
-        ${tabla(["Destino", "Tarea", "LPN", "Codigo", "Descripcion", "Bultos", "Unidades"], porDestinoTarea.map(x => `
-          <tr>
-            <td><strong>${x.destino}</strong></td>
-            <td>${x.tarea}</td>
-            <td>${x.lpn}</td>
-            <td>${x.codigo}</td>
-            <td>${x.descripcion}</td>
-            <td class="number">${fmt(x.bultos)}</td>
-            <td class="number">${fmt(x.unidades)}</td>
-          </tr>
-        `))}
-      </div>
-    </section>
-  `;
-}
-
-function agruparDestinoTarea(data) {
-  const mapa = new Map();
-  data.forEach(t => {
-    const key = [t.destino || "SIN DESTINO", t.tarea || "SIN TAREA", t.lpn || "SIN LPN", t.codigo || "SIN CODIGO"].map(normalizar).join("|");
-    if (!mapa.has(key)) {
-      mapa.set(key, {
-        destino: t.destino || "SIN DESTINO",
-        tarea: t.tarea,
-        lpn: t.lpn,
-        codigo: t.codigo,
-        descripcion: t.descripcion,
-        bultos: 0,
-        unidades: 0
-      });
-    }
-    const item = mapa.get(key);
-    item.bultos += t.bultos;
-    item.unidades += t.unidades;
-  });
-  return Array.from(mapa.values()).sort((a, b) => b.bultos - a.bultos || b.unidades - a.unidades);
-}
-
 function verTablero() {
   document.getElementById("modulo").innerHTML = `
     <div class="section-head">
@@ -1223,7 +1167,7 @@ function tarjetaTarea(t) {
       </div>
       <p>${t.descripcion || "Sin descripcion"}</p>
       <small>${t.tarea || "Sin tarea"} / ${t.ola || "Sin ola"}</small>
-      <small>${t.ubicacion || "Sin ubicacion"} ${t.destino ? `-> ${t.destino}` : ""}</small>
+      <small>${t.ubicacion || "Sin ubicacion"} / ${t.lpnEntrada || t.lpn || "Sin LPN"}</small>
       <div class="task-actions">
         <select onchange="guardarEstado('${t.id}', this.value)">
           ${estadosTarea.map(e => `<option ${t.estado === e ? "selected" : ""}>${e}</option>`).join("")}
@@ -1261,7 +1205,7 @@ function verTareas() {
 
 function renderTablaTareas() {
   const data = filtrarTareas();
-  document.getElementById("tablaTareas").innerHTML = tabla(["Estado", "Estado WMS", "Tarea", "OLA", "Codigo", "Descripcion", "LPN", "Ubicacion", "Pick", "Destino", "Unidades", "Bultos", "Responsable", "Comentario"], data.map(t => `
+  document.getElementById("tablaTareas").innerHTML = tabla(["Estado", "Estado WMS", "Tarea", "OLA", "Codigo", "Descripcion", "LPN", "Ubicacion", "Pick", "Unidades", "Bultos", "Responsable", "Comentario"], data.map(t => `
     <tr class="${t.estado === "COMPLETADO" ? "ok" : t.estado === "BLOQUEADO" ? "bad" : t.prioridad === "ALTA" ? "warn" : ""}">
       <td>
         <select onchange="guardarEstado('${t.id}', this.value)">
@@ -1276,7 +1220,6 @@ function renderTablaTareas() {
       <td>${t.lpn}</td>
       <td>${t.ubicacion}</td>
       <td>${t.pick}</td>
-      <td>${t.destino}</td>
       <td class="number">${fmt(t.unidades)}</td>
       <td class="number">${fmt(t.bultos)}</td>
       <td>${t.usuario}</td>
@@ -1438,7 +1381,6 @@ function abrirDetalle(idCodificado) {
         ["Reserva", t.reserva],
         ["Ubicacion", t.ubicacion],
         ["Ubicacion Pick", t.pick],
-        ["Destino", t.destino],
         ["Unidades", fmt(t.unidades)],
         ["Bultos", fmt(t.bultos)],
         ["Responsable", t.usuario],

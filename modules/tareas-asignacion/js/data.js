@@ -3,6 +3,7 @@
 let dataAsignacion = [];
 let datosListos = false;
 let hojaAsignacionUsada = "";
+let promesaAsignacion = null;
 
 async function cargarHoja(nombre) {
   const url = `https://opensheet.elk.sh/${SHEET_ID}/${encodeURIComponent(nombre)}`;
@@ -91,46 +92,42 @@ async function cargarHojaCsv(nombre) {
 }
 
 async function cargarAsignacion() {
-  const cache = sessionStorage.getItem("tareas_asignacion_cache");
-  if (cache) {
-    try {
-      const parsed = JSON.parse(cache);
-      if (Array.isArray(parsed.data) && parsed.data.length) {
-        hojaAsignacionUsada = parsed.hoja || "ASIGNACION";
-        estado("Cargando desde cache local...");
-        return parsed.data;
-      }
-    } catch (error) {
-      sessionStorage.removeItem("tareas_asignacion_cache");
-    }
-  }
+  if (dataAsignacion.length) return dataAsignacion;
+  if (promesaAsignacion) return promesaAsignacion;
 
   const candidatos = ["ASIGNACION"];
   const errores = [];
 
-  for (const nombre of candidatos) {
-    try {
-      const data = await cargarHoja(nombre);
-      hojaAsignacionUsada = nombre;
-      sessionStorage.setItem("tareas_asignacion_cache", JSON.stringify({ hoja: nombre, data }));
-      return data;
-    } catch (error) {
-      errores.push(error.message || String(error));
+  promesaAsignacion = (async () => {
+    for (const nombre of candidatos) {
+      try {
+        const data = await cargarHoja(nombre);
+        hojaAsignacionUsada = nombre;
+        return data;
+      } catch (error) {
+        errores.push(error.message || String(error));
+      }
     }
-  }
 
-  for (const nombre of candidatos) {
-    try {
-      const data = await cargarHojaCsv(nombre);
-      hojaAsignacionUsada = nombre;
-      sessionStorage.setItem("tareas_asignacion_cache", JSON.stringify({ hoja: nombre, data }));
-      return data;
-    } catch (error) {
-      errores.push(error.message || String(error));
+    for (const nombre of candidatos) {
+      try {
+        const data = await cargarHojaCsv(nombre);
+        hojaAsignacionUsada = nombre;
+        return data;
+      } catch (error) {
+        errores.push(error.message || String(error));
+      }
     }
-  }
 
-  throw new Error(`No se pudo cargar la data principal. Probe estas pestanas: ${candidatos.join(", ")}. Detalle: ${errores.join(" | ")}. Revisa que el Sheet este compartido como publico o que la pestana tenga uno de esos nombres.`);
+    throw new Error(`No se pudo cargar la data principal. Probe estas pestanas: ${candidatos.join(", ")}. Detalle: ${errores.join(" | ")}. Revisa que el Sheet este compartido como publico o que la pestana tenga uno de esos nombres.`);
+  })();
+
+  try {
+    return await promesaAsignacion;
+  } catch (error) {
+    promesaAsignacion = null;
+    throw error;
+  }
 }
 
 function estado(texto) {
@@ -139,6 +136,10 @@ function estado(texto) {
 }
 
 async function cargarDatos() {
+  if (datosListos && dataAsignacion.length) {
+    estado(`${hojaAsignacionUsada || "ASIGNACION"} ${dataAsignacion.length} registros`);
+    return;
+  }
   datosListos = false;
   estado("Cargando ASIGNACION...");
   dataAsignacion = await cargarAsignacion();
@@ -158,7 +159,10 @@ async function iniciarAplicacion() {
 }
 
 async function recargarDatos() {
-  sessionStorage.removeItem("tareas_asignacion_cache");
+  dataAsignacion = [];
+  promesaAsignacion = null;
+  datosListos = false;
+  if (typeof tareasProcesadas !== "undefined") tareasProcesadas = null;
   document.getElementById("modulo").innerHTML = `<div class="loading">Actualizando...</div>`;
   await iniciarAplicacion();
 }

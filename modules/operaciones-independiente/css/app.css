@@ -172,6 +172,37 @@ body {
   margin-bottom: 16px;
 }
 
+.product-search-panel {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 16px;
+}
+
+.product-search-input {
+  width: 100%;
+  min-height: 150px;
+  resize: vertical;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.product-search-input:focus {
+  outline: 3px solid rgba(36, 86, 107, .16);
+  border-color: var(--accent);
+  background: white;
+}
+
+.product-search-input::placeholder {
+  color: #8b98aa;
+}
+
 .detail-box {
   margin-top: 16px;
   padding: 14px;
@@ -203,6 +234,20 @@ body {
 
 .modal-card .table-wrap {
   max-height: 62vh;
+}
+
+.modal-card .detail-full-width {
+  width: 100%;
+  margin-top: 14px;
+  margin-bottom: 14px;
+}
+
+.modal-card .detail-full-width .table-wrap {
+  max-height: 360px;
+}
+
+.modal-card:has(.detail-full-width) {
+  width: min(1280px, 98vw);
 }
 
 .split-view {
