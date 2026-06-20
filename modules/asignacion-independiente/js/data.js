@@ -4,6 +4,7 @@ let dataPedido = [];
 let dataLPN = [];
 let dataQuiebre = [];
 let dataProductos = [];
+let dataInventario = [];
 let datosListos = false;
 
 async function cargarHoja(nombre) {
@@ -36,20 +37,22 @@ async function cargarDatos() {
   datosListos = false;
   actualizarEstadoCarga("Cargando pedido y LPNs...");
 
-  const [pedido, lpns, quiebres, productos] = await Promise.all([
+  const [pedido, lpns, quiebres, productos, inventario] = await Promise.all([
     cargarHoja("PEDIDO"),
     cargarHoja("LPNS"),
     cargarOpcional("QUIEBRES"),
-    cargarOpcional("PRODUCTOS")
+    cargarOpcional("PRODUCTOS"),
+    cargarOpcional("INV_ACTIVO")
   ]);
 
   dataPedido = pedido;
   dataLPN = lpns;
   dataQuiebre = quiebres;
   dataProductos = productos;
+  dataInventario = inventario;
   datosListos = true;
 
-  actualizarEstadoCarga(`${dataPedido.length} pedidos | ${dataLPN.length} LPNs`);
+  actualizarEstadoCarga(`${dataPedido.length} pedidos | ${dataLPN.length} LPNs | ${dataInventario.length} activos`);
 }
 
 function actualizarEstadoCarga(texto) {
@@ -60,6 +63,7 @@ function actualizarEstadoCarga(texto) {
 async function recargarDatos() {
   cacheAsignacion = null;
   mapaLPN = new Map();
+  window.simulacionAsignacion = null;
   document.getElementById("modulo").innerHTML = `<div class="loading">Actualizando datos...</div>`;
 
   try {

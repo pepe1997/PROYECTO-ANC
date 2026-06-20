@@ -192,15 +192,11 @@ function selectFiltro(id, label, opciones, valor) {
 function filtrosPicking(data) {
   const turno = limpiar(document.getElementById("filtroTurnoPicking")?.value);
   const usuario = limpiar(document.getElementById("filtroUsuarioPicking")?.value);
-  const tipo = limpiar(document.getElementById("filtroTipoPicking")?.value);
   const local = limpiar(document.getElementById("filtroLocalPicking")?.value);
-  const q = limpiar(document.getElementById("filtroBuscarPicking")?.value).toLowerCase();
   return data.filter(r => {
     if (turno && r.turno !== turno) return false;
     if (usuario && r.usuario !== usuario) return false;
-    if (tipo && r.tipo !== tipo) return false;
     if (local && r.tiendaKey !== local) return false;
-    if (q && ![r.destino, r.local, r.tiendaKey, r.usuario, r.tipo, r.lpn, r.codigo, r.codAlterno, r.descripcion, r.orden].join(" ").toLowerCase().includes(q)) return false;
     return true;
   });
 }
@@ -239,7 +235,6 @@ function verPicking() {
   const filtros = {
     turno: limpiar(document.getElementById("filtroTurnoPicking")?.value),
     usuario: limpiar(document.getElementById("filtroUsuarioPicking")?.value),
-    tipo: limpiar(document.getElementById("filtroTipoPicking")?.value),
     local: limpiar(document.getElementById("filtroLocalPicking")?.value)
   };
 
@@ -256,14 +251,10 @@ function verPicking() {
       </div>
     </section>
 
-    <section class="filter-panel">
+    <section class="filter-panel picking-filter-panel">
       ${selectFiltro("filtroTurnoPicking", "Turno", opcionesFiltro(data, r => r.turno), filtros.turno)}
       ${selectFiltro("filtroUsuarioPicking", "Usuario", opcionesFiltro(data, r => r.usuario), filtros.usuario)}
-      ${selectFiltro("filtroTipoPicking", "Tipo asignacion", opcionesFiltro(data, r => r.tipo), filtros.tipo)}
       ${selectFiltro("filtroLocalPicking", "Local", opcionesFiltro(data, r => r.tiendaKey), filtros.local)}
-      <label class="filter-label grow">Busqueda
-        <input id="filtroBuscarPicking" oninput="renderPicking()" placeholder="LPN, codigo, usuario, local o descripcion...">
-      </label>
     </section>
 
     <div id="pickingVista"></div>
@@ -274,89 +265,73 @@ function verPicking() {
 function renderPicking() {
   const data = filtrosPicking(modeloPicking());
   const total = data.reduce((a, b) => a + b.bultos, 0);
-  const usuarios = agruparSum(data, r => r.usuario, r => r.bultos);
-  const locales = agruparSum(data, r => r.tiendaKey, r => r.bultos);
-  const tipos = agruparSum(data, r => r.tipo, r => r.bultos);
   const turnos = agruparSum(data, r => r.turno, r => r.bultos);
-  const productos = agruparSum(data, r => `${r.codigo} | ${r.descripcion || "SIN DESCRIPCION"}`, r => r.bultos);
-  const promedioHora = promedioPickingPorHora(data);
-  const lpns = new Set(data.map(r => r.lpn).filter(Boolean)).size;
-  const ordenes = new Set(data.map(r => r.orden).filter(Boolean)).size;
-  const promedioUsuario = usuarios.length ? total / usuarios.length : 0;
-  const promedioPorHora = promedioHora.length ? total / promedioHora.length : 0;
-  const horaPico = agruparSum(data.filter(r => r.hora !== null), r => `${String(r.hora).padStart(2, "0")}:00`, r => r.bultos)[0];
-  const fullContainer = data.filter(r => normalizar(r.tipo) === "FULL-CONTAINER").reduce((a, b) => a + b.bultos, 0);
-  const bultosDia = turnos.find(x => x.label === "DIA")?.valor || 0;
-  const bultosTarde = turnos.find(x => x.label === "TARDE")?.valor || 0;
-  const bultosNoche = turnos.find(x => x.label === "NOCHE")?.valor || 0;
+  const horas = promedioPickingPorHora(data);
+  const horaPico = [...horas].sort((a, b) => b.valor - a.valor)[0];
+  const promedioPorHora = horas.length ? total / horas.length : 0;
+  const usuariosDetalle = rankingPickingDetalle(data, r => r.usuario).slice(0, 12);
+  const localesDetalle = rankingPickingDetalle(data, r => r.tiendaKey).slice(0, 8);
+  const productosDetalle = rankingPickingDetalle(data, r => `${r.codigo} | ${r.descripcion || "SIN DESCRIPCION"}`).slice(0, 10);
   const hero = document.getElementById("pickingHeroTotal");
   if (hero) hero.textContent = fmt(total);
 
   document.getElementById("pickingVista").innerHTML = `
-    <section class="kpi-grid">
-      ${kpi("Bultos", fmt(total), "Total filtrado", "accent")}
-      ${kpi("Turno dia", fmt(bultosDia), "07:00 a 15:59", "accent")}
-      ${kpi("Turno tarde", fmt(bultosTarde), "16:00 a 20:59")}
-      ${kpi("Turno noche", fmt(bultosNoche), "21:00 a 06:59")}
-      ${kpi("Hora pico", horaPico?.label || "-", fmt(horaPico?.valor || 0), "warn")}
-      ${kpi("Prom. hora", fmt(promedioPorHora), `${fmt(promedioHora.length)} horas activas`)}
-      ${kpi("Full container", fmt(fullContainer), `${pct(fullContainer, total).toFixed(1)}% del total`, "warn")}
+    <section class="picking-main-kpis">
+      <article class="picking-main-kpi primary">
+        <span>Bultos procesados</span>
+        <strong>${fmt(total)}</strong>
+        <small>${fmt(data.length)} registros filtrados</small>
+      </article>
+      <article class="picking-main-kpi peak">
+        <span>Hora pico</span>
+        <strong>${horaPico?.label || "-"}</strong>
+        <small>${fmt(horaPico?.valor || 0)} bultos | ${fmt(horaPico?.registros || 0)} registros</small>
+      </article>
+      <article class="picking-main-kpi average">
+        <span>Promedio por hora</span>
+        <strong>${fmt(promedioPorHora)}</strong>
+        <small>${fmt(horas.length)} horas activas</small>
+      </article>
     </section>
 
-    <section class="dashboard-grid">
-      <div class="card wide">
+    <section class="dashboard-grid picking-dashboard-grid">
+      <div class="card wide picking-trend-card">
         <div class="card-title">
           <h2>Tendencia por hora</h2>
-          <span>${data.length} registros</span>
+          <span>${fmt(data.length)} registros</span>
         </div>
-        ${lineaHoras(data)}
+        ${lineaPickingVisible(horas)}
       </div>
 
-      <div class="card wide visual-suite">
-        <div class="card-title">
-          <h2>Vista grafica Picking</h2>
-          <span>Turno, tipo y tiendas principales</span>
-        </div>
-        <div class="visual-combo">
-          <div class="visual-box">
-            <h3>Turno</h3>
-            ${pieChart(turnos, total, fmt(total))}
-          </div>
-          <div class="visual-box">
-            <h3>Tipo asignacion</h3>
-            ${pieChart(tipos, total, `${tipos.length} tipos`)}
-          </div>
-          <div class="visual-box bars-box">
-            <h3>Top tiendas destino</h3>
-            ${verticalBars(locales.slice(0, 8), total)}
-          </div>
-        </div>
+      <div class="card wide picking-turn-card">
+        <h2>Picking por turno</h2>
+        ${turnoPickingVisible(turnos, total)}
       </div>
 
-      <div class="card">
+      <div class="card picking-rank-card">
         <h2>Ranking usuarios</h2>
-        ${barras(usuarios.slice(0, 12), total)}
+        ${rankingPickingVisible(usuariosDetalle, total)}
       </div>
 
-      <div class="card">
+      <div class="card picking-rank-card">
         <h2>Tiendas clave</h2>
-        ${metricTiles(locales.slice(0, 6), total)}
+        ${tilesPickingVisible(localesDetalle, total)}
       </div>
 
-      <div class="card wide">
+      <div class="card wide picking-products-card">
         <div class="card-title">
           <h2>Top productos con mas demanda</h2>
-          <span>Segun bultos de picking</span>
+          <span>Bultos, hora pico y tiempo activo</span>
         </div>
-        ${barrasHorizontales(productos.slice(0, 10), total)}
+        ${productosPickingVisible(productosDetalle, total)}
       </div>
 
-      <div class="card wide">
+      <div class="card wide picking-hour-card">
         <div class="card-title">
           <h2>Avance de picking por hora</h2>
           <span>Bultos por hora vs promedio general</span>
         </div>
-        ${barrasPromedioHora(promedioHora)}
+        ${barrasPromedioHoraVisible(horas)}
       </div>
     </section>
   `;
@@ -377,6 +352,8 @@ function modeloRecepcion() {
     const nombreBase = limpiar(campo(r, ["NOM PROVEEDOR", "NOMBRE PROVEEDOR", "Proveedor"]));
     const proveedor = nombreBase || (codigoProveedor === "917" ? "PUNTA NEGRA" : "SIN PROVEEDOR");
     const fecha = fechaValor(campo(r, ["Fe Recepcion", "FE RECEPCION", "FECHA RECEPCION", "FECHA"]));
+    const horaRaw = campo(r, ["HORA RECEPCION", "HORA", "Hora"]);
+    const hora = horaRaw !== "" ? Math.trunc(num(horaRaw)) : horaFecha(fecha);
     return {
       index,
       codigoProveedor,
@@ -392,9 +369,16 @@ function modeloRecepcion() {
       usuario: limpiar(campo(r, ["USU RECEP", "USUARIO RECEPCION", "USUARIO"])) || "SIN USUARIO",
       fecha,
       fechaTexto: fechaCorta(fecha),
+      hora,
+      turno: turnoPorHora(hora),
       raw: r
     };
   }).filter(r => !normalizar(r.asn).startsWith("ILE"));
+}
+
+function filtroTurnoRecepcion(data) {
+  const turno = limpiar(document.getElementById("filtroTurnoRecepcion")?.value);
+  return data.filter(r => !turno || r.turno === turno);
 }
 
 function palletsRecepcion(data) {
@@ -574,7 +558,9 @@ function tablaProveedoresRecepcion(proveedores, totalRecibido) {
 }
 
 function verRecepcion() {
-  const data = modeloRecepcion();
+  const dataBase = modeloRecepcion();
+  const turnoSeleccionado = limpiar(document.getElementById("filtroTurnoRecepcion")?.value);
+  const data = filtroTurnoRecepcion(dataBase);
   const resumenCalculado = resumenRecepcion(data);
   const resumen = resumenRecepcionVisual(resumenCalculado);
   const proveedoresDetalle = resumenProveedoresRecepcion(data);
@@ -611,11 +597,20 @@ function verRecepcion() {
 
     ${panelAjustesRecepcion(resumenCalculado)}
 
+    <section class="filter-panel recepcion-filter-panel">
+      <label class="filter-label">Turno
+        <select id="filtroTurnoRecepcion" onchange="verRecepcion()">
+          <option value="">Todos los turnos</option>
+          ${opcionesFiltro(dataBase, r => r.turno).map(op => `<option value="${op}" ${op === turnoSeleccionado ? "selected" : ""}>${op}</option>`).join("")}
+        </select>
+      </label>
+    </section>
+
     <section class="dashboard-grid">
-      <div class="card wide visual-suite">
+      <div class="card wide visual-suite recepcion-visual-suite">
         <div class="card-title">
           <h2>Vista grafica Recepcion</h2>
-          <span>General y proveedor 917</span>
+          <span>${turnoSeleccionado || "General"} y proveedor 917</span>
         </div>
         <div class="visual-combo">
           <div class="visual-box">
@@ -2412,6 +2407,175 @@ function promedioPickingPorHora(data) {
     .sort((a, b) => Number(a.label.slice(0, 2)) - Number(b.label.slice(0, 2)));
 }
 
+function rankingPickingDetalle(data, keyFn) {
+  const mapa = new Map();
+  data.forEach(r => {
+    const key = keyFn(r) || "SIN DATO";
+    if (!mapa.has(key)) mapa.set(key, { label: key, registros: 0, valor: 0, rows: [] });
+    const item = mapa.get(key);
+    item.registros += 1;
+    item.valor += r.bultos;
+    item.rows.push(r);
+  });
+
+  return Array.from(mapa.values()).map(item => {
+    const horas = promedioPickingPorHora(item.rows);
+    const pico = [...horas].sort((a, b) => b.valor - a.valor)[0] || { label: "-", valor: 0, registros: 0 };
+    return {
+      ...item,
+      horaPico: pico.label,
+      bultosPico: pico.valor,
+      registrosPico: pico.registros,
+      horasActivas: horas.length
+    };
+  }).sort((a, b) => b.valor - a.valor || b.registros - a.registros);
+}
+
+function lineaPickingVisible(data) {
+  if (!data.length) return `<div class="empty-state">Sin datos para la tendencia.</div>`;
+  const width = 1200;
+  const height = 350;
+  const left = 54;
+  const right = 28;
+  const top = 32;
+  const bottom = 78;
+  const plotW = width - left - right;
+  const plotH = height - top - bottom;
+  const max = Math.max(...data.map(x => x.valor), 1);
+  const puntos = data.map((x, index) => {
+    const xPos = data.length === 1 ? left + (plotW / 2) : left + (plotW * index / (data.length - 1));
+    const yPos = top + plotH - ((x.valor / max) * plotH);
+    return { ...x, x: xPos, y: yPos };
+  });
+  const path = puntos.map((p, i) => `${i ? "L" : "M"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
+  const pico = [...puntos].sort((a, b) => b.valor - a.valor)[0];
+  const grid = [0, 1, 2, 3].map(i => {
+    const y = top + (plotH * i / 3);
+    return `<line x1="${left}" y1="${y}" x2="${width - right}" y2="${y}"></line>`;
+  }).join("");
+
+  return `
+    <div class="picking-line-visible">
+      <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-label="Tendencia por hora">
+        <g class="picking-line-grid">${grid}</g>
+        <path d="${path}"></path>
+        ${puntos.map(p => `
+          <g class="${p === pico ? "peak" : ""}">
+            <circle cx="${p.x}" cy="${p.y}" r="${p === pico ? 8 : 6}"></circle>
+            <text x="${p.x}" y="${Math.max(18, p.y - 13)}" text-anchor="middle">${fmt(p.valor)}</text>
+            <text class="hour-label" x="${p.x}" y="${height - 34}" text-anchor="middle">${p.label}</text>
+          </g>
+        `).join("")}
+      </svg>
+      <div class="picking-line-foot">
+        <strong>Hora pico ${pico.label}</strong>
+        <span>${fmt(pico.valor)} bultos en ${fmt(pico.registros)} registros</span>
+      </div>
+    </div>
+  `;
+}
+
+function turnoPickingVisible(turnos, total) {
+  const orden = [
+    { label: "DIA", clase: "green", rango: "07:00 a 15:59" },
+    { label: "TARDE", clase: "gold", rango: "16:00 a 20:59" },
+    { label: "NOCHE", clase: "purple", rango: "21:00 a 06:59" }
+  ];
+  return `
+    <div class="picking-turn-summary">
+      ${orden.map(t => {
+        const item = turnos.find(x => x.label === t.label) || { valor: 0, registros: 0 };
+        return `
+          <article class="picking-turn-mini ${t.clase}">
+            <span>${t.label}</span>
+            <strong>${fmt(item.valor)}</strong>
+            <small>${pct(item.valor, total).toFixed(1)}% del total</small>
+            <em>${t.rango} | ${fmt(item.registros)} registros</em>
+            <div><i style="width:${Math.min(100, pct(item.valor, total))}%"></i></div>
+          </article>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function rankingPickingVisible(data, total) {
+  const max = Math.max(...data.map(x => x.valor), 1);
+  return `
+    <div class="picking-rank-list">
+      ${data.map((x, index) => `
+        <article class="picking-rank-row">
+          <b>${index + 1}</b>
+          <div>
+            <strong>${x.label}</strong>
+            <span>${fmt(x.valor)} bultos | pico ${x.horaPico} con ${fmt(x.bultosPico)} | ${fmt(x.horasActivas)} h activas</span>
+          </div>
+          <strong>${pct(x.valor, total).toFixed(1)}%</strong>
+          <i style="width:${pct(x.valor, max)}%"></i>
+        </article>
+      `).join("") || `<div class="empty-state">Sin datos.</div>`}
+    </div>
+  `;
+}
+
+function tilesPickingVisible(data, total) {
+  return `
+    <div class="picking-tile-grid">
+      ${data.map(x => `
+        <article class="picking-tile">
+          <span>${x.label}</span>
+          <strong>${fmt(x.valor)}</strong>
+          <small>${pct(x.valor, total).toFixed(1)}% del total</small>
+          <em>Pico ${x.horaPico}: ${fmt(x.bultosPico)} bultos | ${fmt(x.horasActivas)} h activas</em>
+        </article>
+      `).join("") || `<div class="empty-state">Sin datos.</div>`}
+    </div>
+  `;
+}
+
+function productosPickingVisible(data, total) {
+  const max = Math.max(...data.map(x => x.valor), 1);
+  return `
+    <div class="picking-product-list">
+      ${data.map((x, index) => `
+        <article class="picking-product-row">
+          <span>${index + 1}</span>
+          <div>
+            <strong>${x.label}</strong>
+            <small>${fmt(x.valor)} bultos | ${fmt(x.registros)} registros</small>
+          </div>
+          <b>${x.horaPico}</b>
+          <em>${fmt(x.bultosPico)} pico</em>
+          <i><u style="width:${pct(x.valor, max)}%"></u></i>
+          <mark>${pct(x.valor, total).toFixed(1)}%</mark>
+        </article>
+      `).join("") || `<div class="empty-state">Sin datos.</div>`}
+    </div>
+  `;
+}
+
+function barrasPromedioHoraVisible(data) {
+  if (!data.length) return `<div class="empty-state">Sin datos por hora.</div>`;
+  const total = data.reduce((a, b) => a + b.valor, 0);
+  const promedio = data.length ? total / data.length : 0;
+  const max = Math.max(...data.map(x => x.valor), promedio, 1);
+  return `
+    <div class="picking-hour-summary">
+      <strong>${fmt(promedio)}</strong>
+      <span>Promedio por hora activa</span>
+    </div>
+    <div class="picking-hour-bars" style="--avg:${pct(promedio, max)}%">
+      ${data.map(x => `
+        <article>
+          <div><i style="height:${pct(x.valor, max)}%"></i></div>
+          <strong>${fmt(x.valor)}</strong>
+          <span>${x.label}</span>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
 function barrasPromedioHora(data) {
   const total = data.reduce((a, b) => a + b.valor, 0);
   const promedio = data.length ? total / data.length : 0;
@@ -2525,52 +2689,210 @@ function renderExplorador() {
 
 function verRanking() {
   const data = modeloPicking();
-  const total = data.reduce((a, b) => a + b.bultos, 0);
-  const usuarios = agruparSum(data, r => r.usuario, r => r.bultos);
-  const destinos = agruparSum(data, r => r.tiendaKey, r => r.bultos);
-  const productos = agruparSum(data, r => `${r.codigo} | ${r.descripcion || "SIN DESCRIPCION"}`, r => r.bultos);
-  const tipos = agruparSum(data, r => r.tipo, r => r.bultos);
 
   document.getElementById("modulo").innerHTML = `
     <section class="hero ranking-hero">
       <div>
         <span>Ranking operativo</span>
         <h2>Picking</h2>
-        <p>Usuarios, destinos y productos con mayor peso en la operacion.</p>
+        <p>Top de usuarios por bultos, promedio por hora y turno.</p>
       </div>
       <div class="hero-metric">
-        <strong>${fmt(total)}</strong>
+        <strong id="rankingHeroTotal">0</strong>
         <span>Bultos analizados</span>
       </div>
     </section>
 
-    <section class="dashboard-grid">
-      <div class="card wide">
+    <section class="filter-panel ranking-filter-panel">
+      <label class="filter-label">Turno
+        <select id="filtroTurnoRanking" onchange="renderRankingPicking()">
+          <option value="">Todos</option>
+          ${opcionesFiltro(data, r => r.turno).map(op => `<option value="${op}">${op}</option>`).join("")}
+        </select>
+      </label>
+    </section>
+
+    <div id="rankingVista"></div>
+  `;
+  renderRankingPicking();
+}
+
+function aliasesRankingPicking() {
+  try {
+    return JSON.parse(localStorage.getItem("ranking_picking_alias_usuarios") || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function nombreUsuarioRanking(usuario, aliases = aliasesRankingPicking()) {
+  return limpiar(aliases[usuario]) || usuario;
+}
+
+function guardarAliasRanking(usuario, valor) {
+  const aliases = aliasesRankingPicking();
+  const nombre = limpiar(valor);
+  if (nombre) aliases[usuario] = nombre;
+  else delete aliases[usuario];
+  localStorage.setItem("ranking_picking_alias_usuarios", JSON.stringify(aliases));
+  renderRankingPicking();
+}
+
+function rankingUsuariosProductividad(data) {
+  return rankingPickingDetalle(data, r => r.usuario).map(x => ({
+    ...x,
+    promedioHora: x.horasActivas ? x.valor / x.horasActivas : 0
+  }));
+}
+
+function renderRankingPicking() {
+  const turno = limpiar(document.getElementById("filtroTurnoRanking")?.value);
+  const data = modeloPicking().filter(r => !turno || r.turno === turno);
+  const total = data.reduce((a, b) => a + b.bultos, 0);
+  const ranking = rankingUsuariosProductividad(data);
+  const aliases = aliasesRankingPicking();
+  const hero = document.getElementById("rankingHeroTotal");
+  if (hero) hero.textContent = fmt(total);
+
+  document.getElementById("rankingVista").innerHTML = `
+    <section class="ranking-leaderboard card wide">
+      <div class="card-title">
+        <h2>Leaderboard usuarios</h2>
+        <span>${turno || "Todos los turnos"} | ${fmt(ranking.length)} usuarios</span>
+      </div>
+      ${leaderboardPicking(ranking.slice(0, 3), total, aliases)}
+    </section>
+
+    <section class="ranking-grid">
+      <div class="card ranking-top10-card">
         <div class="card-title">
-          <h2>Ranking usuarios</h2>
-          <span>Productividad por bultos</span>
+          <h2>Top 10 productividad</h2>
+          <span>Bultos y promedio por hora</span>
         </div>
-        ${barras(usuarios.slice(0, 15), total)}
+        ${tablaTopRanking(ranking.slice(0, 10), aliases)}
       </div>
 
-      <div class="card">
-        <h2>Participacion por tipo</h2>
-        ${pieChart(tipos, total, `${tipos.length} tipos`)}
-      </div>
-
-      <div class="card">
-        <h2>Destinos principales</h2>
-        ${metricTiles(destinos.slice(0, 6), total)}
-      </div>
-
-      <div class="card wide">
+      <div class="card ranking-alias-card">
         <div class="card-title">
-          <h2>Productos con mas demanda</h2>
-          <span>Top 10 por bultos</span>
+          <h2>Nombres de usuarios</h2>
+          <span>Edita el nombre visible del picker</span>
         </div>
-        ${barrasHorizontales(productos.slice(0, 10), total)}
+        ${tablaAliasRanking(ranking, aliases)}
       </div>
     </section>
+
+    <section class="card wide">
+      <div class="card-title">
+        <h2>Ranking usuarios completo</h2>
+        <span>Tabla con scroll para no ocupar toda la pantalla</span>
+      </div>
+      ${tablaRankingCompleto(ranking, total, aliases)}
+    </section>
+  `;
+}
+
+function leaderboardPicking(data, total, aliases) {
+  const orden = [data[1], data[0], data[2]];
+  const clases = ["second", "first", "third"];
+  return `
+    <div class="leaderboard-podium">
+      ${orden.map((x, index) => x ? `
+        <article class="leader-card ${clases[index]}">
+          <span>${clases[index] === "first" ? "1" : clases[index] === "second" ? "2" : "3"}</span>
+          <div class="leader-avatar">${(nombreUsuarioRanking(x.label, aliases)[0] || "U").toUpperCase()}</div>
+          <strong>${nombreUsuarioRanking(x.label, aliases)}</strong>
+          <small>${x.label}</small>
+          <b>${fmt(x.valor)}</b>
+          <em>Bultos | ${fmt(x.promedioHora)} prom/h | ${pct(x.valor, total).toFixed(1)}%</em>
+        </article>
+      ` : `
+        <article class="leader-card empty">
+          <span>-</span>
+          <strong>Sin usuario</strong>
+          <b>0</b>
+          <em>Bultos</em>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function tablaTopRanking(data, aliases) {
+  return `
+    <div class="ranking-top-list">
+      ${data.map((x, index) => `
+        <article>
+          <span>${index + 1}</span>
+          <div>
+            <strong>${nombreUsuarioRanking(x.label, aliases)}</strong>
+            <small>${x.label}</small>
+          </div>
+          <b>${fmt(x.valor)}</b>
+          <em>${fmt(x.promedioHora)} prom/h</em>
+        </article>
+      `).join("") || `<div class="empty-state">Sin datos.</div>`}
+    </div>
+  `;
+}
+
+function htmlAttr(valor) {
+  return String(valor ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function tablaAliasRanking(data, aliases) {
+  return `
+    <div class="ranking-alias-table">
+      <table>
+        <thead><tr><th>Usuario</th><th>Nombre visible</th></tr></thead>
+        <tbody>
+          ${data.map(x => `
+            <tr>
+              <td><strong>${x.label}</strong></td>
+              <td><input value="${htmlAttr(nombreUsuarioRanking(x.label, aliases))}" data-usuario="${htmlAttr(x.label)}" onchange="guardarAliasRanking(this.dataset.usuario, this.value)" placeholder="Nombre del picker"></td>
+            </tr>
+          `).join("") || `<tr><td colspan="2">Sin datos</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function tablaRankingCompleto(data, total, aliases) {
+  return `
+    <div class="ranking-scroll-table">
+      <table>
+        <thead>
+          <tr>
+            <th>Rank</th>
+            <th>Usuario</th>
+            <th>Nombre</th>
+            <th>Bultos pickados</th>
+            <th>Promedio/hora</th>
+            <th>Hora pico</th>
+            <th>Horas activas</th>
+            <th>%</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${data.map((x, index) => `
+            <tr>
+              <td><strong>${index + 1}</strong></td>
+              <td>${x.label}</td>
+              <td><strong>${nombreUsuarioRanking(x.label, aliases)}</strong></td>
+              <td class="number"><strong>${fmt(x.valor)}</strong></td>
+              <td class="number">${fmt(x.promedioHora)}</td>
+              <td>${x.horaPico} | ${fmt(x.bultosPico)}</td>
+              <td>${fmt(x.horasActivas)}</td>
+              <td>${pct(x.valor, total).toFixed(1)}%</td>
+            </tr>
+          `).join("") || `<tr><td colspan="8">Sin datos</td></tr>`}
+        </tbody>
+      </table>
+    </div>
   `;
 }
 

@@ -132,10 +132,62 @@ function obtenerPedido() {
   return Array.from(mapa.values());
 }
 
+function fechaPedidoOperacion(row) {
+  return limpiarCodigo(campo(row, ["FECHA_ORDEN", "FECHA", "Fecha", "FECHA_PEDIDO", "Fecha Pedido"])) || "SIN FECHA";
+}
+
+function bultosAsignadosPedido(row) {
+  return numeroReal(campo(row, [
+    "BULTOS_ASIGNADOS",
+    "BULTOS_ASIGANDOS",
+    "BULTOS_ASIGNADO",
+    "BULTO_ASIGNADO",
+    "ASIGNADO"
+  ]));
+}
+
+function obtenerPedidosSimulacionOla() {
+  const fechas = new Map();
+
+  for (const row of dataPedido || []) {
+    const fecha = fechaPedidoOperacion(row);
+    if (!fechas.has(fecha)) fechas.set(fecha, { pedido: 0, asignado: 0, rows: [] });
+    const item = fechas.get(fecha);
+    item.pedido += numeroReal(campo(row, ["BULTOS_PEDIDO"]));
+    item.asignado += bultosAsignadosPedido(row);
+    item.rows.push(row);
+  }
+
+  const mapa = new Map();
+  for (const [fecha, grupo] of fechas) {
+    if (grupo.pedido <= 0 || grupo.asignado > 0) continue;
+    for (const row of grupo.rows) {
+      const codigo = limpiarCodigo(row.PRODUCTO);
+      const total = numeroReal(campo(row, ["BULTOS_PEDIDO"]));
+      if (!codigo || total <= 0) continue;
+      const key = `${fecha}|${codigo}`;
+      if (!mapa.has(key)) {
+        mapa.set(key, {
+          fecha,
+          codigo,
+          desc: row.DESCRIPCION || "",
+          codigoAlt: obtenerCodigoAlt(row),
+          total: 0
+        });
+      }
+      const item = mapa.get(key);
+      if (!item.codigoAlt) item.codigoAlt = obtenerCodigoAlt(row);
+      item.total += total;
+    }
+  }
+
+  return Array.from(mapa.values());
+}
+
 function calcularResumenPedido() {
   return (dataPedido || []).reduce((acc, row) => {
     acc.pedido += numeroReal(campo(row, ["BULTOS_PEDIDO"]));
-    acc.asignado += numeroReal(campo(row, ["BULTOS_ASIGNADOS", "BULTOS_ASIGANDOS"]));
+    acc.asignado += bultosAsignadosPedido(row);
     acc.noAsignado += numeroReal(campo(row, ["BULTOS_NO_ASIGNADO", "BULTO_NO_ASIGANDO", "BULTOS_NO_ASIGANDO"]));
     return acc;
   }, {
@@ -213,6 +265,392 @@ function elegirLpns(lpns, requerido) {
   }
 
   return usados;
+}
+
+function elegirLpnsMenorStock(lpns, requerido) {
+  const utiles = lpns
+    .map(lpn => ({ lpn, stock: numeroReal(lpn.BULTOS) }))
+    .filter(x => x.stock > 0)
+    .sort((a, b) => a.stock - b.stock || String(a.lpn.UBICACION || "").localeCompare(String(b.lpn.UBICACION || ""), "es", { numeric: true }));
+
+  let restante = requerido;
+  const usados = [];
+
+  for (const item of utiles) {
+    if (restante <= 0) break;
+    const tomar = Math.min(restante, item.stock);
+    usados.push({ lpn: item.lpn, tomar, stock: item.stock, highlight: item.stock >= restante });
+    restante -= tomar;
+  }
+
+  return usados;
+}
+
+function elegirPtsSimulacion(lpns, requerido) {
+  const utiles = lpns
+    .map(lpn => ({ lpn, stock: numeroReal(lpn.BULTOS) }))
+    .filter(x => x.stock > 0)
+    .sort((a, b) => b.stock - a.stock || String(a.lpn.UBICACION || "").localeCompare(String(b.lpn.UBICACION || ""), "es", { numeric: true }));
+
+  let restante = requerido;
+  const usados = [];
+
+  for (const item of utiles) {
+    if (restante <= 0) break;
+    if (restante >= item.stock) {
+      usados.push({ lpn: item.lpn, tomar: item.stock, stock: item.stock, highlight: false });
+      restante -= item.stock;
+    }
+  }
+
+  return usados;
+}
+
+function productoMaestro(codigo) {
+  const key = limpiarCodigo(codigo);
+  return (dataProductos || []).find(p => limpiarCodigo(p.CODIGO) === key);
+}
+
+function uxbProductoAsignacion(row, maestro) {
+  return numeroReal(campo(row || {}, ["UXB", "Uxb", "UNIDADES X BULTO", "UNID_X_BULTO"])) ||
+    numeroReal(campo(maestro || {}, ["UXB", "Uxb", "UNIDADES X BULTO", "UNID_X_BULTO"]));
+}
+
+function activoNormalizadoSimulacion(row, codigoPedido, descPedido) {
+  const maestro = productoMaestro(codigoPedido);
+  const codigo = limpiarCodigo(campo(row, ["PRODUCTO", "CODIGO"]));
+  const unact = numeroReal(campo(row, ["UNACT", "UnAct", "UN ACT"]));
+  const asignado = numeroReal(campo(row, ["UNI_ASIG", "UNI ASIG", "Un Asig", "UN ASIG", "UN_ASIG"]));
+  const disponibleUnd = Math.max(0, unact - asignado);
+  const uxb = uxbProductoAsignacion(row, maestro);
+  const bultos = uxb > 0 ? disponibleUnd / uxb : numeroReal(campo(row, ["BULTOS", "BULTOS DISPONIBLES", "BULTOS_DISPONIBLES"]));
+
+  return {
+    codigo,
+    desc: limpiarCodigo(campo(row, ["DESCRIPCION", "Descripcion"])) || descPedido || limpiarCodigo(campo(maestro || {}, ["DESCRIPCION", "Descripcion"])),
+    ubicacion: limpiarCodigo(campo(row, ["UBICACION", "Ubicacion"])) || "SIN UBICACION",
+    unact,
+    asignado,
+    disponibleUnd,
+    uxb,
+    bultos,
+    raw: row
+  };
+}
+
+function elegirActivoSimulacion(rows, requerido, codigoPedido, descPedido) {
+  const activos = rows
+    .map(row => activoNormalizadoSimulacion(row, codigoPedido, descPedido))
+    .filter(x => x.bultos > 0)
+    .sort((a, b) => a.bultos - b.bultos || String(a.ubicacion || "").localeCompare(String(b.ubicacion || ""), "es", { numeric: true }));
+
+  let restante = requerido;
+  const usados = [];
+
+  for (const item of activos) {
+    if (restante <= 0) break;
+    const tomar = Math.min(restante, item.bultos);
+    usados.push({ activo: item, tomar, stock: item.bultos });
+    restante -= tomar;
+  }
+
+  return usados;
+}
+
+function filaAsignacionDesdeLpn(item, usado, requerido, origen) {
+  return {
+    codigo: item.codigo,
+    desc: item.desc,
+    lpn: usado.lpn.LPN || "",
+    ubicacion: usado.lpn.UBICACION || "",
+    requerido,
+    requerimientoTotal: item.total,
+    cs: obtenerCs(usado.lpn),
+    bultos: usado.stock,
+    asignar: usado.tomar,
+    restante: usado.stock - usado.tomar,
+    highlight: usado.highlight,
+    origen
+  };
+}
+
+function procesarOtrasPrimero() {
+  construirMapaLPN();
+
+  const pedido = obtenerPedido();
+  const tablaOtras = [];
+  const tablaReserva = [];
+  const sinStock = [];
+  const productos = [];
+
+  for (const item of pedido) {
+    const lpnsValidos = (mapaLPN.get(item.codigo) || []).filter(lpn =>
+      ESTADOS_VALIDOS.has(String(lpn.ESTADO || "").trim())
+    );
+    const reserva = [];
+    const otras = [];
+
+    for (const lpn of lpnsValidos) {
+      const tipo = ubicacionTipo(lpn.UBICACION);
+      if (tipo === "reserva") reserva.push(lpn);
+      if (tipo === "otras") otras.push(lpn);
+    }
+
+    const stockReserva = reserva.reduce((a, b) => a + numeroReal(b.BULTOS), 0);
+    const stockOtras = otras.reduce((a, b) => a + numeroReal(b.BULTOS), 0);
+    let restante = item.total;
+    let asignadoOtras = 0;
+    let asignadoReserva = 0;
+
+    const usadosOtras = elegirLpnsMenorStock(otras, restante);
+    const pedidoOtras = Math.min(restante, usadosOtras.reduce((a, b) => a + numeroReal(b.tomar), 0));
+    for (const usado of usadosOtras) {
+      const tomar = Math.min(restante, usado.tomar);
+      if (tomar <= 0) continue;
+      tablaOtras.push(filaAsignacionDesdeLpn(item, { ...usado, tomar }, pedidoOtras, "otras_primero"));
+      asignadoOtras += tomar;
+      restante -= tomar;
+    }
+
+    const pedidoReserva = restante;
+    const usadosReserva = restante > 0 ? elegirLpnsMenorStock(reserva, restante) : [];
+    for (const usado of usadosReserva) {
+      const tomar = Math.min(restante, usado.tomar);
+      if (tomar <= 0) continue;
+      tablaReserva.push(filaAsignacionDesdeLpn(item, { ...usado, tomar }, pedidoReserva, "reserva_faltante"));
+      asignadoReserva += tomar;
+      restante -= tomar;
+    }
+
+    if (restante > 0) {
+      const prod = (dataProductos || []).find(x => limpiarCodigo(x.CODIGO) === item.codigo);
+      sinStock.push({
+        codigoAlt: item.codigoAlt || (prod ? obtenerCodigoAlt(prod) : ""),
+        codigo: item.codigo,
+        desc: item.desc,
+        bultos: restante,
+        estado: stockOtras + stockReserva > 0 ? "STOCK INSUFICIENTE" : "SIN STOCK"
+      });
+    }
+
+    productos.push({
+      ...item,
+      stockReserva,
+      stockOtras,
+      asignadoReserva,
+      asignadoOtras,
+      sinCobertura: Math.max(0, restante)
+    });
+  }
+
+  const resumen = productos.reduce((acc, p) => {
+    acc.requerido += p.total;
+    acc.otras += p.asignadoOtras;
+    acc.reserva += p.asignadoReserva;
+    acc.sinCobertura += p.sinCobertura;
+    acc.productos += 1;
+    if (p.asignadoOtras > 0 && p.asignadoReserva > 0) acc.mixtos += 1;
+    if (p.asignadoOtras > 0 && p.asignadoReserva === 0 && p.sinCobertura === 0) acc.soloOtras += 1;
+    if (p.asignadoOtras === 0 && p.asignadoReserva > 0) acc.soloReserva += 1;
+    if (p.sinCobertura > 0) acc.productosSinCobertura += 1;
+    return acc;
+  }, {
+    requerido: 0,
+    otras: 0,
+    reserva: 0,
+    sinCobertura: 0,
+    productos: 0,
+    mixtos: 0,
+    soloOtras: 0,
+    soloReserva: 0,
+    productosSinCobertura: 0
+  });
+
+  window.otrasPrimeroData = {
+    otras: tablaOtras.sort((a, b) => numeroReal(a.bultos) - numeroReal(b.bultos) || String(a.ubicacion || "").localeCompare(String(b.ubicacion || ""), "es", { numeric: true })),
+    reserva: tablaReserva.sort(ordenarReserva),
+    sinStock: sinStock.sort((a, b) => b.bultos - a.bultos),
+    productos,
+    resumen
+  };
+
+  return window.otrasPrimeroData;
+}
+
+function filaSimulacionLpn(item, usado, origen) {
+  return {
+    fecha: item.fecha,
+    codigo: item.codigo,
+    desc: item.desc,
+    pedido: item.total,
+    origen,
+    lpn: usado.lpn.LPN || "",
+    ubicacion: usado.lpn.UBICACION || "",
+    stock: usado.stock,
+    asignar: usado.tomar,
+    restanteLpn: usado.stock - usado.tomar,
+    cs: obtenerCs(usado.lpn)
+  };
+}
+
+function filaSimulacionActivo(item, usado) {
+  return {
+    fecha: item.fecha,
+    codigo: item.codigo,
+    desc: item.desc,
+    pedido: item.total,
+    origen: "ACTIVO",
+    ubicacion: usado.activo.ubicacion,
+    stock: usado.stock,
+    asignar: usado.tomar,
+    restanteUbicacion: usado.stock - usado.tomar,
+    unact: usado.activo.unact,
+    unidadesAsignadas: usado.activo.asignado,
+    disponibleUnd: usado.activo.disponibleUnd,
+    uxb: usado.activo.uxb
+  };
+}
+
+function agregarResumenSimulacion(mapa, row) {
+  const key = `${row.fecha}|${row.codigo}`;
+  if (!mapa.has(key)) {
+    mapa.set(key, {
+      fecha: row.fecha,
+      codigo: row.codigo,
+      desc: row.desc,
+      pedido: row.pedido,
+      asignar: 0,
+      detalles: []
+    });
+  }
+  const item = mapa.get(key);
+  item.asignar += numeroReal(row.asignar);
+  item.detalles.push(row);
+}
+
+function procesarSimulacionAsignacion() {
+  construirMapaLPN();
+
+  const pedidos = obtenerPedidosSimulacionOla();
+  const pts = [];
+  const activo = [];
+  const noAsignado = [];
+  const noAsignadoDetalle = [];
+  const sinStock = [];
+  const resumenPts = new Map();
+  const resumenActivo = new Map();
+  const resumenNoAsignado = new Map();
+  const resumenSinStock = new Map();
+
+  for (const item of pedidos) {
+    const lpnsValidos = (mapaLPN.get(item.codigo) || []).filter(lpn =>
+      ESTADOS_VALIDOS.has(String(lpn.ESTADO || "").trim())
+    );
+    const reserva = [];
+    const otras = [];
+
+    for (const lpn of lpnsValidos) {
+      const tipo = ubicacionTipo(lpn.UBICACION);
+      if (tipo === "reserva") reserva.push(lpn);
+      if (tipo === "otras") otras.push(lpn);
+    }
+
+    let restante = item.total;
+    const usadosPts = elegirPtsSimulacion(reserva, restante);
+    const lpnsUsadosPts = new Set();
+    for (const usado of usadosPts) {
+      const row = filaSimulacionLpn(item, usado, "PTS");
+      pts.push(row);
+      agregarResumenSimulacion(resumenPts, row);
+      lpnsUsadosPts.add(row.lpn);
+      restante -= numeroReal(row.asignar);
+    }
+
+    const activosProducto = (dataInventario || []).filter(r => limpiarCodigo(campo(r, ["PRODUCTO", "CODIGO"])) === item.codigo);
+    const usadosActivo = restante > 0 ? elegirActivoSimulacion(activosProducto, restante, item.codigo, item.desc) : [];
+    for (const usado of usadosActivo) {
+      const row = filaSimulacionActivo(item, usado);
+      activo.push(row);
+      agregarResumenSimulacion(resumenActivo, row);
+      restante -= numeroReal(row.asignar);
+    }
+
+    if (restante > 0) {
+      const reservaDisponible = reserva.filter(lpn => !lpnsUsadosPts.has(limpiarCodigo(lpn.LPN)));
+      const usadosReservaFallback = elegirLpns(reservaDisponible, restante);
+      let restanteFallback = restante;
+
+      for (const usado of usadosReservaFallback) {
+        const tomar = Math.min(restanteFallback, usado.tomar);
+        if (tomar <= 0) continue;
+        const row = filaSimulacionLpn(item, { ...usado, tomar }, "RESERVA FALLANTE");
+        noAsignadoDetalle.push(row);
+        agregarResumenSimulacion(resumenNoAsignado, row);
+        restanteFallback -= tomar;
+      }
+
+      const usadosOtrasFallback = restanteFallback > 0 ? elegirLpns(otras, restanteFallback) : [];
+      for (const usado of usadosOtrasFallback) {
+        const tomar = Math.min(restanteFallback, usado.tomar);
+        if (tomar <= 0) continue;
+        const row = filaSimulacionLpn(item, { ...usado, tomar }, "OTRAS FALLANTE");
+        noAsignadoDetalle.push(row);
+        agregarResumenSimulacion(resumenNoAsignado, row);
+        restanteFallback -= tomar;
+      }
+
+      noAsignado.push({
+        fecha: item.fecha,
+        codigo: item.codigo,
+        desc: item.desc,
+        pedido: item.total,
+        faltanteInicial: restante,
+        coberturaFallback: restante - restanteFallback,
+        sinCobertura: Math.max(0, restanteFallback)
+      });
+
+      if (restanteFallback > 0) {
+        const row = {
+          fecha: item.fecha,
+          codigo: item.codigo,
+          desc: item.desc,
+          pedido: item.total,
+          asignar: restanteFallback,
+          estado: "SIN STOCK"
+        };
+        sinStock.push(row);
+        agregarResumenSimulacion(resumenSinStock, row);
+      }
+    }
+  }
+
+  const resumenGeneral = {
+    fechas: new Set(pedidos.map(p => p.fecha)).size,
+    productos: pedidos.length,
+    pedido: pedidos.reduce((a, b) => a + b.total, 0),
+    pts: pts.reduce((a, b) => a + b.asignar, 0),
+    activo: activo.reduce((a, b) => a + b.asignar, 0),
+    noAsignado: noAsignado.reduce((a, b) => a + b.faltanteInicial, 0),
+    fallback: noAsignado.reduce((a, b) => a + b.coberturaFallback, 0),
+    sinStock: sinStock.reduce((a, b) => a + b.asignar, 0)
+  };
+
+  window.simulacionAsignacion = {
+    pts,
+    activo,
+    noAsignado,
+    noAsignadoDetalle,
+    sinStock,
+    resumenGeneral,
+    resumen: {
+      pts: Array.from(resumenPts.values()).sort((a, b) => b.pedido - a.pedido || b.asignar - a.asignar),
+      activo: Array.from(resumenActivo.values()).sort((a, b) => b.pedido - a.pedido || b.asignar - a.asignar),
+      noAsignado: noAsignado.sort((a, b) => b.pedido - a.pedido || b.faltanteInicial - a.faltanteInicial),
+      sinStock: Array.from(resumenSinStock.values()).sort((a, b) => b.pedido - a.pedido || b.asignar - a.asignar)
+    }
+  };
+
+  return window.simulacionAsignacion;
 }
 
 function procesarDatos() {
@@ -406,6 +844,8 @@ function abrirAsignacion() {
       <button onclick="verDashboardPedido()">Dashboard pedido</button>
       <button onclick="verReserva()">Reserva</button>
       <button onclick="verOtras()">Otras ubicaciones</button>
+      <button onclick="verOtrasPrimero()">Otras primero</button>
+      <button onclick="verSimulacionAsignacion()">Simulacion ola</button>
       <button onclick="verFormatoTablas()">Formato de tablas</button>
       <button onclick="verSinStock()">Sin stock</button>
       <button onclick="verAnalisisRapido()">Analisis rapido</button>
@@ -478,7 +918,11 @@ function calcularProgresoProducto(codigo, tipo = "") {
     ? (window.reservaData || [])
     : tipo === "otras"
       ? (window.otrasData || [])
-      : [...(window.reservaData || []), ...(window.otrasData || [])];
+      : tipo === "otrasPrimeroOtras"
+        ? (window.otrasPrimeroData?.otras || [])
+        : tipo === "otrasPrimeroReserva"
+          ? (window.otrasPrimeroData?.reserva || [])
+          : [...(window.reservaData || []), ...(window.otrasData || [])];
   const filas = origen.filter(r => r.codigo === codigo);
   const totalAsignado = filas.reduce((acc, r) => acc + numeroReal(r.asignar), 0);
   const requerido = Math.max(...filas.map(r => numeroReal(r.requerido)), 0);
@@ -703,7 +1147,7 @@ function agruparPedidoPorFecha() {
     const item = mapa.get(fecha);
     item.solicitado += numeroReal(campo(row, ["BULTOS_REAL"]));
     item.asignable += numeroReal(campo(row, ["BULTOS_PEDIDO"]));
-    item.asignado += numeroReal(campo(row, ["BULTOS_ASIGNADOS", "BULTOS_ASIGANDOS"]));
+    item.asignado += bultosAsignadosPedido(row);
     item.empacado += numeroReal(campo(row, ["BULTOS_EMPACADOS"]));
     item.enviado += numeroReal(campo(row, ["BULTOS_ENVIADOS"]));
     item.noAsignado += numeroReal(campo(row, ["BULTOS_NO_ASIGNADO", "BULTO_NO_ASIGANDO", "BULTOS_NO_ASIGANDO"]));
@@ -1428,6 +1872,398 @@ function verDetalleOtras(codigo) {
   `;
 }
 
+function datosOtrasPrimeroPorTipo(tipo) {
+  const datos = procesarOtrasPrimero();
+  if (tipo === "otrasPrimeroReserva") return datos.reserva || [];
+  if (tipo === "otrasPrimeroSinStock") return datos.sinStock || [];
+  return datos.otras || [];
+}
+
+function agruparOtrasPrimero(data) {
+  const mapa = new Map();
+
+  for (const r of data) {
+    if (!mapa.has(r.codigo)) {
+      mapa.set(r.codigo, {
+        codigo: r.codigo,
+        desc: r.desc,
+        pedidoTotal: r.requerimientoTotal,
+        requerido: 0,
+        lpns: []
+      });
+    }
+    const item = mapa.get(r.codigo);
+    item.requerido += numeroReal(r.asignar);
+    item.lpns.push(r);
+  }
+
+  return Array.from(mapa.values()).sort((a, b) => b.pedidoTotal - a.pedidoTotal || b.requerido - a.requerido);
+}
+
+function verOtrasPrimero(subvista = "otrasPrimeroOtras") {
+  vistaActual = "otrasPrimero";
+  const datos = procesarOtrasPrimero();
+  const resumen = datos.resumen;
+
+  document.getElementById("contenido").innerHTML = `
+    <div class="section-head">
+      <div>
+        <h2>Otras primero</h2>
+        <p>Primero busca LPNs en otras ubicaciones desde el stock mas bajo. El faltante se completa en reserva.</p>
+      </div>
+      <div class="section-actions">
+        <button onclick="descargarExcel('otrasPrimeroOtras')">Excel otras</button>
+        <button onclick="descargarExcel('otrasPrimeroReserva')">Excel reserva</button>
+      </div>
+    </div>
+
+    <div class="mini-kpis">
+      <div><span>Pedido no asignado</span><strong>${formatoDecimal(resumen.requerido)}</strong></div>
+      <div><span>Otras ubicaciones</span><strong>${formatoDecimal(resumen.otras)}</strong></div>
+      <div><span>Reserva faltante</span><strong>${formatoDecimal(resumen.reserva)}</strong></div>
+      <div><span>Sin cobertura</span><strong>${formatoDecimal(resumen.sinCobertura)}</strong></div>
+      <div><span>Mixtos</span><strong>${formatoDecimal(resumen.mixtos)}</strong></div>
+    </div>
+
+    <div class="toolbar submodule-tabs">
+      <button onclick="renderOtrasPrimeroSubmodulo('otrasPrimeroOtras')">Otras ubicaciones</button>
+      <button onclick="renderOtrasPrimeroSubmodulo('otrasPrimeroReserva')">Reserva faltante</button>
+      <button onclick="renderOtrasPrimeroSubmodulo('otrasPrimeroSinStock')">Sin stock</button>
+    </div>
+
+    <div id="otrasPrimeroContenido"></div>
+  `;
+
+  renderOtrasPrimeroSubmodulo(subvista);
+}
+
+function verSimulacionAsignacion(subvista = "simPts") {
+  vistaActual = "simulacion";
+  const sim = procesarSimulacionAsignacion();
+  const r = sim.resumenGeneral;
+
+  document.getElementById("contenido").innerHTML = `
+    <div class="section-head">
+      <div>
+        <h2>Simulacion de ola de asignacion</h2>
+        <p>Solo lectura: simula PTS por reserva, inventario activo y faltantes cuando la fecha aun no tiene bultos asignados.</p>
+      </div>
+      <div class="section-actions">
+        <button onclick="descargarExcelSimulacion('general', 'resumen')">Excel general</button>
+      </div>
+    </div>
+
+    <div class="mini-kpis">
+      <div><span>Fechas sin ola</span><strong>${formatoDecimal(r.fechas)}</strong></div>
+      <div><span>Productos</span><strong>${formatoDecimal(r.productos)}</strong></div>
+      <div><span>Bultos pedido</span><strong>${formatoDecimal(r.pedido)}</strong></div>
+      <div><span>PTS reserva</span><strong>${formatoDecimal(r.pts)}</strong></div>
+      <div><span>Activo</span><strong>${formatoDecimal(r.activo)}</strong></div>
+      <div><span>No asignado</span><strong>${formatoDecimal(r.noAsignado)}</strong></div>
+      <div><span>Sin stock</span><strong>${formatoDecimal(r.sinStock)}</strong></div>
+    </div>
+
+    <div class="toolbar submodule-tabs">
+      <button onclick="renderSimulacionSubmodulo('simPts')">PTS reserva</button>
+      <button onclick="renderSimulacionSubmodulo('simActivo')">Inventario activo</button>
+      <button onclick="renderSimulacionSubmodulo('simNoAsignado')">No asignado</button>
+      <button onclick="renderSimulacionSubmodulo('simSinStock')">Sin stock</button>
+    </div>
+
+    <div id="simulacionContenido"></div>
+    <div id="modalSimulacion"></div>
+  `;
+
+  renderSimulacionSubmodulo(subvista);
+}
+
+function renderSimulacionSubmodulo(tipo) {
+  const sim = procesarSimulacionAsignacion();
+  const config = {
+    simPts: {
+      titulo: "PTS reserva",
+      nota: "Pallets de reserva tomados completos mientras caben en el saldo del pedido.",
+      resumen: sim.resumen.pts,
+      detalle: sim.pts,
+      excel: "pts"
+    },
+    simActivo: {
+      titulo: "Inventario activo",
+      nota: "Saldo completado desde activo tomando solo lo necesario.",
+      resumen: sim.resumen.activo,
+      detalle: sim.activo,
+      excel: "activo"
+    },
+    simNoAsignado: {
+      titulo: "No asignado simulado",
+      nota: "Productos que no se completaron con PTS + activo y pasan a la logica anterior.",
+      resumen: sim.resumen.noAsignado,
+      detalle: sim.noAsignadoDetalle,
+      excel: "noAsignado"
+    },
+    simSinStock: {
+      titulo: "Sin stock",
+      nota: "Faltante final sin cobertura disponible.",
+      resumen: sim.resumen.sinStock,
+      detalle: sim.sinStock,
+      excel: "sinStock"
+    }
+  }[tipo];
+
+  document.getElementById("simulacionContenido").innerHTML = `
+    <div class="section-head sub-head">
+      <div>
+        <h2>${config.titulo}</h2>
+        <p>${config.nota}</p>
+      </div>
+      <div class="section-actions">
+        <button onclick="descargarExcelSimulacion('${config.excel}', 'resumen')">Excel resumen</button>
+        <button onclick="descargarExcelSimulacion('${config.excel}', 'detalle')">Excel detalle</button>
+      </div>
+    </div>
+    ${tablaResumenSimulacion(config.resumen, tipo)}
+  `;
+}
+
+function tablaResumenSimulacion(data, tipo) {
+  const headers = tipo === "simNoAsignado"
+    ? ["Fecha", "Codigo", "Descripcion", "Pedido", "Faltante PTS+Activo", "Cobertura logica anterior", "Sin cobertura", "Ver"]
+    : ["Fecha", "Codigo", "Descripcion", "Pedido", "Asignar", "Detalles", "Ver"];
+
+  const rows = data.map(r => {
+    if (tipo === "simNoAsignado") {
+      return `
+        <tr>
+          <td>${htmlSeguro(r.fecha)}</td>
+          <td><strong>${htmlSeguro(r.codigo)}</strong></td>
+          <td>${htmlSeguro(r.desc)}</td>
+          <td class="number">${formatoDecimal(r.pedido)}</td>
+          <td class="number"><strong>${formatoDecimal(r.faltanteInicial)}</strong></td>
+          <td class="number">${formatoDecimal(r.coberturaFallback)}</td>
+          <td class="number">${formatoDecimal(r.sinCobertura)}</td>
+          <td><button class="compact" onclick="verDetalleSimulacion(${argumentoSeguro(r.fecha)}, ${argumentoSeguro(r.codigo)}, ${argumentoSeguro(tipo)})">Ver</button></td>
+        </tr>
+      `;
+    }
+
+    return `
+      <tr>
+        <td>${htmlSeguro(r.fecha)}</td>
+        <td><strong>${htmlSeguro(r.codigo)}</strong></td>
+        <td>${htmlSeguro(r.desc)}</td>
+        <td class="number">${formatoDecimal(r.pedido)}</td>
+        <td class="number"><strong>${formatoDecimal(r.asignar)}</strong></td>
+        <td>${r.detalles?.length || 0}</td>
+        <td><button class="compact" onclick="verDetalleSimulacion(${argumentoSeguro(r.fecha)}, ${argumentoSeguro(r.codigo)}, ${argumentoSeguro(tipo)})">Ver</button></td>
+      </tr>
+    `;
+  });
+
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead><tr>${headers.map(h => `<th>${h}</th>`).join("")}</tr></thead>
+        <tbody>${rows.join("") || `<tr><td colspan="${headers.length}">Sin datos.</td></tr>`}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function tablaSimple(headers, rows, empty = "Sin datos.") {
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead><tr>${headers.map(h => `<th>${htmlSeguro(h)}</th>`).join("")}</tr></thead>
+        <tbody>${rows.join("") || `<tr><td colspan="${headers.length}">${htmlSeguro(empty)}</td></tr>`}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function detalleSimulacionPorTipo(tipo, fecha, codigo) {
+  const sim = procesarSimulacionAsignacion();
+  const detalle = tipo === "simPts"
+    ? sim.pts
+    : tipo === "simActivo"
+      ? sim.activo
+      : tipo === "simNoAsignado"
+        ? sim.noAsignadoDetalle
+        : sim.sinStock;
+  return detalle.filter(r => r.fecha === fecha && r.codigo === codigo);
+}
+
+function verDetalleSimulacion(fecha, codigo, tipo) {
+  const data = detalleSimulacionPorTipo(tipo, fecha, codigo);
+  const titulo = {
+    simPts: "Detalle PTS reserva",
+    simActivo: "Detalle inventario activo",
+    simNoAsignado: "Detalle logica anterior",
+    simSinStock: "Detalle sin stock"
+  }[tipo] || "Detalle";
+
+  document.getElementById("modal").innerHTML = `
+    <div class="modal-backdrop">
+      <div class="modal-card">
+        <div class="section-head">
+          <div>
+            <h2>${titulo}</h2>
+            <p>${htmlSeguro(fecha)} | ${htmlSeguro(codigo)}</p>
+          </div>
+          <button onclick="cerrarModal()">Cerrar</button>
+        </div>
+        ${tablaDetalleSimulacion(data, tipo)}
+      </div>
+    </div>
+  `;
+}
+
+function tablaDetalleSimulacion(data, tipo) {
+  if (tipo === "simActivo") {
+    return tablaSimple(["Ubicacion", "Stock bultos", "Asignar", "Restante", "UNACT", "Asignado UND", "Disponible UND", "UXB"], data.map(r => `
+      <tr>
+        <td><strong>${htmlSeguro(r.ubicacion)}</strong></td>
+        <td class="number">${formatoDecimal(r.stock)}</td>
+        <td class="number"><strong>${formatoDecimal(r.asignar)}</strong></td>
+        <td class="number">${formatoDecimal(r.restanteUbicacion)}</td>
+        <td class="number">${formatoDecimal(r.unact)}</td>
+        <td class="number">${formatoDecimal(r.unidadesAsignadas)}</td>
+        <td class="number">${formatoDecimal(r.disponibleUnd)}</td>
+        <td class="number">${formatoDecimal(r.uxb)}</td>
+      </tr>
+    `));
+  }
+
+  if (tipo === "simSinStock") {
+    return tablaSimple(["Fecha", "Codigo", "Descripcion", "Faltante", "Estado"], data.map(r => `
+      <tr class="bad">
+        <td>${htmlSeguro(r.fecha)}</td>
+        <td><strong>${htmlSeguro(r.codigo)}</strong></td>
+        <td>${htmlSeguro(r.desc)}</td>
+        <td class="number">${formatoDecimal(r.asignar)}</td>
+        <td><strong>${htmlSeguro(r.estado)}</strong></td>
+      </tr>
+    `));
+  }
+
+  return tablaSimple(["Origen", "LPN", "Ubicacion", "Stock LPN", "Asignar", "Restante LPN", "CS"], data.map(r => `
+    <tr>
+      <td><strong>${htmlSeguro(r.origen)}</strong></td>
+      <td>${htmlSeguro(r.lpn)}</td>
+      <td>${htmlSeguro(r.ubicacion || "VACIO")}</td>
+      <td class="number">${formatoDecimal(r.stock)}</td>
+      <td class="number"><strong>${formatoDecimal(r.asignar)}</strong></td>
+      <td class="number">${formatoDecimal(r.restanteLpn)}</td>
+      <td class="number">${formatoDecimal(r.cs)}</td>
+    </tr>
+  `));
+}
+
+function renderOtrasPrimeroSubmodulo(tipo) {
+  if (tipo === "otrasPrimeroSinStock") {
+    const data = datosOtrasPrimeroPorTipo(tipo);
+    document.getElementById("otrasPrimeroContenido").innerHTML = `
+      <div class="section-head sub-head">
+        <h2>Sin stock / faltante</h2>
+        <span>${data.length} productos</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Codigo alt</th><th>Codigo</th><th>Descripcion</th><th>Faltante</th><th>Estado</th></tr>
+          </thead>
+          <tbody>
+            ${data.map(r => `
+              <tr class="bad">
+                <td>${htmlSeguro(r.codigoAlt || "")}</td>
+                <td><strong>${htmlSeguro(r.codigo)}</strong></td>
+                <td>${htmlSeguro(r.desc)}</td>
+                <td class="number">${formatoDecimal(r.bultos)}</td>
+                <td><strong>${htmlSeguro(r.estado)}</strong></td>
+              </tr>
+            `).join("") || `<tr><td colspan="5">Sin faltantes.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    `;
+    return;
+  }
+
+  const data = datosOtrasPrimeroPorTipo(tipo);
+  const grupos = agruparOtrasPrimero(data);
+  const titulo = tipo === "otrasPrimeroReserva" ? "Reserva faltante" : "Otras ubicaciones";
+  const descripcion = tipo === "otrasPrimeroReserva"
+    ? "Solo muestra lo que falta completar despues de tomar otras ubicaciones."
+    : "LPNs seleccionados desde el stock mas bajo hasta cubrir el pedido.";
+
+  document.getElementById("otrasPrimeroContenido").innerHTML = `
+    <div class="section-head sub-head">
+      <div>
+        <h2>${titulo}</h2>
+        <p>${descripcion}</p>
+      </div>
+      <button onclick="descargarExcel('${tipo}')">Excel detalle</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Producto</th>
+            <th>Descripcion</th>
+            <th>Pedido total</th>
+            <th>Asignar aqui</th>
+            <th>LPNs</th>
+            <th>Ubicaciones</th>
+            <th>Progreso</th>
+            <th>Estado</th>
+            <th>Ver</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${grupos.map(r => {
+            const ubicaciones = [...new Set(r.lpns.map(l => l.ubicacion || "VACIO"))].join(", ");
+            const progreso = calcularProgresoProducto(r.codigo, tipo);
+            return `
+              <tr data-codigo="${atributoSeguro(r.codigo)}" data-tipo="${atributoSeguro(tipo)}" data-resumen-producto="${atributoSeguro(tipo)}">
+                <td><strong>${htmlSeguro(r.codigo)}</strong></td>
+                <td>${htmlSeguro(r.desc)}</td>
+                <td class="number">${formatoDecimal(r.pedidoTotal)}</td>
+                <td class="number"><strong>${formatoDecimal(r.requerido)}</strong></td>
+                <td>${r.lpns.length}</td>
+                <td>${htmlSeguro(ubicaciones)}</td>
+                <td class="progreso-cell">${barraProgreso(progreso.porcentaje)}</td>
+                <td class="estado-producto-cell"><strong>${progreso.estado}</strong></td>
+                <td><button class="compact" onclick="verDetalleOtrasPrimero(${argumentoSeguro(r.codigo)}, ${argumentoSeguro(tipo)})">Ver</button></td>
+              </tr>
+            `;
+          }).join("") || `<tr><td colspan="9">Sin datos.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function verDetalleOtrasPrimero(codigo, tipo) {
+  const data = datosOtrasPrimeroPorTipo(tipo).filter(o => o.codigo === codigo)
+    .sort((a, b) => numeroReal(a.bultos) - numeroReal(b.bultos));
+  if (!data.length) return;
+
+  const titulo = tipo === "otrasPrimeroReserva" ? "Reserva faltante" : "Otras ubicaciones";
+  document.getElementById("modal").innerHTML = `
+    <div class="modal-backdrop">
+      <div class="modal-card">
+        <div class="section-head">
+          <div>
+            <h2>${htmlSeguro(codigo)} | ${titulo}</h2>
+            <p>${htmlSeguro(data[0]?.desc || "")}</p>
+          </div>
+          <button onclick="cerrarModal()">Cerrar</button>
+        </div>
+        ${crearTabla(data, tipo)}
+      </div>
+    </div>
+  `;
+}
+
 function cerrarModal() {
   document.getElementById("modal").innerHTML = "";
 }
@@ -1663,6 +2499,9 @@ function datosExportacion(tipo) {
   if (tipo === "reserva") return window.reservaData || [];
   if (tipo === "otras") return window.otrasData || [];
   if (tipo === "sinStock") return window.sinStockData || [];
+  if (tipo === "otrasPrimeroOtras") return procesarOtrasPrimero().otras || [];
+  if (tipo === "otrasPrimeroReserva") return procesarOtrasPrimero().reserva || [];
+  if (tipo === "otrasPrimeroSinStock") return procesarOtrasPrimero().sinStock || [];
   if (tipo === "analisis") return cacheAsignacion.productos || [];
   return [];
 }
@@ -1694,6 +2533,58 @@ function descargarExcel(tipo) {
   a.href = URL.createObjectURL(blob);
   a.download = `${tipo}.xls`;
   a.click();
+}
+
+function descargarExcelSimulacion(tipo, nivel) {
+  const sim = procesarSimulacionAsignacion();
+  let nombre = `simulacion_${tipo}_${nivel}`;
+  let html = "<table border='1'>";
+
+  if (tipo === "general") {
+    const r = sim.resumenGeneral;
+    html += "<tr><th>FECHAS SIN OLA</th><th>PRODUCTOS</th><th>BULTOS PEDIDO</th><th>PTS RESERVA</th><th>ACTIVO</th><th>NO ASIGNADO</th><th>COBERTURA FALLBACK</th><th>SIN STOCK</th></tr>";
+    html += `<tr><td>${formatoDecimal(r.fechas)}</td><td>${formatoDecimal(r.productos)}</td><td>${formatoDecimal(r.pedido)}</td><td>${formatoDecimal(r.pts)}</td><td>${formatoDecimal(r.activo)}</td><td>${formatoDecimal(r.noAsignado)}</td><td>${formatoDecimal(r.fallback)}</td><td>${formatoDecimal(r.sinStock)}</td></tr>`;
+  } else {
+    const config = {
+      pts: { resumen: sim.resumen.pts, detalle: sim.pts },
+      activo: { resumen: sim.resumen.activo, detalle: sim.activo },
+      noAsignado: { resumen: sim.resumen.noAsignado, detalle: sim.noAsignadoDetalle },
+      sinStock: { resumen: sim.resumen.sinStock, detalle: sim.sinStock }
+    }[tipo];
+
+    const data = config?.[nivel] || [];
+    if (!data.length) {
+      alert("No hay datos para exportar");
+      return;
+    }
+
+    if (nivel === "resumen") {
+      if (tipo === "noAsignado") {
+        html += "<tr><th>FECHA</th><th>CODIGO</th><th>DESCRIPCION</th><th>PEDIDO</th><th>FALTANTE PTS ACTIVO</th><th>COBERTURA LOGICA ANTERIOR</th><th>SIN COBERTURA</th></tr>";
+        html += data.map(d => `<tr><td>${htmlSeguro(d.fecha)}</td>${celdaExcelTexto(d.codigo)}<td>${htmlSeguro(d.desc)}</td><td>${formatoDecimal(d.pedido)}</td><td>${formatoDecimal(d.faltanteInicial)}</td><td>${formatoDecimal(d.coberturaFallback)}</td><td>${formatoDecimal(d.sinCobertura)}</td></tr>`).join("");
+      } else {
+        html += "<tr><th>FECHA</th><th>CODIGO</th><th>DESCRIPCION</th><th>PEDIDO</th><th>ASIGNAR</th><th>DETALLES</th></tr>";
+        html += data.map(d => `<tr><td>${htmlSeguro(d.fecha)}</td>${celdaExcelTexto(d.codigo)}<td>${htmlSeguro(d.desc)}</td><td>${formatoDecimal(d.pedido)}</td><td>${formatoDecimal(d.asignar)}</td><td>${formatoDecimal(d.detalles?.length || 0)}</td></tr>`).join("");
+      }
+    } else if (tipo === "activo") {
+      html += "<tr><th>FECHA</th><th>CODIGO</th><th>DESCRIPCION</th><th>UBICACION</th><th>PEDIDO</th><th>STOCK BULTOS</th><th>ASIGNAR</th><th>RESTANTE</th><th>UNACT</th><th>UND ASIGNADAS</th><th>DISPONIBLE UND</th><th>UXB</th></tr>";
+      html += data.map(d => `<tr><td>${htmlSeguro(d.fecha)}</td>${celdaExcelTexto(d.codigo)}<td>${htmlSeguro(d.desc)}</td><td>${htmlSeguro(d.ubicacion)}</td><td>${formatoDecimal(d.pedido)}</td><td>${formatoDecimal(d.stock)}</td><td>${formatoDecimal(d.asignar)}</td><td>${formatoDecimal(d.restanteUbicacion)}</td><td>${formatoDecimal(d.unact)}</td><td>${formatoDecimal(d.unidadesAsignadas)}</td><td>${formatoDecimal(d.disponibleUnd)}</td><td>${formatoDecimal(d.uxb)}</td></tr>`).join("");
+    } else if (tipo === "sinStock") {
+      html += "<tr><th>FECHA</th><th>CODIGO</th><th>DESCRIPCION</th><th>PEDIDO</th><th>FALTANTE</th><th>ESTADO</th></tr>";
+      html += data.map(d => `<tr><td>${htmlSeguro(d.fecha)}</td>${celdaExcelTexto(d.codigo)}<td>${htmlSeguro(d.desc)}</td><td>${formatoDecimal(d.pedido)}</td><td>${formatoDecimal(d.asignar)}</td><td>${htmlSeguro(d.estado)}</td></tr>`).join("");
+    } else {
+      html += "<tr><th>FECHA</th><th>ORIGEN</th><th>LPN</th><th>CODIGO</th><th>DESCRIPCION</th><th>UBICACION</th><th>PEDIDO</th><th>STOCK LPN</th><th>ASIGNAR</th><th>RESTANTE LPN</th><th>CS</th></tr>";
+      html += data.map(d => `<tr><td>${htmlSeguro(d.fecha)}</td><td>${htmlSeguro(d.origen)}</td>${celdaExcelTexto(d.lpn)}${celdaExcelTexto(d.codigo)}<td>${htmlSeguro(d.desc)}</td><td>${htmlSeguro(d.ubicacion || "")}</td><td>${formatoDecimal(d.pedido)}</td><td>${formatoDecimal(d.stock)}</td><td>${formatoDecimal(d.asignar)}</td><td>${formatoDecimal(d.restanteLpn)}</td><td>${formatoDecimal(d.cs)}</td></tr>`).join("");
+    }
+  }
+
+  html += "</table>";
+  const blob = new Blob([prepararHtmlExcel(html)], { type: "application/vnd.ms-excel" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${nombre}.xls`;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 function filasResumenAsignacion() {
