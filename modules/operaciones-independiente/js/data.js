@@ -91,7 +91,7 @@ async function iniciarAplicacion() {
   document.getElementById("modulo").innerHTML = `<div class="loading">Cargando datos...</div>`;
   try {
     await cargarDatos();
-    verDashboard();
+    verLpns();
   } catch (error) {
     mostrarError(error);
   }

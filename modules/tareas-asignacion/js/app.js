@@ -501,7 +501,6 @@ function verModuloReporte(modulo) {
     <div class="section-head report-header">
       <div class="report-heading">
         <h2>${config.nombre}</h2>
-        <p class="muted-note">${config.detalle}</p>
       </div>
       <div class="filters report-filters">
         <input class="search" id="filtroReporte" placeholder="Buscar tarea, codigo, LPN o ubicacion..." oninput="renderModuloReporte('${config.id}')">
@@ -818,7 +817,6 @@ function renderVistaOperativa(data, modulo = "CASE") {
       <div class="section-head">
         <div>
           <h2>Estado general por pasillo</h2>
-          <p class="muted-note">${config.nombre}: estado, identificador y ${medida.toLowerCase()} asignados separados por pasillo.</p>
         </div>
         <button onclick="exportarTablaPorId('tablaReporteCompleta', '${modulo.toLowerCase()}_estado_por_pasillo')">Excel</button>
       </div>
@@ -828,7 +826,6 @@ function renderVistaOperativa(data, modulo = "CASE") {
       <div class="section-head">
         <div>
           <h2>Detalle por pasillo</h2>
-          <p class="muted-note">Ubicacion, estado, tarea, producto y ${medida.toLowerCase()} asignados.</p>
         </div>
         <button onclick="exportarTablaPorId('detalleOperativoCompleto', '${modulo.toLowerCase()}_detalle_por_pasillo')">Excel</button>
       </div>

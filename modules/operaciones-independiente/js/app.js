@@ -569,7 +569,6 @@ function verDashboard() {
       <div>
         <span>ANC Logistica</span>
         <h2>Torre de control operativa</h2>
-        <p>Prioridades del dia para almacen, inventario, ubicaciones y bloqueo.</p>
       </div>
       <button onclick="verGerencia()">Resumen gerencia</button>
     </section>
@@ -648,7 +647,6 @@ function verGerencia() {
       <div class="section-head">
         <div>
           <h2>Resumen gerencia</h2>
-          <p class="muted-note">Vista limpia para exportar imagen y presentar estado operativo.</p>
         </div>
         <button onclick="exportarImagen('gerenciaView', 'resumen-gerencia')">Imagen</button>
       </div>
@@ -736,7 +734,6 @@ function verDiagnostico() {
     <div class="section-head">
       <div>
         <h2>Diagnostico de data</h2>
-        <p class="muted-note">Revision rapida de hojas, columnas y datos que pueden distorsionar los reportes.</p>
       </div>
       <div class="filters">
         <button onclick="exportarTablaVisible('tablaDiagnosticoProblemas', 'diagnostico_problemas')">Excel problemas</button>
@@ -1035,7 +1032,6 @@ function verBusquedaProducto() {
     <div class="section-head">
       <div>
         <h2>Busqueda operativa de productos</h2>
-        <p class="muted-note">Pega uno o varios codigos. Busca por CODIGO y CODIGO_ALT en PRODUCTOS, INV_ACTIVO y LPNS.</p>
       </div>
       <div class="filters">
         <button onclick="renderBusquedaProducto()">Buscar productos</button>
@@ -1043,7 +1039,6 @@ function verBusquedaProducto() {
     </div>
     <section class="card product-search-panel">
       <textarea id="codigosBusquedaProducto" class="product-search-input" placeholder="00020472175&#10;7750243079815&#10;00020568780"></textarea>
-      <div class="muted-note">Acepta saltos de linea, coma, punto y coma, espacios o tabulaciones.</div>
     </section>
     <div id="resultadoBusquedaProducto"></div>
   `;
@@ -1305,7 +1300,6 @@ function abrirDetalleReservaActivo(codigo) {
           <div class="section-head">
             <div>
               <h2>Ubicaciones reserva</h2>
-              <p class="muted-note">Stock en bultos/unidades, asignado y pendiente por LPN.</p>
             </div>
             <button onclick="exportarTablaVisible('tablaDetalleReservaProducto', 'detalle_reserva_${htmlSeguro(item.codigo)}')">Excel</button>
           </div>
@@ -1324,7 +1318,6 @@ function abrirDetalleReservaActivo(codigo) {
           <div class="section-head">
             <div>
               <h2>Ubicaciones activo</h2>
-              <p class="muted-note">Stock, asignado y pendiente en unidades y bultos.</p>
             </div>
             <button onclick="exportarTablaVisible('tablaDetalleActivoProducto', 'detalle_activo_${htmlSeguro(item.codigo)}')">Excel</button>
           </div>
@@ -1409,7 +1402,6 @@ function renderResumenReservaMass() {
       <div class="section-head">
         <div>
           <h2>Validacion reserva MASS</h2>
-          <p class="muted-note">Regla: cada ubicacion debe tener solo 1 LPN y 1 producto distinto. Se ignoran duplicados exactos de la data.</p>
         </div>
         <button onclick="exportarReservaMassExcel()">Excel incidencias</button>
       </div>
@@ -1756,7 +1748,6 @@ function verOptimizarReserva() {
     <div class="section-head">
       <div>
         <h2>Optimizacion de reserva MASS</h2>
-        <p class="muted-note">Consolida LPN repetidos, aprende el pallet completo por producto y propone ubicaciones que pueden liberarse.</p>
       </div>
     </div>
     <section class="kpi-grid compact">
@@ -1770,7 +1761,7 @@ function verOptimizarReserva() {
 
     <section class="card subcard">
       <div class="section-head">
-        <div><h2>Ubicaciones <= 15 que no pueden acoplarse</h2><span class="muted-note">Se muestra la causa exacta por la que no se recomienda liberar la ubicacion.</span></div>
+        <div><h2>Ubicaciones <= 15 que no pueden acoplarse</h2></div>
         <button onclick="exportarTablaVisible('tablaNoAcoplablesReserva', 'ubicaciones_no_acoplables_reserva')">Excel</button>
       </div>
       ${tablaConId("tablaNoAcoplablesReserva", ["Codigo", "Descripcion", "Ubicacion", "Stock", "Max pallet", "Motivo", "Accion"], analisis.noAcoplables.map(r => `
@@ -1785,7 +1776,7 @@ function verOptimizarReserva() {
 
     <section class="card subcard">
       <div class="section-head">
-        <div><h2>Ubicaciones que se pueden liberar</h2><span class="muted-note">Stock origen <= 15 y consolidacion sin superar el pallet maximo aprendido.</span></div>
+        <div><h2>Ubicaciones que se pueden liberar</h2></div>
         <button onclick="exportarTablaVisible('tablaLiberarReserva', 'ubicaciones_liberables_reserva')">Excel</button>
       </div>
       ${tablaConId("tablaLiberarReserva", ["Accion", "Codigo", "Descripcion", "Ubicacion liberar", "Stock", "Mover a", "Stock destino", "Stock final", "Max pallet", "Ver"], analisis.liberables.map(r => `
@@ -1802,7 +1793,7 @@ function verOptimizarReserva() {
 
     <section class="card subcard">
       <div class="section-head">
-        <div><h2>Criticos de reserva <= 5</h2><span class="muted-note">Prioriza ingreso a activo y alerta los productos sin ubicacion activa.</span></div>
+        <div><h2>Criticos de reserva <= 5</h2></div>
         <button onclick="exportarTablaVisible('tablaCriticosReserva', 'criticos_reserva')">Excel</button>
       </div>
       ${tablaConId("tablaCriticosReserva", ["Estado", "Codigo", "Descripcion", "Ubicacion MASS", "Stock", "Ubicaciones activo", "Capacidad activo BUL", "Ver"], analisis.criticos.map(r => `
@@ -1817,7 +1808,7 @@ function verOptimizarReserva() {
 
     <section class="card subcard">
       <div class="section-head">
-        <div><h2>Registro de pallet completo aprendido</h2><span class="muted-note">Stock mayor a 15 repetido en dos o mas ubicaciones del mismo producto.</span></div>
+        <div><h2>Registro de pallet completo aprendido</h2></div>
         <button onclick="exportarTablaVisible('tablaPalletMaximo', 'registro_pallet_maximo')">Excel</button>
       </div>
       ${tablaConId("tablaPalletMaximo", ["Codigo", "Descripcion", "Max pallet", "Origen", "Repeticiones", "Ver"], productosMaximo.map(([codigo, r]) => `
@@ -1854,7 +1845,6 @@ function abrirDetalleOptimizacion(codigo, mostrarValidacion = false) {
         ${mostrarValidacion ? `
           <section class="detail-box">
             <h3>Validacion presencial de capacidad</h3>
-            <p class="muted-note">Visita la ubicacion y registra la capacidad total real que admite un pallet de este producto.</p>
             <div class="filters">
               <label>Capacidad total pallet<input id="validacionCapacidadReserva" type="number" min="16" step="1" placeholder="Ejemplo: 60"></label>
               <label>Observacion<input id="validacionObservacionReserva" placeholder="Resultado de la validacion"></label>
@@ -1969,7 +1959,6 @@ function renderLpnsAntiguos() {
       <div class="section-head">
         <div>
           <h2>LPNs antiguos por ubicacion</h2>
-          <p class="muted-note">Solo se evalua DROP-BUFR y ubicaciones en blanco.</p>
         </div>
         <span class="badge">${fmt(resumen.length)} ubicaciones</span>
       </div>
@@ -2269,19 +2258,24 @@ function detallePuntoControlFilas(data) {
   return data
     .slice()
     .sort((a, b) => b.antiguedad - a.antiguedad || b.bultos - a.bultos)
-    .map(r => {
-      const activo = activoPorProducto.get(r.codigo) || [];
-      const ubicacionActivo = activo.length
-        ? activo.map(a => a.ubicacion).sort(ordenarUbicacion).join(", ")
-        : "SIN UBICACION ACTIVA";
-      const disponibleUnd = activo.reduce((acc, a) => acc + num(a.disponible), 0);
-      const disponibleBul = activo.reduce((acc, a) => acc + (num(a.disponible) / (a.uxb || 1)), 0);
-      return {
+    .flatMap(r => {
+      const activo = (activoPorProducto.get(r.codigo) || [])
+        .slice()
+        .sort((a, b) => ordenarUbicacion(a.ubicacion, b.ubicacion));
+      if (!activo.length) {
+        return [{
+          ...r,
+          ubicacionActivo: "SIN UBICACION ACTIVA",
+          disponibleUnd: 0,
+          disponibleBul: 0
+        }];
+      }
+      return activo.map(a => ({
         ...r,
-        ubicacionActivo,
-        disponibleUnd,
-        disponibleBul
-      };
+        ubicacionActivo: a.ubicacion,
+        disponibleUnd: num(a.disponible),
+        disponibleBul: num(a.disponible) / (a.uxb || 1)
+      }));
     });
 }
 
@@ -2297,13 +2291,14 @@ function abrirDetallePuntoControl(detalleKey) {
   }
 
   const rows = detallePuntoControlFilas(detalle.data);
-  const totalBultos = rows.reduce((a, b) => a + b.bultos, 0);
+  const totalBultos = detalle.data.reduce((a, b) => a + b.bultos, 0);
+  const totalLpns = new Set(detalle.data.map(r => r.lpn)).size;
   destino.innerHTML = `
     <div class="modal-card">
       <div class="section-head">
         <div>
           <h2>${htmlSeguro(detalle.ubicacion)}</h2>
-          <p class="muted-note">${htmlSeguro(detalle.zona)} | ${fmt(rows.length)} LPNs | ${fmt(totalBultos)} bultos</p>
+            <p class="muted-note">${htmlSeguro(detalle.zona)} | ${fmt(totalLpns)} LPNs | ${fmt(rows.length)} filas | ${fmt(totalBultos)} bultos</p>
         </div>
         <div class="filters">
           <button onclick="exportarTablaVisible('tablaDetallePuntoControl', 'detalle_punto_control')">Excel detalle</button>
@@ -2802,6 +2797,7 @@ function ubicacionesSeteadasBloqueadas(codigosBloqueados = codigosProductoBloque
       if (!codigo || codigo === "-----------" || !codigos.has(codigo)) return null;
       const prod = productoPorCodigo(codigo);
       const tipo = tipoUbicacion(u);
+      if (tipo !== "PERMANENTE") return null;
       return {
         codigo,
         descripcion: prod?.DESCRIPCION || limpiar(u.DESCRIPCION),
@@ -2978,7 +2974,6 @@ function verSlotting() {
     <div class="section-head">
       <div>
         <h2>Slotting Inteligente</h2>
-        <p>Validacion de ubicaciones dinamicas, pasillos y productos sin ubicacion activa.</p>
       </div>
       <div class="filters">
         <input class="search" id="filtroSlotting" placeholder="Buscar producto, descripcion o pasillo..." oninput="filtrarTabla('tablaSlotting', this.value)">
@@ -3062,7 +3057,6 @@ function verSlotting() {
         <div class="section-head">
           <div>
             <h2>Dinamicas libres sin producto de seteo</h2>
-            <p class="muted-note">${fmt(ubicacionesLibres.length)} ubicaciones disponibles.</p>
           </div>
           <button onclick="exportarTablaVisible('tablaDinamicasLibres', 'slotting_dinamicas_libres')">Excel</button>
         </div>
@@ -3074,7 +3068,6 @@ function verSlotting() {
         <div class="section-head">
           <div>
             <h2>Dinamicas con producto de seteo</h2>
-            <p class="muted-note">${fmt(ubicacionesOcupadas.length)} ubicaciones dinamicas ocupadas por maestro.</p>
           </div>
           <button onclick="exportarTablaVisible('tablaDinamicasSeteadas', 'slotting_dinamicas_seteadas')">Excel</button>
         </div>
@@ -3227,12 +3220,8 @@ function actualizarMinSlotting(index) {
 
 function filtrarBloqueo() {
   const q = limpiar(document.getElementById("filtroBloqueo")?.value).toLowerCase();
-  const estado = document.getElementById("estadoBloqueo")?.value || "todos";
-
-  document.querySelectorAll("#tablaBloqueo tbody tr").forEach(tr => {
-    const coincideTexto = !q || tr.innerText.toLowerCase().includes(q);
-    const coincideEstado = estado === "todos" || tr.dataset.estado === estado;
-    tr.style.display = coincideTexto && coincideEstado ? "" : "none";
+  document.querySelectorAll("#tablaBloqueoSeteados tbody tr, #tablaBloqueoActivo tbody tr, #tablaBloqueoReserva tbody tr, #tablaBloqueoOtras tbody tr, #tablaBloqueoSeparado tbody tr").forEach(tr => {
+    tr.style.display = !q || tr.innerText.toLowerCase().includes(q) ? "" : "none";
   });
 }
 
@@ -3242,7 +3231,25 @@ function esUbicacionReservaBloqueo(ubicacion) {
 
 function esUbicacionBloqueoSeparado(ubicacion) {
   const ubi = limpiar(ubicacion).toUpperCase();
-  return ubi.includes("BLOQUEO") || ubi.includes("BLOQUEADO") || ubi.includes("CIRCUITO") || ubi.includes("PTS");
+  return ubi.startsWith("DROP-BLOQUEADOS");
+}
+
+function categoriaOtraUbicacionBloqueo(ubicacion) {
+  const ubi = limpiar(ubicacion).toUpperCase();
+  if (!ubi) return "PALETERO / BLANCO";
+  if (ubi.startsWith("DROP-BUFR")) return "DROP-BUFR";
+  if (ubi.startsWith("RAMPA-")) return "RAMPA";
+  if (ubi.startsWith("DROP-STOCK-DESBLOQ-962")) return "DROP-STOCK-DESBLOQ-962";
+  if (ubi.startsWith("SALDOS-MASS-TRUJ")) return "SALDOS-MASS-TRUJ";
+  return "";
+}
+
+function esOtraUbicacionBloqueo(ubicacion) {
+  return Boolean(categoriaOtraUbicacionBloqueo(ubicacion));
+}
+
+function unidadesLpnBloqueo(row) {
+  return num(campo(row, ["UnAct", "UNACT", "UNIDADES", "Un Orig", "UN_ORIG"]));
 }
 
 function resumenOperativoBloqueado(codigo, activo, lpnsBloqueados) {
@@ -3250,10 +3257,7 @@ function resumenOperativoBloqueado(codigo, activo, lpnsBloqueados) {
   const activoProducto = activo.filter(r => r.codigo === codigo);
   const mass = lpnProducto.filter(r => esUbicacionReservaBloqueo(r.UBICACION));
   const separado = lpnProducto.filter(r => esUbicacionBloqueoSeparado(r.UBICACION));
-  const otras = lpnProducto.filter(r =>
-    !esUbicacionReservaBloqueo(r.UBICACION) &&
-    !esUbicacionBloqueoSeparado(r.UBICACION)
-  );
+  const otras = lpnProducto.filter(r => esOtraUbicacionBloqueo(r.UBICACION));
   const bultosMass = mass.reduce((a, b) => a + num(b.BULTOS), 0);
   const bultosSeparado = separado.reduce((a, b) => a + num(b.BULTOS), 0);
   const bultosOtras = otras.reduce((a, b) => a + num(b.BULTOS), 0);
@@ -3280,6 +3284,86 @@ function resumenOperativoBloqueado(codigo, activo, lpnsBloqueados) {
   };
 }
 
+function filaLpnBloqueo(row, mostrarCategoria = false) {
+  const ubicacion = limpiar(row.UBICACION);
+  return `
+    <tr>
+      <td><strong>${htmlSeguro(normalizar(row.CODIGO))}</strong></td>
+      <td>${htmlSeguro(limpiar(row.DESCRIPCION))}</td>
+      <td>${htmlSeguro(limpiar(row.LPN))}</td>
+      <td>${htmlSeguro(ubicacion || "PALETERO / BLANCO")}</td>
+      ${mostrarCategoria ? `<td>${htmlSeguro(categoriaOtraUbicacionBloqueo(ubicacion))}</td>` : ""}
+      <td class="number">${fmt(unidadesLpnBloqueo(row))}</td>
+      <td class="number">${fmt(num(row.BULTOS))}</td>
+    </tr>
+  `;
+}
+
+function renderBloqueoReestructurado({ seteados, activo, reserva, otras, separado, indicadores }) {
+  document.getElementById("modulo").innerHTML = `
+    <section class="kpi-grid compact">
+      ${kpi("Productos bloqueados", fmt(indicadores.productos))}
+      ${kpi("Stock activo BUL", fmt(indicadores.activo))}
+      ${kpi("Reserva MASS BUL", fmt(indicadores.reserva))}
+      ${kpi("Otras ubicaciones BUL", fmt(indicadores.otras))}
+      ${kpi("Separado DROP-BLOQUEADOS", fmt(indicadores.separado))}
+    </section>
+    <div class="card">
+      <div class="section-head">
+        <h2>Control de productos bloqueados</h2>
+        <input class="search" id="filtroBloqueo" placeholder="Buscar codigo, descripcion, LPN o ubicacion..." oninput="filtrarBloqueo()">
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-head">
+        <h2>Productos bloqueados seteados en activo permanente</h2>
+        <div class="filters">
+          <button onclick="exportarTablaVisible('tablaBloqueoSeteados', 'bloqueados_seteados_activo_permanente')">Excel</button>
+          <button onclick="copiarTablaVisible('tablaBloqueoSeteados')">Copiar</button>
+        </div>
+      </div>
+      ${tablaConId("tablaBloqueoSeteados", ["Codigo", "Descripcion", "Ubicacion seteada", "Tipo ubicacion", "Pasillo"], seteados.map(r => `
+        <tr class="bad"><td><strong>${htmlSeguro(r.codigo)}</strong></td><td>${htmlSeguro(r.descripcion)}</td><td>${htmlSeguro(r.ubicacion)}</td><td>${htmlSeguro(r.tipo)}</td><td>${htmlSeguro(r.pasillo)}</td></tr>
+      `), "Ningun producto bloqueado esta seteado en una ubicacion PERMANENTE.")}
+    </div>
+
+    <div class="card">
+      <div class="section-head">
+        <h2>Inventario activo de productos bloqueados</h2>
+        <div class="filters"><button onclick="exportarTablaVisible('tablaBloqueoActivo', 'bloqueados_inventario_activo')">Excel</button><button onclick="copiarTablaVisible('tablaBloqueoActivo')">Copiar</button></div>
+      </div>
+      ${tablaConId("tablaBloqueoActivo", ["Codigo", "Descripcion", "Ubicacion", "Unidades", "Bultos"], activo.map(r => `
+        <tr><td><strong>${htmlSeguro(r.codigo)}</strong></td><td>${htmlSeguro(r.desc)}</td><td>${htmlSeguro(r.ubicacion)}</td><td class="number">${fmt(r.unact)}</td><td class="number">${fmt(r.unact/(r.uxb||1))}</td></tr>
+      `), "Sin inventario activo para productos bloqueados.")}
+    </div>
+
+    <div class="card">
+      <div class="section-head">
+        <h2>Reserva MASS de productos bloqueados</h2>
+        <div class="filters"><button onclick="exportarTablaVisible('tablaBloqueoReserva', 'bloqueados_reserva_mass')">Excel</button><button onclick="copiarTablaVisible('tablaBloqueoReserva')">Copiar</button></div>
+      </div>
+      ${tablaConId("tablaBloqueoReserva", ["Codigo", "Descripcion", "LPN", "Ubicacion", "Unidades", "Bultos"], reserva.map(r => filaLpnBloqueo(r)), "Sin LPNs bloqueados en reserva MASS.")}
+    </div>
+
+    <div class="card">
+      <div class="section-head">
+        <h2>Otras ubicaciones validas de productos bloqueados</h2>
+        <div class="filters"><button onclick="exportarTablaVisible('tablaBloqueoOtras', 'bloqueados_otras_ubicaciones_validas')">Excel</button><button onclick="copiarTablaVisible('tablaBloqueoOtras')">Copiar</button></div>
+      </div>
+      ${tablaConId("tablaBloqueoOtras", ["Codigo", "Descripcion", "LPN", "Ubicacion", "Grupo", "Unidades", "Bultos"], otras.map(r => filaLpnBloqueo(r,true)), "Sin bloqueados en DROP-BUFR, RAMPA, DROP-STOCK-DESBLOQ-962, BLANCO o SALDOS-MASS-TRUJ.")}
+    </div>
+
+    <div class="card">
+      <div class="section-head">
+        <h2>Productos ya separados en DROP-BLOQUEADOS</h2>
+        <div class="filters"><button onclick="exportarTablaVisible('tablaBloqueoSeparado', 'bloqueados_ya_separados')">Excel</button><button onclick="copiarTablaVisible('tablaBloqueoSeparado')">Copiar</button></div>
+      </div>
+      ${tablaConId("tablaBloqueoSeparado", ["Codigo", "Descripcion", "LPN", "Ubicacion", "Unidades", "Bultos"], separado.map(r => filaLpnBloqueo(r)), "Sin productos separados en DROP-BLOQUEADOS.")}
+    </div>
+  `;
+}
+
 function verBloqueo() {
   const codigos = new Set(dataBloqueo.map(r => normalizar(r.COD_ALT)).filter(Boolean));
   const porAlt = new Map(dataProductos.map(p => [normalizar(p.CODIGO_ALT || p.COD_ALT || p.COD_ALTERNATIVO || p["CODIGO ALTERNATIVO"] || p["Cod Alternat"]), p]));
@@ -3294,17 +3378,14 @@ function verBloqueo() {
   });
 
   const codigoSet = new Set(productos.map(p => p.codigo).filter(Boolean));
-  const activo = inventarioComparable().filter(r => codigoSet.has(r.codigo));
+  const activo = inventarioComparable().filter(r => codigoSet.has(r.codigo) && r.unact > 0);
   const lpnsBloqueados = lpnsOperativos().filter(r => codigoSet.has(normalizar(r.CODIGO)));
   productos.forEach(p => {
     p.operativo = p.codigo ? resumenOperativoBloqueado(p.codigo, activo, lpnsBloqueados) : null;
   });
   const reserva = lpnsBloqueados.filter(r => esUbicacionReservaBloqueo(r.UBICACION));
   const separado = lpnsBloqueados.filter(r => esUbicacionBloqueoSeparado(r.UBICACION));
-  const otrasUbicaciones = lpnsBloqueados.filter(r =>
-    !esUbicacionReservaBloqueo(r.UBICACION) &&
-    !esUbicacionBloqueoSeparado(r.UBICACION)
-  );
+  const otrasUbicaciones = lpnsBloqueados.filter(r => esOtraUbicacionBloqueo(r.UBICACION));
   const totalActivo = activo.reduce((a, b) => a + b.unact / (b.uxb || 1), 0);
   const totalReserva = reserva.reduce((a, b) => a + num(b.BULTOS), 0);
   const totalSeparado = separado.reduce((a, b) => a + num(b.BULTOS), 0);
@@ -3312,6 +3393,22 @@ function verBloqueo() {
   const pasillo10 = reportePasillo10NoOperativo();
   const totalPasillo10Stock = pasillo10.reduce((a, b) => a + num(b.bultos), 0);
   const seteadosBloqueados = ubicacionesSeteadasBloqueadas(codigoSet);
+
+  renderBloqueoReestructurado({
+    seteados: seteadosBloqueados,
+    activo,
+    reserva,
+    otras: otrasUbicaciones,
+    separado,
+    indicadores: {
+      productos: productos.length,
+      activo: totalActivo,
+      reserva: totalReserva,
+      otras: totalOtras,
+      separado: totalSeparado
+    }
+  });
+  return;
 
   document.getElementById("modulo").innerHTML = `
     <section class="kpi-grid compact">

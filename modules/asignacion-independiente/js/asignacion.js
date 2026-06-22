@@ -1,5 +1,5 @@
-const UBICACIONES_RESERVA = ["Mass-"];
-const UBICACIONES_OTRAS = ["DROP-BUFR", "RAMPA", "DROP-STOCK"];
+const UBICACIONES_RESERVA = ["MASS-"];
+const UBICACIONES_OTRAS = ["DROP-BUFR", "RAMPA-", "DROP-STOCK-DESBLOQ-962"];
 const ESTADOS_VALIDOS = new Set(["Ubicado", "Recibido"]);
 
 let mapaLPN = new Map();
@@ -209,9 +209,9 @@ function obtenerCs(lpn) {
 }
 
 function ubicacionTipo(ubicacion) {
-  const ubi = String(ubicacion || "").trim();
+  const ubi = String(ubicacion || "").trim().toUpperCase();
   if (UBICACIONES_RESERVA.some(x => ubi.startsWith(x))) return "reserva";
-  if (UBICACIONES_OTRAS.some(x => ubi.startsWith(x)) || ubi === "") return "otras";
+  if (ubi === "" || UBICACIONES_OTRAS.some(x => ubi.startsWith(x))) return "otras";
   return "ignorar";
 }
 
@@ -818,7 +818,6 @@ function abrirAsignacion() {
     <div class="module-head">
       <div>
         <h1>Asignacion operacional</h1>
-        <p>ANC Logistica | Lectura operativa de pedido pendiente, cobertura y ubicaciones disponibles.</p>
       </div>
       <button class="soft" onclick="exportarNoAsignados()">Exportar no asignados</button>
     </div>
@@ -1323,7 +1322,6 @@ function verDashboardPedido() {
       <div class="section-head">
         <div>
           <h2>Dashboard pedido</h2>
-          <p>${fechaPedidoSeleccionada ? `Vista filtrada por ${htmlSeguro(fechaPedidoSeleccionada)}.` : "Seguimiento por fecha del flujo solicitado, asignado, empacado y enviado."}</p>
         </div>
         <div class="actions-inline">
           ${fechaPedidoSeleccionada ? `<button class="compact ghost" onclick="limpiarFechaDashboardPedido()">Ver total</button>` : ""}
@@ -1538,7 +1536,6 @@ function verFormatoTablas() {
     <div class="section-head">
       <div>
         <h2>Formato de tablas para imagen</h2>
-        <p>Mismos LPN y cantidades ASIGNAR del Excel detalle. Orden desde Mass-01 en adelante.</p>
       </div>
     </div>
     <div class="formato-imagen-grid">
@@ -1714,7 +1711,6 @@ function verBuscadorLPN() {
       <div class="section-head">
         <div>
           <h2>Buscador LPN</h2>
-          <p>Busca en vivo por LPN, codigo, descripcion o ubicacion.</p>
         </div>
         <div class="section-actions">
           <button onclick="cambiarVistaBuscador('general')">Vista general</button>
@@ -1909,7 +1905,6 @@ function verOtrasPrimero(subvista = "otrasPrimeroOtras") {
     <div class="section-head">
       <div>
         <h2>Otras primero</h2>
-        <p>Primero busca LPNs en otras ubicaciones desde el stock mas bajo. El faltante se completa en reserva.</p>
       </div>
       <div class="section-actions">
         <button onclick="descargarExcel('otrasPrimeroOtras')">Excel otras</button>
@@ -1946,7 +1941,6 @@ function verSimulacionAsignacion(subvista = "simPts") {
     <div class="section-head">
       <div>
         <h2>Simulacion de ola de asignacion</h2>
-        <p>Solo lectura: simula PTS por reserva, inventario activo y faltantes cuando la fecha aun no tiene bultos asignados.</p>
       </div>
       <div class="section-actions">
         <button onclick="descargarExcelSimulacion('general', 'resumen')">Excel general</button>
@@ -2014,7 +2008,6 @@ function renderSimulacionSubmodulo(tipo) {
     <div class="section-head sub-head">
       <div>
         <h2>${config.titulo}</h2>
-        <p>${config.nota}</p>
       </div>
       <div class="section-actions">
         <button onclick="descargarExcelSimulacion('${config.excel}', 'resumen')">Excel resumen</button>

@@ -11,7 +11,6 @@
     <form class="login-card" onsubmit="login(event)">
       <div class="brand-mark">ANC</div>
       <h1>ANC Logistica</h1>
-      <p>Control operativo de almacen, inventario, ubicaciones y bloqueo.</p>
       <label>Usuario<input id="usuario" autocomplete="username" required></label>
       <label>Contrasena<input id="password" type="password" autocomplete="current-password" required></label>
       <button>Ingresar</button>
@@ -36,14 +35,11 @@
         <div class="module-head">
           <div>
             <h1>Centro de control operativo</h1>
-            <p>Monitoreo diario de LPNs, inventario activo, ubicaciones, slotting, puntos de control y bloqueo.</p>
           </div>
           <button class="soft" onclick="exportarImagen('modulo', 'operaciones')">Imagen</button>
         </div>
 
         <nav class="tabs">
-          <button onclick="verDashboard()">Dashboard</button>
-          <button onclick="verGerencia()">Gerencia</button>
           <button onclick="verLpns()">LPNs</button>
           <button onclick="verOptimizarReserva()">Optimizar reserva</button>
           <button onclick="verLpnsAntiguos()">LPNs antiguos</button>

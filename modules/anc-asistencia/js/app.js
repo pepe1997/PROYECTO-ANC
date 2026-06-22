@@ -1,5 +1,5 @@
 const SHEET_ID = "1jpqLXLcqeNEdIlenSBv6uufqLGHP20KefqXzIpiVFM0";
-const HOJAS_SEMANA = ["1", "2", "3", "4", "5", "6"];
+const MAX_HOJAS_NUMERADAS = 100;
 const CLIENTES_PRINCIPALES = new Set(["CD OSLO TRUJILLO", "OSLO TRUJILLO"]);
 const CLIENTES_EXTRA = new Set(["MULTIFORMATO TRUJILLO"]);
 const TURNOS = {
@@ -8,10 +8,12 @@ const TURNOS = {
   NOCHE: { nombre: "NOCHE", entrada: "21:00", salida: "06:00", inicio: 21 * 60 }
 };
 const TOLERANCIA_MIN = 20;
+const TOLERANCIA_SALIDA_MIN = 10;
 
 let filasRaw = [];
 let filas = [];
 let filasExtra = [];
+let hojasNumeradasCargadas = 0;
 let turnosAprendidos = new Map();
 let historialTurnos = new Map();
 let vistaDia = "";
@@ -139,13 +141,28 @@ async function cargarHoja(nombre) {
   return Array.isArray(data) ? data.map(r => ({ ...r, __hoja: nombre })) : [];
 }
 
+async function cargarHojasNumeradas() {
+  const resultados = [];
+  for (let numero = 1; numero <= MAX_HOJAS_NUMERADAS; numero += 1) {
+    estado(`Cargando hoja ${numero}...`);
+    try {
+      resultados.push(await cargarHoja(String(numero)));
+    } catch (error) {
+      if (numero === 1) throw error;
+      break;
+    }
+  }
+  hojasNumeradasCargadas = resultados.length;
+  return resultados;
+}
+
 async function cargarDatos() {
   estado("Cargando Google Sheet...");
   document.getElementById("app").innerHTML = `<div class="loading">Cargando asistencia...</div>`;
-  const resultados = await Promise.all(HOJAS_SEMANA.map(h => cargarHoja(h).catch(() => [])));
+  const resultados = await cargarHojasNumeradas();
   filasRaw = resultados.flat();
   prepararData();
-  estado(`Trujillo ${filas.length} registros | ${new Set(filas.map(r => r.fecha)).size} dias cargados`);
+  estado(`Hojas ${hojasNumeradasCargadas} | Trujillo ${filas.length} registros | ${new Set(filas.map(r => r.fecha)).size} dias cargados`);
   verDashboard();
 }
 
@@ -311,14 +328,16 @@ function aplicarRegularizacion(row) {
 
 function detectarIrregularidades(row, duplicados = new Set()) {
   const problemas = [];
+  const jornadaMinima = 9;
+  const jornadaMaxima = 9 + (TOLERANCIA_SALIDA_MIN / 60);
   const tieneEntrada = row.asistio && row.horaEntrada && row.horaEntrada !== "19:00:00";
   const tieneSalida = row.horaSalida && !esSinMarcaFecha(row.fechaSalida);
   const enCurso = turnoEnCurso(row);
   if (!row.asistio) problemas.push(row.justificado ? "SIN MARCA JUSTIFICADA" : "SIN MARCA");
   if (row.asistio && !tieneSalida && !enCurso) problemas.push("SOLO MARCO ENTRADA");
   if (!row.asistio && tieneSalida) problemas.push("SOLO MARCO SALIDA");
-  if (row.asistio && !enCurso && row.horasCalculadas > 0 && row.horasCalculadas < 8.5) problemas.push("MENOS DE 9 HORAS");
-  if (row.asistio && !enCurso && row.horasCalculadas > 13) problemas.push("HORAS EXCESIVAS");
+  if (row.asistio && !enCurso && row.horasCalculadas > 0 && row.horasCalculadas < jornadaMinima) problemas.push("MENOS DE 9 HORAS");
+  if (row.asistio && !enCurso && row.horasCalculadas > jornadaMaxima) problemas.push("MAS DE 9 HORAS");
   if (duplicados.has(`${row.fecha}|${row.dni}`)) problemas.push("DNI DUPLICADO EN EL DIA");
   if (row.turno === "SIN TURNO" || row.resultado === "REVISAR TURNO") problemas.push("TURNO NO IDENTIFICADO");
   return problemas;
@@ -645,7 +664,6 @@ function verDashboard() {
       <div>
         <span>ANC Logistica</span>
         <h2>Control diario de asistencia</h2>
-        <p>Base principal: OSLO TRUJILLO y CD OSLO TRUJILLO.</p>
       </div>
       <div class="day-picker">
         <label>Dia laborado</label>
@@ -676,7 +694,6 @@ function verDashboard() {
         ${graficoTurnos(filasExtra, "Multiformato extra")}
       </div>
     </section>
-    <p class="rules-note">Regla: Fecha es el dia laborado. 31/12/1969 se considera sin marca. Turnos DIA 07:00, TARDE 12:00, NOCHE 21:00 con tolerancia de 20 minutos.</p>
   `;
 }
 
@@ -772,7 +789,6 @@ function verDiario() {
     <div class="section-head">
       <div>
         <h2>Reporte diario</h2>
-        <p class="muted">Asistencia e inasistencia del dia seleccionado.</p>
       </div>
       <div class="filters">
         <select id="selectorDia" onchange="vistaDia=this.value;verDiario()">
@@ -913,7 +929,6 @@ function verInformeAsistencia() {
     <div class="section-head">
       <div>
         <h2>Informe diario de asistencia</h2>
-        <p class="muted">Asistencias e inasistencias separadas por fecha y turno.</p>
       </div>
       <div class="filters">
         <select onchange="vistaDia=this.value;verInformeAsistencia()">
@@ -1063,6 +1078,7 @@ function verRegularizacion() {
       ${kpi("Regularizados", fmt(data.filter(x => x.regularizado).length))}
       ${kpi("Sin marca", fmt(data.filter(x => x.irregularidades.includes("SIN MARCA")).length), "", "danger")}
       ${kpi("Menos 9 horas", fmt(data.filter(x => x.irregularidades.includes("MENOS DE 9 HORAS")).length), "", "warn")}
+      ${kpi("Mas 9 horas", fmt(data.filter(x => x.irregularidades.includes("MAS DE 9 HORAS")).length), "", "warn")}
       ${kpi("Solo entrada", fmt(data.filter(x => x.irregularidades.includes("SOLO MARCO ENTRADA")).length), "", "warn")}
       ${kpi("Duplicados", fmt(duplicados.size), "DNI por dia", duplicados.size ? "danger" : "")}
     </section>
@@ -1159,7 +1175,6 @@ function verTurnos() {
     <div class="section-head">
       <div>
         <h2>Turnos aprendidos</h2>
-        <p class="muted">El sistema aprende el turno mas frecuente por DNI para completar registros futuros sin turno.</p>
       </div>
       <button onclick="exportarTablaVisible('tablaTurnos', 'turnos_aprendidos')">Excel</button>
     </div>

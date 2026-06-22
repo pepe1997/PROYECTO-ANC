@@ -125,6 +125,7 @@ function descripcionIniciaConFruta(descripcion) {
 function pickingEsValido(row) {
   const orden = normalizar(row.orden);
   const descripcion = normalizar(row.descripcion);
+  if (normalizar(row.tipo) === "FULL-CONTAINER") return false;
   if (normalizar(row.lpn).startsWith("ILE")) return false;
   if (orden.startsWith("TFC")) return false;
   if (orden.startsWith("TRF") && descripcion.startsWith("JABA")) return false;
@@ -243,7 +244,6 @@ function verPicking() {
       <div>
         <span>Reporte operativo</span>
         <h2>Picking</h2>
-        <p>Productividad por usuario, turno, hora y tienda destino.</p>
       </div>
       <div class="hero-metric">
         <strong id="pickingHeroTotal">0</strong>
@@ -469,7 +469,6 @@ function panelAjustesRecepcion(resumen) {
     <section class="manual-panel">
       <div>
         <h2>Ajuste 917 / Punta Negra</h2>
-        <p>La data no trae el pallet real. Ajusta solo mono y multi de 917; si queda vacio, se usa el calculo por LPN.</p>
       </div>
       <div class="manual-grid">
         ${inputAjusteRecepcion("ajMono917", "917 monopallet", ajustes.mono917, resumen.mono917)}
@@ -576,7 +575,6 @@ function verRecepcion() {
       <div>
         <span>Reporte operativo</span>
         <h2>Recepcion</h2>
-        <p>Recepcion general por proveedor y foco logistico en 917 / Punta Negra.</p>
       </div>
       <div class="hero-metric">
         <strong>${fmt(resumen.totalRecibido)}</strong>
@@ -663,7 +661,6 @@ function verRecepcionRanking() {
       <div>
         <span>Ranking operativo</span>
         <h2>Recepcion</h2>
-        <p>Proveedores, usuarios, productos y pallets con mayor volumen recibido.</p>
       </div>
       <div class="hero-metric">
         <strong>${fmt(resumen.totalRecibido)}</strong>
@@ -819,7 +816,6 @@ function verDespacho() {
       <div>
         <span>Reporte operativo</span>
         <h2>Despacho</h2>
-        <p>Pallets, viajes, bultos por pallet, turnos y destinos despachados.</p>
       </div>
       <div class="hero-metric">
         <strong>${fmt(resumen.totalBultos)}</strong>
@@ -889,7 +885,6 @@ function verDespachoRanking() {
       <div>
         <span>Ranking operativo</span>
         <h2>Despacho</h2>
-        <p>Destinos, jerarquias, cargas y pallets con mayor volumen.</p>
       </div>
       <div class="hero-metric">
         <strong>${fmt(resumen.totalBultos)}</strong>
@@ -1127,7 +1122,6 @@ function verPedidoCompacto() {
           <strong>${fmt(resumen.noAsignado)}</strong>
           <em>Bultos pendientes</em>
           <div><b>${pct(resumen.noAsignado, resumen.pedido).toFixed(1)}%</b><small>del pedido seleccionado</small></div>
-          <p>${pedidoFechaSeleccionada ? `Fecha evaluada: ${pedidoFechaSeleccionada}` : "Selecciona una fecha en la tabla para evaluar su pendiente."}</p>
         </article>
       </div>
       <div class="visual-gauge-row pedido-gauges">
@@ -1180,7 +1174,6 @@ function renderPedidoOperacional() {
       <div>
         <span>Dashboard operacional</span>
         <h2>Pedido ${pedidoFechaSeleccionada ? pedidoFechaSeleccionada : ""}</h2>
-        <p>${pedidoFechaSeleccionada ? "Vista filtrada por fecha. Clic nuevamente en la fecha para volver al general." : "Flujo pedido, asignacion, picking, despacho y no asignados."}</p>
       </div>
       <div class="hero-metric">
         <strong>${fmt(resumen.pedido)}</strong>
@@ -1238,7 +1231,6 @@ function verPedidoRanking() {
       <div>
         <span>Ranking operativo</span>
         <h2>Pedido</h2>
-        <p>Tiendas, productos, estados y no asignados con mayor volumen.</p>
       </div>
       <div class="hero-metric">
         <strong>${fmt(resumen.pedido)}</strong>
@@ -1722,7 +1714,6 @@ function compactHeader(titulo, subtitulo, total, label) {
       <div>
         <span>Reporte compacto</span>
         <h2>${titulo}</h2>
-        <p>${subtitulo}</p>
       </div>
       <div class="exec-date"><strong>${fmt(total)}</strong><span>${label}</span></div>
     </div>
@@ -2612,7 +2603,6 @@ function verResumen() {
       <div>
         <span>Vista ejecutiva</span>
         <h2>Resumen BI</h2>
-        <p>Indicadores principales, carga por area y rankings operativos.</p>
       </div>
       <div class="hero-metric">
         <strong>${fmt(total)}</strong>
@@ -2695,7 +2685,6 @@ function verRanking() {
       <div>
         <span>Ranking operativo</span>
         <h2>Picking</h2>
-        <p>Top de usuarios por bultos, promedio por hora y turno.</p>
       </div>
       <div class="hero-metric">
         <strong id="rankingHeroTotal">0</strong>
