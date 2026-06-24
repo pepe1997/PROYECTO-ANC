@@ -2,6 +2,7 @@ const SHEET_ID = "1jpqLXLcqeNEdIlenSBv6uufqLGHP20KefqXzIpiVFM0";
 const MAX_HOJAS_NUMERADAS = 100;
 const CLIENTES_PRINCIPALES = new Set(["CD OSLO TRUJILLO", "OSLO TRUJILLO"]);
 const CLIENTES_EXTRA = new Set(["MULTIFORMATO TRUJILLO"]);
+const CARGOS_MULTIFORMATO_PRINCIPAL = ["MONTACARG"];
 const TURNOS = {
   DIA: { nombre: "DIA", entrada: "07:00", salida: "16:00", inicio: 7 * 60 },
   TARDE: { nombre: "TARDE", entrada: "12:00", salida: "21:00", inicio: 12 * 60 },
@@ -23,6 +24,7 @@ let turnoRegularizacion = "TODOS";
 let informeAsistenciaTipo = "GENERAL";
 let informeAsistenciaTurno = "TODOS";
 let regularizaciones = JSON.parse(localStorage.getItem("anc_asistencia_regularizaciones") || "{}");
+let turnosManuales = JSON.parse(localStorage.getItem("anc_asistencia_turnos_manuales") || "{}");
 
 function limpiar(valor) {
   if (valor === null || valor === undefined) return "";
@@ -31,6 +33,11 @@ function limpiar(valor) {
 
 function normalizar(valor) {
   return limpiar(valor).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+}
+
+function esCargoMultiformatoPrincipal(row) {
+  const cargo = normalizar(row.Cargo);
+  return CARGOS_MULTIFORMATO_PRINCIPAL.some(texto => cargo.includes(texto));
 }
 
 function htmlSeguro(valor) {
@@ -169,11 +176,13 @@ async function cargarDatos() {
 function prepararData() {
   const trujilloPrincipal = filasRaw.filter(r => CLIENTES_PRINCIPALES.has(normalizar(r.Cliente)));
   const trujilloExtra = filasRaw.filter(r => CLIENTES_EXTRA.has(normalizar(r.Cliente)));
+  const multiformatoPrincipal = trujilloExtra.filter(esCargoMultiformatoPrincipal);
+  const multiformatoExtra = trujilloExtra.filter(r => !esCargoMultiformatoPrincipal(r));
   const trujillo = [...trujilloPrincipal, ...trujilloExtra];
   turnosAprendidos = aprenderTurnos(trujillo);
   historialTurnos = construirHistorialTurnos(trujillo);
-  filas = trujilloPrincipal.map(normalizarFila).sort(ordenarFila);
-  filasExtra = trujilloExtra.map(normalizarFila).sort(ordenarFila);
+  filas = [...trujilloPrincipal, ...multiformatoPrincipal].map(normalizarFila).sort(ordenarFila);
+  filasExtra = multiformatoExtra.map(normalizarFila).sort(ordenarFila);
   vistaDia = fechasDisponibles()[0] || "";
 }
 
@@ -237,6 +246,11 @@ function inferirTurnoPorHora(horaMin) {
   return opciones.sort((a, b) => a.diff - b.diff)[0]?.turno || "";
 }
 
+function turnoManualDni(dni) {
+  const turno = normalizar(turnosManuales[dni]);
+  return TURNOS[turno] || turno === "SIN TURNO" ? turno : "";
+}
+
 function normalizarFila(r) {
   const dni = limpiar(r.DNI);
   const fecha = fechaIso(r.Fecha);
@@ -247,11 +261,12 @@ function normalizarFila(r) {
   const sinMarca = esSinMarcaFecha(fechaEntrada);
   const turnoAnterior = turnoAnteriorDni(dni, fecha);
   const turnoPosterior = turnoPosteriorDni(dni, fecha);
-  const turno = sinMarca
+  const turnoManual = turnoManualDni(dni);
+  const turno = turnoManual || (sinMarca
     ? turnoAnterior || turnoPosterior || "SIN TURNO"
     : TURNOS[turnoOriginal]
       ? turnoOriginal
-      : turnoAnterior || turnoPosterior || turnosAprendidos.get(dni) || inferirTurnoPorHora(horaMin) || "SIN TURNO";
+      : turnoAnterior || turnoPosterior || turnosAprendidos.get(dni) || inferirTurnoPorHora(horaMin) || "SIN TURNO");
   const turnoInfo = TURNOS[turno];
   const limite = turnoInfo ? turnoInfo.inicio + TOLERANCIA_MIN : null;
   const estadoLaboral = normalizar(r.Estado) || "SIN ESTADO";
@@ -277,7 +292,9 @@ function normalizarFila(r) {
     cargo: limpiar(r.Cargo),
     estadoLaboral,
     turno,
-    turnoOrigen: sinMarca
+    turnoOrigen: turnoManual
+      ? "MANUAL"
+      : sinMarca
       ? turnoAnterior ? "HISTORIAL ANTERIOR" : turnoPosterior ? "HISTORIAL POSTERIOR" : "SIN HISTORIAL"
       : TURNOS[turnoOriginal] ? "DATA" : turnoAnterior ? "HISTORIAL ANTERIOR" : turnoPosterior ? "HISTORIAL POSTERIOR" : turnosAprendidos.has(dni) ? "APRENDIDO" : "HORA",
     horaEntrada,
@@ -582,7 +599,7 @@ function consolidarPersonal() {
   });
   return Array.from(mapa.values()).map(p => ({
     ...p,
-    turno: Object.entries(p.turnos).sort((a, b) => b[1] - a[1])[0]?.[0] || turnosAprendidos.get(p.dni) || "SIN TURNO",
+    turno: turnoManualDni(p.dni) || Object.entries(p.turnos).sort((a, b) => b[1] - a[1])[0]?.[0] || turnosAprendidos.get(p.dni) || "SIN TURNO",
     grupo: CLIENTES_EXTRA.has(normalizar(p.cliente)) ? "MULTIFORMATO EXTRA" : "PRINCIPAL"
   })).sort((a, b) => a.apellido.localeCompare(b.apellido) || a.nombre.localeCompare(b.nombre));
 }
@@ -593,6 +610,25 @@ function restaurarCursorBusqueda(id, posicion) {
   input.focus({ preventScroll: true });
   const cursor = Math.min(Number.isFinite(posicion) ? posicion : input.value.length, input.value.length);
   input.setSelectionRange(cursor, cursor);
+}
+
+function guardarTurnoManual(dni, turno) {
+  const limpio = normalizar(turno);
+  if (TURNOS[limpio] || limpio === "SIN TURNO") turnosManuales[dni] = limpio;
+  else delete turnosManuales[dni];
+  localStorage.setItem("anc_asistencia_turnos_manuales", JSON.stringify(turnosManuales));
+  prepararData();
+  verPersonal();
+}
+
+function selectorTurnoPersonal(p) {
+  const manual = turnoManualDni(p.dni);
+  const actual = manual || p.turno;
+  return `
+    <select class="mini" onchange="guardarTurnoManual('${htmlSeguro(p.dni)}', this.value)">
+      ${["DIA", "TARDE", "NOCHE", "SIN TURNO"].map(turno => `<option value="${turno}" ${actual === turno ? "selected" : ""}>${turno}</option>`).join("")}
+    </select>
+  `;
 }
 
 function verPersonal() {
@@ -630,14 +666,13 @@ function verPersonal() {
       ${kpi("Activos", fmt(data.filter(p => p.estado === "ACTIVO").length))}
     </section>
     <section class="card report-card">
-      ${tablaConId("tablaPersonal", ["DNI", "Nombre", "Apellido", "Turno", "Cargo", "Area", "Cliente", "Grupo", "Estado", "Dias registrados", "Asistencias", "Inasistencias", "Ultima fecha"], data.map(p => `
+      ${tablaConId("tablaPersonal", ["DNI", "Nombre", "Apellido", "Turno", "Cargo", "Cliente", "Grupo", "Estado", "Dias registrados", "Asistencias", "Inasistencias", "Ultima fecha"], data.map(p => `
         <tr class="${p.turno === "SIN TURNO" ? "warn" : ""}">
           <td>${htmlSeguro(p.dni)}</td>
           <td>${htmlSeguro(p.nombre)}</td>
           <td>${htmlSeguro(p.apellido)}</td>
-          <td><strong>${htmlSeguro(p.turno)}</strong></td>
+          <td>${selectorTurnoPersonal(p)}</td>
           <td>${htmlSeguro(p.cargo)}</td>
-          <td>${htmlSeguro(p.area)}</td>
           <td>${htmlSeguro(p.cliente)}</td>
           <td>${htmlSeguro(p.grupo)}</td>
           <td>${htmlSeguro(p.estado)}</td>

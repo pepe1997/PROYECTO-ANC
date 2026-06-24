@@ -10,7 +10,9 @@ let datosListos = false;
 let advertenciasCarga = [];
 
 async function cargarHoja(nombre) {
-  const url = `https://opensheet.elk.sh/${SHEET_ID}/${nombre}`;
+  const url = `https://opensheet.elk.sh/${SHEET_ID}/${encodeURIComponent(nombre)}`;
+  const errores = [];
+
   try {
     try {
       if (location.protocol === "file:") throw new Error("carga local");
@@ -22,8 +24,84 @@ async function cargarHoja(nombre) {
     if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText || ""}`.trim());
     return await res.json();
   } catch (error) {
-    throw new Error(`No se pudo cargar la hoja ${nombre}. Detalle: ${error.message || error}. URL: ${url}. Revisa que la pestana exista con ese nombre exacto, que el Google Sheet sea publico/visible y que la app este abierta desde server.js.`);
+    errores.push(`OpenSheet: ${error.message || error}`);
   }
+
+  try {
+    return await cargarHojaCsv(nombre);
+  } catch (error) {
+    errores.push(`Google CSV: ${error.message || error}`);
+  }
+
+  throw new Error(`No se pudo cargar la hoja ${nombre}. Detalle: ${errores.join(" | ")}. Revisa que la pestana exista con ese nombre exacto, que el Google Sheet sea publico/visible y que la app este abierta desde server.js.`);
+}
+
+function parseCsv(texto) {
+  const rows = [];
+  let row = [];
+  let value = "";
+  let quoted = false;
+
+  for (let i = 0; i < texto.length; i += 1) {
+    const char = texto[i];
+    const next = texto[i + 1];
+
+    if (char === '"' && quoted && next === '"') {
+      value += '"';
+      i += 1;
+    } else if (char === '"') {
+      quoted = !quoted;
+    } else if (char === "," && !quoted) {
+      row.push(value);
+      value = "";
+    } else if ((char === "\n" || char === "\r") && !quoted) {
+      if (char === "\r" && next === "\n") i += 1;
+      row.push(value);
+      if (row.some(c => c !== "")) rows.push(row);
+      row = [];
+      value = "";
+    } else {
+      value += char;
+    }
+  }
+
+  row.push(value);
+  if (row.some(c => c !== "")) rows.push(row);
+  return rows;
+}
+
+function csvAObjetos(csv) {
+  const rows = parseCsv(csv);
+  const headers = (rows.shift() || []).map(h => h.trim());
+  return rows.map(row => {
+    const obj = {};
+    headers.forEach((h, i) => {
+      obj[h] = row[i] ?? "";
+    });
+    return obj;
+  });
+}
+
+async function cargarHojaCsv(nombre) {
+  const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(nombre)}`;
+  let csv = "";
+
+  try {
+    if (location.protocol === "file:") throw new Error("carga local");
+    if (window.parent !== window && typeof window.parent.ancCargarTexto === "function") {
+      csv = await window.parent.ancCargarTexto(url);
+    }
+  } catch (error) {}
+
+  if (!csv) {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText || ""}`.trim());
+    csv = await res.text();
+  }
+
+  const data = csvAObjetos(csv);
+  if (!data.length) throw new Error("CSV sin filas");
+  return data;
 }
 
 async function cargarOpcional(nombre) {
