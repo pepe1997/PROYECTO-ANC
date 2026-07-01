@@ -67,6 +67,27 @@ function fmt(valor) {
   return Number(valor || 0).toLocaleString("es-PE", { maximumFractionDigits: 2 });
 }
 
+const CAPACIDAD_DINAMICA_UND = 99999999;
+
+function esCapacidadDinamica(uniMax) {
+  const valor = num(uniMax);
+  return valor <= 0 || valor >= 999999;
+}
+
+function disponibilidadPorCapacidad(uniMax, unact, transito, uxb) {
+  const dinamica = esCapacidadDinamica(uniMax);
+  const disponibleUnd = dinamica ? CAPACIDAD_DINAMICA_UND : Math.max(0, num(uniMax) - (num(unact) + num(transito)));
+  return {
+    dinamica,
+    disponibleUnd,
+    disponibleBul: uxb ? disponibleUnd / uxb : disponibleUnd
+  };
+}
+
+function fmtDisponibilidad(valor, dinamica) {
+  return dinamica ? "SIN LIMITE" : fmt(valor);
+}
+
 function pct(a, b) {
   return b > 0 ? (a / b) * 100 : 0;
 }
@@ -315,6 +336,7 @@ function consolidarInventario() {
         ubicacion,
         unact: 0,
         uniAsig: 0,
+        transito: 0,
         uniMax: num(r.UNI_MAX),
         uniMin: num(r.UNI_MIN),
         uxb: num(r.UXB) || 1
@@ -323,11 +345,15 @@ function consolidarInventario() {
     const item = mapa.get(key);
     item.unact += num(r.UNACT);
     item.uniAsig += num(r.UNI_ASIG);
+    item.transito += num(r["En las Unidades de TrÃ¡nsito"]);
   });
 
   return Array.from(mapa.values()).map(r => {
-    r.disponible = Math.max(0, r.uniMax - r.unact);
-    r.futuro = Math.max(0, r.uniMax - (r.unact - r.uniAsig));
+    const actual = disponibilidadPorCapacidad(r.uniMax, r.unact, r.transito, r.uxb);
+    const futuro = disponibilidadPorCapacidad(r.uniMax, Math.max(0, r.unact - r.uniAsig), r.transito, r.uxb);
+    r.capacidadDinamica = actual.dinamica;
+    r.disponible = actual.disponibleUnd;
+    r.futuro = futuro.disponibleUnd;
     r.estado = r.disponible <= 0 ? "Saturado" : r.uniAsig > 0 ? "Libera" : r.unact === 0 ? "Vacio" : "Disponible";
     return r;
   }).sort((a, b) => ordenarUbicacion(a.ubicacion, b.ubicacion));
@@ -2364,7 +2390,7 @@ function disponibilidadActivoRow(row) {
   const unact = num(campo(row, ["UNACT", "UnAct", "UN ACT"]));
   const asignado = num(campo(row, ["UNI_ASIG", "Un Asig", "UN ASIG", "UNIDADES ASIGNADAS"]));
   const transito = num(row["En las Unidades de TrÃ¡nsito"]);
-  const disponibleUnd = Math.max(0, unact - asignado - transito);
+  const disponibleUnd = Math.max(0, uniMax - (unact + transito));
   return {
     unact,
     asignado,
@@ -2397,17 +2423,58 @@ function detalleReservaProducto(codigo) {
 function disponibilidadActivoRow(row) {
   const codigo = normalizar(campo(row, ["PRODUCTO", "CODIGO"]));
   const uxb = num(campo(row, ["UXB", "Uxb"])) || num(campo(productoPorCodigo(codigo) || {}, ["UXB", "Uxb"])) || 1;
+  const uniMax = num(campo(row, ["UNI_MAX"]));
   const unact = num(campo(row, ["UNACT", "UnAct", "UN ACT"]));
   const asignado = num(campo(row, ["UNI_ASIG", "Un Asig", "UN ASIG", "UNIDADES ASIGNADAS"]));
   const transito = num(row["En las Unidades de TrÃ¡nsito"]);
   const disponibleUnd = Math.max(0, unact - asignado - transito);
   return {
+    uniMax,
     unact,
     asignado,
     transito,
     uxb,
     disponibleUnd,
     disponibleBul: uxb ? disponibleUnd / uxb : disponibleUnd
+  };
+}
+
+function disponibilidadActivoRow(row) {
+  const codigo = normalizar(campo(row, ["PRODUCTO", "CODIGO"]));
+  const uxb = num(campo(row, ["UXB", "Uxb"])) || num(campo(productoPorCodigo(codigo) || {}, ["UXB", "Uxb"])) || 1;
+  const uniMax = num(campo(row, ["UNI_MAX"]));
+  const unact = num(campo(row, ["UNACT", "UnAct", "UN ACT"]));
+  const asignado = num(campo(row, ["UNI_ASIG", "Un Asig", "UN ASIG", "UNIDADES ASIGNADAS"]));
+  const transito = num(row["En las Unidades de TrÃ¡nsito"]);
+  const disponibleUnd = Math.max(0, uniMax - (unact + transito));
+  return {
+    uniMax,
+    unact,
+    asignado,
+    transito,
+    uxb,
+    disponibleUnd,
+    disponibleBul: uxb ? disponibleUnd / uxb : disponibleUnd
+  };
+}
+
+function disponibilidadActivoRow(row) {
+  const codigo = normalizar(campo(row, ["PRODUCTO", "CODIGO"]));
+  const uxb = num(campo(row, ["UXB", "Uxb"])) || num(campo(productoPorCodigo(codigo) || {}, ["UXB", "Uxb"])) || 1;
+  const uniMax = num(campo(row, ["UNI_MAX"]));
+  const unact = num(campo(row, ["UNACT", "UnAct", "UN ACT"]));
+  const asignado = num(campo(row, ["UNI_ASIG", "Un Asig", "UN ASIG", "UNIDADES ASIGNADAS"]));
+  const transito = num(campo(row, ["En las Unidades de TrÃ¡nsito", "En las Unidades de TrÃƒÂ¡nsito"]));
+  const disponible = disponibilidadPorCapacidad(uniMax, unact, transito, uxb);
+  return {
+    uniMax,
+    capacidadDinamica: disponible.dinamica,
+    unact,
+    asignado,
+    transito,
+    uxb,
+    disponibleUnd: disponible.disponibleUnd,
+    disponibleBul: disponible.disponibleBul
   };
 }
 
@@ -2445,26 +2512,46 @@ function indicesLpnsUbicacion() {
     .sort((a, b) => a.grupo.localeCompare(b.grupo) || ordenarUbicacion(a.ubicacion, b.ubicacion) || b.stock - a.stock);
 
   const activo = new Map();
+  const activoAgrupado = new Map();
   dataInventario.forEach(row => {
     const codigo = normalizar(campo(row, ["PRODUCTO", "CODIGO"]));
     if (!codigo) return;
+    const ubicacion = limpiar(campo(row, ["UBICACION", "Ubicacion"]));
+    if (!ubicacion) return;
     const disp = disponibilidadActivoRow(row);
     const bultos = num(campo(row, ["BULTOS", "DISPONIBLE-BULTOS"])) || (disp.uxb ? disp.unact / disp.uxb : disp.unact);
-    if (disp.unact <= 0 && bultos <= 0) return;
-    if (!activo.has(codigo)) activo.set(codigo, []);
-    activo.get(codigo).push({
-      ubicacion: limpiar(campo(row, ["UBICACION", "Ubicacion"])) || "SIN UBICACION",
-      codigo,
-      codigoAlt: codigoAlternativoProducto(codigo, row),
-      descripcion: descripcionProducto(codigo, row),
-      asignado: disp.asignado,
-      transito: disp.transito,
-      uxb: disp.uxb,
-      unidades: disp.unact,
-      bultos,
-      disponibleUnidades: disp.disponibleUnd,
-      disponibleBultos: disp.disponibleBul
-    });
+    const itemKey = `${codigo}|${ubicacion}`;
+    if (!activoAgrupado.has(itemKey)) {
+      activoAgrupado.set(itemKey, {
+        ubicacion,
+        codigo,
+        codigoAlt: codigoAlternativoProducto(codigo, row),
+        descripcion: descripcionProducto(codigo, row),
+        uniMax: disp.uniMax,
+        capacidadDinamica: disp.capacidadDinamica,
+        asignado: 0,
+        transito: 0,
+        uxb: disp.uxb,
+        unidades: 0,
+        bultos: 0,
+        disponibleUnidades: 0,
+        disponibleBultos: 0
+      });
+    }
+    const item = activoAgrupado.get(itemKey);
+    item.uniMax = Math.max(item.uniMax, disp.uniMax);
+    item.capacidadDinamica = item.capacidadDinamica || disp.capacidadDinamica;
+    item.asignado += disp.asignado;
+    item.transito += disp.transito;
+    item.unidades += disp.unact;
+    item.bultos += bultos;
+  });
+  activoAgrupado.forEach(item => {
+    const disponible = disponibilidadPorCapacidad(item.capacidadDinamica ? 0 : item.uniMax, item.unidades, item.transito, item.uxb);
+    item.disponibleUnidades = disponible.disponibleUnd;
+    item.disponibleBultos = disponible.disponibleBul;
+    if (!activo.has(item.codigo)) activo.set(item.codigo, []);
+    activo.get(item.codigo).push(item);
   });
   activo.forEach(rows => rows.sort((a, b) => ordenarUbicacion(a.ubicacion, b.ubicacion) || b.bultos - a.bultos));
 
@@ -2655,8 +2742,8 @@ function tablaDetalleActivoProducto(data) {
       <td class="number">${fmt(r.unidades)}</td>
       <td class="number">${fmt(r.asignado)}</td>
       <td class="number">${fmt(r.transito)}</td>
-      <td class="number"><strong>${fmt(r.disponibleUnidades)}</strong></td>
-      <td class="number"><strong>${fmt(r.disponibleBultos)}</strong></td>
+      <td class="number"><strong>${fmtDisponibilidad(r.disponibleUnidades, r.capacidadDinamica)}</strong></td>
+      <td class="number"><strong>${fmtDisponibilidad(r.disponibleBultos, r.capacidadDinamica)}</strong></td>
     </tr>
   `), "Este producto no tiene ubicacion activa con stock.");
 }
@@ -2735,8 +2822,8 @@ function filasActivoLpnsControl(base) {
         destino.unidades,
         destino.asignado,
         destino.transito,
-        destino.disponibleUnidades,
-        destino.disponibleBultos
+        fmtDisponibilidad(destino.disponibleUnidades, destino.capacidadDinamica),
+        fmtDisponibilidad(destino.disponibleBultos, destino.capacidadDinamica)
       ]);
     });
   });
@@ -2863,8 +2950,8 @@ function exportarLpnsControlRelacion(tipo) {
           <td>${fmt(destino.unidades)}</td>
           <td>${fmt(destino.asignado)}</td>
           <td>${fmt(destino.transito)}</td>
-          <td>${fmt(destino.disponibleUnidades)}</td>
-          <td>${fmt(destino.disponibleBultos)}</td>
+          <td>${fmtDisponibilidad(destino.disponibleUnidades, destino.capacidadDinamica)}</td>
+          <td>${fmtDisponibilidad(destino.disponibleBultos, destino.capacidadDinamica)}</td>
         </tr>
       `).join("")}
     </table>
@@ -3063,36 +3150,33 @@ function renderPuntosControl() {
 }
 
 function detallePuntoControlFilas(data) {
-  const activoPorProducto = new Map();
-  inventarioComparable().forEach(r => {
-    if (!activoPorProducto.has(r.codigo)) activoPorProducto.set(r.codigo, []);
-    activoPorProducto.get(r.codigo).push(r);
-  });
-
   return data
     .slice()
     .sort((a, b) => b.antiguedad - a.antiguedad || b.bultos - a.bultos)
     .flatMap(r => {
-      const activo = (activoPorProducto.get(r.codigo) || [])
+      const activo = detalleActivoProducto(r.codigo)
         .slice()
         .sort((a, b) => ordenarUbicacion(a.ubicacion, b.ubicacion));
       if (!activo.length) {
         return [{
           ...r,
           ubicacionActivo: "SIN UBICACION ACTIVA",
+          asignadoActivo: 0,
+          transitoActivo: 0,
+          capacidadDinamicaActivo: false,
           disponibleUnd: 0,
           disponibleBul: 0
         }];
       }
-      return activo.map(a => {
-        const disp = disponibilidadActivoRow(a);
-        return {
-          ...r,
-          ubicacionActivo: a.ubicacion,
-          disponibleUnd: disp.disponibleUnd,
-          disponibleBul: disp.disponibleBul
-        };
-      });
+      return activo.map(a => ({
+        ...r,
+        ubicacionActivo: a.ubicacion,
+        asignadoActivo: a.asignado,
+        transitoActivo: a.transito,
+        capacidadDinamicaActivo: a.capacidadDinamica,
+        disponibleUnd: a.disponibleUnidades,
+        disponibleBul: a.disponibleBultos
+      }));
     });
 }
 
@@ -3123,7 +3207,7 @@ function abrirDetallePuntoControl(detalleKey) {
           <button class="ghost" onclick="cerrarDetallePuntoControl()">Cerrar</button>
         </div>
       </div>
-      ${tablaConId("tablaDetallePuntoControl", ["Ubicacion", "LPN", "Estado LPN", "Codigo", "Descripcion", "Stock BUL", "Stock UND", "Ubicacion activo", "Disp activo UND", "Disp activo BUL", "Antiguedad dias"], rows.map(r => `
+      ${tablaConId("tablaDetallePuntoControl", ["Ubicacion", "LPN", "Estado LPN", "Codigo", "Descripcion", "Stock BUL", "Stock UND", "Ubicacion activo", "Asignado activo", "Transito activo", "Disp activo UND", "Disp activo BUL", "Antiguedad dias"], rows.map(r => `
         <tr class="${r.antiguedad >= 7 ? "bad" : r.antiguedad >= 3 ? "warn" : ""}">
           <td>${htmlSeguro(r.ubicacion)}</td>
           <td><strong>${htmlSeguro(r.lpn)}</strong></td>
@@ -3133,8 +3217,10 @@ function abrirDetallePuntoControl(detalleKey) {
           <td class="number">${fmt(r.bultos)}</td>
           <td class="number">${fmt(r.unidades)}</td>
           <td>${htmlSeguro(r.ubicacionActivo || "SIN ACTIVO")}</td>
-          <td>${fmt(r.disponibleUnd)}</td>
-          <td>${fmt(r.disponibleBul)}</td>
+          <td>${fmt(r.asignadoActivo)}</td>
+          <td>${fmt(r.transitoActivo)}</td>
+          <td>${fmtDisponibilidad(r.disponibleUnd, r.capacidadDinamicaActivo)}</td>
+          <td>${fmtDisponibilidad(r.disponibleBul, r.capacidadDinamicaActivo)}</td>
           <td>${fmt(r.antiguedad)}</td>
         </tr>
       `), "Sin LPNs para esta ubicacion.")}
@@ -3177,6 +3263,8 @@ function exportarDetallePuntosControlGeneral() {
         <th>STOCK BUL</th>
         <th>STOCK UND</th>
         <th>UBICACION ACTIVO</th>
+        <th>ASIGNADO ACTIVO</th>
+        <th>TRANSITO ACTIVO</th>
         <th>DISP ACTIVO UND</th>
         <th>DISP ACTIVO BUL</th>
         <th>ANTIGUEDAD DIAS</th>
@@ -3191,8 +3279,10 @@ function exportarDetallePuntosControlGeneral() {
           <td>${fmt(r.bultos)}</td>
           <td>${fmt(r.unidades)}</td>
           <td>${htmlSeguro(r.ubicacionActivo)}</td>
-          <td>${fmt(r.disponibleUnd)}</td>
-          <td>${fmt(r.disponibleBul)}</td>
+          <td>${fmt(r.asignadoActivo)}</td>
+          <td>${fmt(r.transitoActivo)}</td>
+          <td>${fmtDisponibilidad(r.disponibleUnd, r.capacidadDinamicaActivo)}</td>
+          <td>${fmtDisponibilidad(r.disponibleBul, r.capacidadDinamicaActivo)}</td>
           <td>${fmt(r.antiguedad)}</td>
         </tr>
       `).join("")}
@@ -3263,11 +3353,12 @@ function renderInventarioGeneral() {
   const libera = data.filter(r => r.estado === "Libera").length;
   const disponibles = data.filter(r => r.disponible > 0).length;
   const productos = new Set(data.map(r => r.codigo).filter(Boolean)).size;
-  const ocupacionPromedio = data.length > 0
-    ? data.reduce((a, b) => a + pct(b.unact, b.uniMax || b.unact), 0) / data.length
+  const dataCapacidadFija = data.filter(r => !r.capacidadDinamica);
+  const ocupacionPromedio = dataCapacidadFija.length > 0
+    ? dataCapacidadFija.reduce((a, b) => a + pct(b.unact, b.uniMax || b.unact), 0) / dataCapacidadFija.length
     : 0;
 
-  document.getElementById("inventarioKpis").innerHTML = `<section class="kpi-grid compact">${kpi("Ubicaciones", fmt(data.length))}${kpi("Productos", fmt(productos))}${kpi("Disponibles", fmt(disponibles))}${kpi("Saturadas", fmt(saturadas), "", "danger")}${kpi("Libera", fmt(libera), "", "warn")}${kpi("Pasillo 10 UND", fmt(totalPasillo10Und), "no operativo", totalPasillo10Und > 0 ? "danger" : "")}${kpi("Ocupacion prom.", `${ocupacionPromedio.toFixed(1)}%`)}</section>`;
+  document.getElementById("inventarioKpis").innerHTML = `<section class="kpi-grid compact">${kpi("Ubicaciones", fmt(data.length))}${kpi("Productos", fmt(productos))}${kpi("Disponibles", fmt(disponibles))}${kpi("Dinamicas", fmt(data.filter(r => r.capacidadDinamica).length))}${kpi("Saturadas", fmt(saturadas), "", "danger")}${kpi("Libera", fmt(libera), "", "warn")}${kpi("Pasillo 10 UND", fmt(totalPasillo10Und), "no operativo", totalPasillo10Und > 0 ? "danger" : "")}${kpi("Ocupacion prom.", `${ocupacionPromedio.toFixed(1)}%`, "sin dinamicas")}</section>`;
   const alertaPasillo10 = pasillo10.length ? `
     <div class="notice danger">
       MASS-10 no debe tener mercaderia. Se encontro stock en ${fmt(pasillo10.length)} ubicaciones: ${fmt(totalPasillo10Und)} unidades / ${fmt(totalPasillo10Bul)} bultos.
@@ -3287,8 +3378,8 @@ function renderInventarioGeneral() {
         <td>${fmt(r.uxb)}</td>
         <td>${fmt(actual)}</td>
         <td>${fmt(asignado)}</td>
-        <td class="number">${fmt(disponible)}</td>
-        <td>${fmt(futuro)}</td>
+        <td class="number">${fmtDisponibilidad(disponible, r.capacidadDinamica)}</td>
+        <td>${fmtDisponibilidad(futuro, r.capacidadDinamica)}</td>
         <td><strong>${r.estado}</strong></td>
       </tr>
     `;
@@ -3341,7 +3432,7 @@ function renderInventarioPasillos() {
         </div>
         ${tabla(["Codigo", "Descripcion", "Ubicacion", "Disponible", "Estado"], filas.map(r => `
           <tr class="${r.estado === "Saturado" ? "bad" : r.estado === "Libera" ? "warn" : ""}">
-            <td>${r.codigo}</td><td>${r.desc}</td><td>${r.ubicacion}</td><td class="number">${fmt(modoInventario === "BUL" ? r.disponible / (r.uxb || 1) : r.disponible)}</td><td>${r.estado}</td>
+            <td>${r.codigo}</td><td>${r.desc}</td><td>${r.ubicacion}</td><td class="number">${fmtDisponibilidad(modoInventario === "BUL" ? r.disponible / (r.uxb || 1) : r.disponible, r.capacidadDinamica)}</td><td>${r.estado}</td>
           </tr>
         `))}
       </section>
@@ -3401,8 +3492,8 @@ function renderUbicaciones(invBase) {
       <td>${r.ubicacion}</td>
       <td>${fmt(r.unact)}</td>
       <td>${fmt(r.uniAsig)}</td>
-      <td class="number">${fmt(r.disponible)}</td>
-      <td>${fmt(r.futuro)}</td>
+      <td class="number">${fmtDisponibilidad(r.disponible, r.capacidadDinamica)}</td>
+      <td>${fmtDisponibilidad(r.futuro, r.capacidadDinamica)}</td>
       <td><strong>${r.estado}</strong></td>
     </tr>
   `));
