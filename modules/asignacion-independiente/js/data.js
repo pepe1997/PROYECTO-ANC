@@ -33,7 +33,14 @@ async function cargarHoja(nombre) {
   throw new Error(`No se pudo cargar la hoja ${nombre}. Detalle: ${errores.join(" | ")}. Revisa que la pestana exista con ese nombre exacto, que el Google Sheet sea publico/visible y que abras la app desde server.js.`);
 }
 
-function parseCsv(texto) {
+function detectarSeparadorCsv(texto) {
+  const primeraLinea = String(texto || "").split(/\r?\n/)[0] || "";
+  const comas = (primeraLinea.match(/,/g) || []).length;
+  const puntoComas = (primeraLinea.match(/;/g) || []).length;
+  return puntoComas > comas ? ";" : ",";
+}
+
+function parseCsv(texto, separador = ",") {
   const rows = [];
   let row = [];
   let value = "";
@@ -48,7 +55,7 @@ function parseCsv(texto) {
       i += 1;
     } else if (char === '"') {
       quoted = !quoted;
-    } else if (char === "," && !quoted) {
+    } else if (char === separador && !quoted) {
       row.push(value);
       value = "";
     } else if ((char === "\n" || char === "\r") && !quoted) {
@@ -68,7 +75,7 @@ function parseCsv(texto) {
 }
 
 function csvAObjetos(csv) {
-  const rows = parseCsv(csv);
+  const rows = parseCsv(csv, detectarSeparadorCsv(csv));
   const headers = (rows.shift() || []).map(h => h.trim());
   return rows.map(row => {
     const obj = {};
@@ -110,6 +117,60 @@ async function cargarOpcional(nombre) {
   }
 }
 
+function campoHoja(row, nombres) {
+  for (const nombre of nombres) {
+    if (row[nombre] !== undefined && row[nombre] !== null && row[nombre] !== "") return row[nombre];
+  }
+  return "";
+}
+
+function cantidadLpn(valor) {
+  const texto = String(valor ?? "").trim();
+  if (!texto) return "";
+  const limpio = texto.replace(/\s/g, "");
+  if (/^-?\d{1,3}([.,])\d{3}$/.test(limpio)) return limpio.replace(/[.,]/g, "");
+  if (/^-?\d{1,3}([.,]\d{3})+([.,]\d+)?$/.test(limpio)) {
+    const separadorDecimal = limpio.match(/[.,](\d+)$/);
+    if (separadorDecimal && separadorDecimal[1].length !== 3) {
+      const decimal = separadorDecimal[0].replace(",", ".");
+      return limpio.slice(0, -separadorDecimal[0].length).replace(/[.,]/g, "") + decimal;
+    }
+    return limpio.replace(/[.,]/g, "");
+  }
+  return limpio.replace(",", ".");
+}
+
+function normalizarFilaLpn(row) {
+  const lpn = campoHoja(row, ["LPN", "Nro LPN", "NRO LPN", "NRO_LPN", "Nbr LPN", "NBR LPN"]);
+  const estado = campoHoja(row, ["ESTADO", "Estado"]);
+  const codigo = campoHoja(row, ["CODIGO", "Codigo", "PRODUCTO", "Producto"]);
+  const codigoAlt = campoHoja(row, ["CODIGO_ALT", "COD_ALT", "CODIGO ALTERNATIVO", "Codigo Alternativo", "Cod Alternat", "Codigo alternativo"]);
+  const descripcion = campoHoja(row, ["DESCRIPCION", "Descripcion", "Descripción"]);
+  const ubicacion = campoHoja(row, ["UBICACION", "Ubicacion", "Ubicación"]);
+  const bultos = cantidadLpn(campoHoja(row, ["BULTOS", "Bultos", "UnAct", "UNACT", "Un Act", "UN ACT", "Un Rcb", "UN RCB"]));
+  const unidades = cantidadLpn(campoHoja(row, ["UNIDADES", "Unidades", "UnAct", "UNACT", "Un Act", "UN ACT", "Un Rcb", "UN RCB"]));
+  const asignado = cantidadLpn(campoHoja(row, ["UN_ASIG", "Un Asig", "UN ASIG", "UNI_ASIG", "UnAsig"]));
+  const uxb = cantidadLpn(campoHoja(row, ["UXB", "Uxb", "Und x Caja", "UND X CAJA", "Und x Inner", "UND X INNER"]));
+  const fecha = campoHoja(row, ["FECHA ANTIGÜEDAD", "FECHA ANTIGUEDAD", "FECHA", "Fecha", "Fe y Hr Almacena", "Fe Y Hr Modif", "Fe Hr Recibo", "Fe y Hr Creac", "Fecha Priorid"]);
+
+  return {
+    ...row,
+    LPN: lpn,
+    ESTADO: estado,
+    CODIGO: codigo,
+    CODIGO_ALT: codigoAlt,
+    DESCRIPCION: descripcion,
+    UBICACION: ubicacion,
+    BULTOS: bultos,
+    UNIDADES: unidades || bultos,
+    UNACT: unidades || bultos,
+    UN_ASIG: asignado,
+    UXB: uxb,
+    FECHA: fecha,
+    JERARQUIA: campoHoja(row, ["JERARQUIA", "Jerarq2", "JERARQ2"])
+  };
+}
+
 async function cargarDatos() {
   datosListos = false;
   actualizarEstadoCarga("Cargando pedido y LPNs...");
@@ -123,7 +184,7 @@ async function cargarDatos() {
   ]);
 
   dataPedido = pedido;
-  dataLPN = lpns;
+  dataLPN = lpns.map(normalizarFilaLpn);
   dataQuiebre = quiebres;
   dataProductos = productos;
   dataInventario = inventario;

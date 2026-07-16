@@ -93,7 +93,7 @@ function pct(a, b) {
 }
 
 function parseFecha(valor) {
-  const txt = limpiar(valor);
+  const txt = limpiar(valor).split(/\s+/)[0];
   if (!txt) return null;
   const partes = txt.split(/[\/-]/);
   if (partes.length !== 3) return null;
