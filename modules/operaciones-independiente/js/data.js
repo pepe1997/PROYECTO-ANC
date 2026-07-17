@@ -169,8 +169,8 @@ function normalizarFilaLpn(row) {
   const codigoAlt = campoHoja(row, ["CODIGO_ALT", "COD_ALT", "CODIGO ALTERNATIVO", "Codigo Alternativo", "Cod Alternat", "Codigo alternativo"]);
   const descripcion = campoHoja(row, ["DESCRIPCION", "Descripcion", "Descripción"]);
   const ubicacion = campoHoja(row, ["UBICACION", "Ubicacion", "Ubicación"]);
-  const bultos = cantidadLpn(campoHoja(row, ["BULTOS", "Bultos", "UnAct", "UNACT", "Un Act", "UN ACT", "Un Rcb", "UN RCB"]));
-  const unidades = cantidadLpn(campoHoja(row, ["UNIDADES", "Unidades", "UnAct", "UNACT", "Un Act", "UN ACT", "Un Rcb", "UN RCB"]));
+  const bultos = cantidadLpn(campoHoja(row, ["BULTOS", "Bultos"]));
+  const unidades = cantidadLpn(campoHoja(row, ["UnAct", "UNACT", "Un Act", "UN ACT", "UNIDADES", "Unidades", "Un Rcb", "UN RCB"]));
   const asignado = cantidadLpn(campoHoja(row, ["UN_ASIG", "Un Asig", "UN ASIG", "UNI_ASIG", "UnAsig"]));
   const uxb = cantidadLpn(campoHoja(row, ["UXB", "Uxb", "Und x Caja", "UND X CAJA", "Und x Inner", "UND X INNER"]));
   const fecha = campoHoja(row, ["FECHA ANTIGÜEDAD", "FECHA ANTIGUEDAD", "FECHA", "Fecha", "Fe y Hr Almacena", "Fe Y Hr Modif", "Fe Hr Recibo", "Fe y Hr Creac", "Fecha Priorid"]);
@@ -201,7 +201,8 @@ function validarDatosBase() {
     ["DESCRIPCION", "Descripcion", "Descripción"],
     ["UBICACION", "Ubicacion", "Ubicación"],
     ["ESTADO", "Estado"],
-    ["BULTOS", "Bultos", "UnAct", "UNACT", "Un Act", "UN ACT", "Un Rcb", "UN RCB"]
+    ["BULTOS", "Bultos"],
+    ["UnAct", "UNACT", "Un Act", "UN ACT"]
   ]);
   validarColumnas("PRODUCTOS", dataProductos, ["CODIGO", ["CODIGO_ALT", "COD_ALT", "CODIGO ALTERNATIVO", "Cod Alternat"]]);
   validarColumnas("PEDIDO", dataPedido, ["PRODUCTO"]);

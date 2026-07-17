@@ -4,9 +4,13 @@ const ESTADOS_VALIDOS = new Set(["Ubicado", "Recibido"]);
 
 let mapaLPN = new Map();
 let cacheAsignacion = null;
+let cacheDetallePedido = null;
+let cacheValidacionAvance = null;
 let vistaActual = "reserva";
 let estadoOperarios = JSON.parse(localStorage.getItem("asignacion_estadoOperarios") || "{}");
 let fechaPedidoSeleccionada = "";
+let fechaDetallePedidoSeleccionada = "";
+let filtroValidacionAvance = "todo";
 
 function limpiarCodigo(valor) {
   if (valor === null || valor === undefined) return "";
@@ -202,6 +206,11 @@ function campo(row, nombres) {
     if (row[nombre] !== undefined && row[nombre] !== null && row[nombre] !== "") return row[nombre];
   }
   return 0;
+}
+
+function campoTexto(row, nombres) {
+  const valor = campo(row, nombres);
+  return valor === 0 ? "" : limpiarCodigo(valor);
 }
 
 function obtenerCs(lpn) {
@@ -845,6 +854,9 @@ function abrirAsignacion() {
       <button onclick="verOtras()">Otras ubicaciones</button>
       <button onclick="verOtrasPrimero()">Otras primero</button>
       <button onclick="verSimulacionAsignacion()">Simulacion ola</button>
+      <button onclick="verDetallePedido()">Detalle de pedido</button>
+      <button onclick="verDashboardNoAsignado()">Dashboard no asignado</button>
+      <button onclick="verValidacionAvance()">Validacion de avance</button>
       <button onclick="verFormatoTablas()">Formato de tablas</button>
       <button onclick="verSinStock()">Sin stock</button>
       <button onclick="verAnalisisRapido()">Analisis rapido</button>
@@ -856,6 +868,368 @@ function abrirAsignacion() {
   `;
 
   verDashboard();
+}
+
+function bultosNoAsignadosPedido(row) {
+  return numeroReal(campo(row, [
+    "BULTOS_NO_ASIGNADO",
+    "BULTOS_NO_ASIGNADOS",
+    "BULTO_NO_ASIGNADO",
+    "BULTO_NO_ASIGANDO",
+    "BULTOS_NO_ASIGANDO",
+    "NO_ASIGNADO",
+    "NO ASIGNADO"
+  ]));
+}
+
+function fechaOrdenDetallePedido(row) {
+  return campoTexto(row, ["FECHA_ORDEN", "Fecha Orden", "FECHA ORDEN", "FECHA", "Fecha"]) || "SIN FECHA";
+}
+
+function horaCreacionDetallePedido(row) {
+  const valor = campoTexto(row, [
+    "Detalle de la orden a crear ts",
+    "DETALLE DE LA ORDEN A CREAR TS",
+    "Detalle Orden Crear TS",
+    "FECHA_HORA_CREACION",
+    "FECHA HORA CREACION"
+  ]);
+  if (!valor) return "";
+  const partes = valor.split(/\s+/).filter(Boolean);
+  const hora = partes.find(p => /^\d{1,2}:\d{2}/.test(p));
+  const horaBase = hora || valor;
+  const match = String(horaBase).match(/(\d{1,2})/);
+  return match ? `${match[1].padStart(2, "0")}:00` : "";
+}
+
+function obtenerDetallePedido() {
+  if (cacheDetallePedido) return cacheDetallePedido;
+
+  const mapa = new Map();
+
+  (dataPedido || []).forEach(row => {
+    const noAsignado = bultosNoAsignadosPedido(row);
+    const fecha = fechaOrdenDetallePedido(row);
+    const hora = horaCreacionDetallePedido(row);
+    const producto = campoTexto(row, ["PRODUCTO", "Producto", "CODIGO", "Codigo"]);
+    if (noAsignado <= 0 || !producto) return;
+
+    const key = `${fecha}|${hora}|${producto}`;
+    if (!mapa.has(key)) {
+      mapa.set(key, {
+        fecha,
+        hora,
+        codigoAlt: obtenerCodigoAlt(row),
+        producto,
+        descripcion: campoTexto(row, ["DESCRIPCION", "Descripcion", "Descripción", "DESCRIPCION_PRODUCTO"]),
+        noAsignado: 0,
+        filas: 0
+      });
+    }
+
+    const item = mapa.get(key);
+    if (!item.codigoAlt) item.codigoAlt = obtenerCodigoAlt(row);
+    if (!item.descripcion) item.descripcion = campoTexto(row, ["DESCRIPCION", "Descripcion", "Descripción", "DESCRIPCION_PRODUCTO"]);
+    item.noAsignado += noAsignado;
+    item.filas += 1;
+  });
+
+  const filas = Array.from(mapa.values())
+    .sort((a, b) => b.noAsignado - a.noAsignado || String(a.fecha).localeCompare(String(b.fecha), "es", { numeric: true }) || String(a.hora).localeCompare(String(b.hora), "es", { numeric: true }));
+
+  const fechas = [...new Set(filas.map(r => r.fecha))].sort((a, b) => String(a).localeCompare(String(b), "es", { numeric: true }));
+  cacheDetallePedido = { filas, fechas };
+  if (!fechaDetallePedidoSeleccionada && fechas.length) fechaDetallePedidoSeleccionada = fechas[0];
+  return cacheDetallePedido;
+}
+
+function datosDetallePedidoFiltrados() {
+  const { filas } = obtenerDetallePedido();
+  return filas
+    .filter(r => !fechaDetallePedidoSeleccionada || r.fecha === fechaDetallePedidoSeleccionada)
+    .sort((a, b) => b.noAsignado - a.noAsignado || String(a.hora).localeCompare(String(b.hora), "es", { numeric: true }));
+}
+
+function cambiarFechaDetallePedido(valor) {
+  fechaDetallePedidoSeleccionada = valor;
+  renderDetallePedido();
+}
+
+function verDetallePedido() {
+  if (!document.getElementById("contenido")) return;
+  renderDetallePedido();
+}
+
+function renderDetallePedido() {
+  const detalle = obtenerDetallePedido();
+  const data = datosDetallePedidoFiltrados();
+  const total = data.reduce((a, b) => a + b.noAsignado, 0);
+  const productos = new Set(data.map(r => r.producto)).size;
+
+  document.getElementById("contenido").innerHTML = `
+    <section class="section-card" id="detallePedidoModulo">
+      <div class="section-head">
+        <div>
+          <h2>Detalle de pedido</h2>
+        </div>
+        <div class="section-actions">
+          <button onclick="descargarExcelDetallePedido()">Excel visible</button>
+        </div>
+      </div>
+
+      <div class="filters-row">
+        <label>
+          Fecha orden
+          <select onchange="cambiarFechaDetallePedido(this.value)">
+            ${detalle.fechas.map(fecha => `<option value="${atributoSeguro(fecha)}" ${fecha === fechaDetallePedidoSeleccionada ? "selected" : ""}>${htmlSeguro(fecha)}</option>`).join("")}
+          </select>
+        </label>
+      </div>
+
+      <div class="kpi-grid compact">
+        <div class="kpi"><span>Filas</span><strong>${formatoDecimal(data.length)}</strong></div>
+        <div class="kpi"><span>Productos</span><strong>${formatoDecimal(productos)}</strong></div>
+        <div class="kpi alert"><span>Bultos no asignados</span><strong>${formatoDecimal(total)}</strong></div>
+      </div>
+
+      <div class="table-wrap">
+        <table id="tablaDetallePedido">
+          <thead>
+            <tr>
+              <th>Fecha orden</th>
+              <th>Hora creacion</th>
+              <th>Cod alternativo</th>
+              <th>Producto</th>
+              <th>Descripcion producto</th>
+              <th>Filas</th>
+              <th>Bultos no asignado</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.map(r => `
+              <tr>
+                <td>${htmlSeguro(r.fecha)}</td>
+                <td><strong>${htmlSeguro(r.hora)}</strong></td>
+                <td>${htmlSeguro(r.codigoAlt)}</td>
+                <td><strong>${htmlSeguro(r.producto)}</strong></td>
+                <td>${htmlSeguro(r.descripcion)}</td>
+                <td class="number">${formatoDecimal(r.filas)}</td>
+                <td class="number"><strong>${formatoDecimal(r.noAsignado)}</strong></td>
+              </tr>
+            `).join("") || `<tr><td colspan="7">Sin pedidos no asignados para mostrar.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function fechaOrdenValor(fecha) {
+  const texto = limpiarCodigo(fecha);
+  const partes = texto.match(/\d+/g) || [];
+  if (partes.length >= 3) {
+    let a = Number(partes[0]);
+    let b = Number(partes[1]);
+    const y = Number(partes[2]);
+    const dia = a > 12 ? a : b > 12 ? b : a;
+    const mes = a > 12 ? b : b > 12 ? a : b;
+    return new Date(y, Math.max(0, mes - 1), dia).getTime();
+  }
+  const valor = Date.parse(texto);
+  return Number.isFinite(valor) ? valor : 0;
+}
+
+function resumenNoAsignadoPorFecha() {
+  const mapa = new Map();
+  (dataPedido || []).forEach(row => {
+    const fecha = fechaPedidoOperacion(row);
+    const noAsignado = bultosNoAsignadosPedido(row);
+    const pedido = numeroReal(campo(row, ["BULTOS_PEDIDO"]));
+    if (!mapa.has(fecha)) mapa.set(fecha, { fecha, pedido: 0, noAsignado: 0 });
+    const item = mapa.get(fecha);
+    item.pedido += pedido;
+    item.noAsignado += noAsignado;
+  });
+  return Array.from(mapa.values()).sort((a, b) => fechaOrdenValor(a.fecha) - fechaOrdenValor(b.fecha));
+}
+
+function resumenTrabajoValidacion() {
+  const { filas } = obtenerValidacionAvance();
+  const codPlusDisponible = new Map();
+  agruparCodPlusPorProducto().forEach((value, codigo) => codPlusDisponible.set(codigo, numeroReal(value.bultos)));
+
+  const resumen = {
+    RESERVA: { origen: "Reserva", pedido: 0, trabajado: 0, pendiente: 0 },
+    OTRAS: { origen: "Otras ubicaciones", pedido: 0, trabajado: 0, pendiente: 0 },
+    SIN_STOCK: { origen: "Sin stock", pedido: 0, trabajado: 0, pendiente: 0 }
+  };
+
+  filas.forEach(row => {
+    const destino = resumen[row.origen];
+    if (!destino) return;
+    const pedido = numeroReal(row.pedido);
+    const restantePlus = codPlusDisponible.get(row.codigo) || 0;
+    const trabajado = Math.min(pedido, restantePlus);
+    codPlusDisponible.set(row.codigo, Math.max(0, restantePlus - trabajado));
+    destino.pedido += pedido;
+    destino.trabajado += trabajado;
+    destino.pendiente += Math.max(0, pedido - trabajado);
+  });
+
+  return resumen;
+}
+
+function datosDashboardNoAsignado() {
+  const { resumen } = procesarDatos();
+  const fechas = resumenNoAsignadoPorFecha();
+  const fechaActual = fechas.length ? fechas[fechas.length - 1] : { fecha: "SIN FECHA", pedido: 0, noAsignado: 0 };
+  const noAsignadoPorFecha = fechas.filter(r => r.noAsignado > 0);
+  const asignable = resumen.reserva + resumen.otras;
+  const pctReserva = asignable > 0 ? (resumen.reserva / asignable) * 100 : 0;
+  const pctOtras = asignable > 0 ? (resumen.otras / asignable) * 100 : 0;
+  const trabajo = resumenTrabajoValidacion();
+  return {
+    resumen,
+    fechaActual,
+    noAsignadoPorFecha,
+    asignable,
+    pctReserva,
+    pctOtras,
+    trabajo
+  };
+}
+
+function verDashboardNoAsignado() {
+  renderDashboardNoAsignado();
+}
+
+function renderDashboardNoAsignado() {
+  const data = datosDashboardNoAsignado();
+  const r = data.resumen;
+  const totalNoAsignado = r.noAsignado || r.requerido;
+
+  document.getElementById("contenido").innerHTML = `
+    <section class="section-card dashboard-no-asignado">
+      <div class="section-head">
+        <div>
+          <h2>Dashboard no asignado</h2>
+        </div>
+        <div class="section-actions">
+          <button onclick="verValidacionAvance()">Ver validacion</button>
+        </div>
+      </div>
+
+      <div class="kpi-grid dashboard-kpis">
+        <div class="kpi hero-kpi"><span>Pedido general</span><strong>${formatoDecimal(data.fechaActual.pedido)}</strong><small>${htmlSeguro(data.fechaActual.fecha)} - fecha mas actual</small></div>
+        <div class="kpi alert"><span>Total no asignado</span><strong>${formatoDecimal(totalNoAsignado)}</strong><small>bultos del pedido</small></div>
+        <div class="kpi ok"><span>Reserva</span><strong>${formatoDecimal(r.reserva)}</strong><small>bultos encontrados</small></div>
+        <div class="kpi"><span>Otras ubicaciones</span><strong>${formatoDecimal(r.otras)}</strong><small>bultos encontrados</small></div>
+        <div class="kpi alert"><span>Sin stock</span><strong>${formatoDecimal(r.sinCobertura)}</strong><small>no asignable</small></div>
+      </div>
+
+      <div class="dashboard-full-grid">
+        ${tarjetaDonutAsignacion("Reserva", data.pctReserva, r.reserva, data.asignable, "reserva")}
+        ${tarjetaDonutAsignacion("Otras ubicaciones", data.pctOtras, r.otras, data.asignable, "otras")}
+        ${graficoBarrasNoAsignadoPorFecha(data.noAsignadoPorFecha)}
+        ${graficoTrabajoPendiente(data.trabajo)}
+        ${graficoSinStockPlus(data.trabajo.SIN_STOCK)}
+      </div>
+    </section>
+  `;
+}
+
+function tarjetaDonutAsignacion(titulo, pct, valor, total, clase) {
+  const pctSeguro = Math.max(0, Math.min(100, pct || 0));
+  return `
+    <article class="dash-card percent-card ${clase}">
+      <div>
+        <h3>${htmlSeguro(titulo)}</h3>
+        <strong>${pctSeguro.toFixed(1)}%</strong>
+        <span>${formatoDecimal(valor)} de ${formatoDecimal(total)} bultos asignables</span>
+      </div>
+      <div class="percent-meter">
+        <div style="width:${pctSeguro}%"></div>
+      </div>
+    </article>
+  `;
+}
+
+function graficoBarrasNoAsignadoPorFecha(data) {
+  const max = Math.max(...data.map(r => r.noAsignado), 1);
+  return `
+    <article class="dash-card wide-card">
+      <div class="subsection-head">
+        <h3>No asignado por fecha</h3>
+        <span>${formatoDecimal(data.reduce((a, b) => a + b.noAsignado, 0))} bultos</span>
+      </div>
+      <div class="date-bar-chart">
+        ${data.map(r => {
+          const pct = Math.max(2, (r.noAsignado / max) * 100);
+          return `
+            <div class="date-bar-row">
+              <span>${htmlSeguro(r.fecha)}</span>
+              <div class="date-bar-track"><div style="width:${pct}%"></div></div>
+              <strong>${formatoDecimal(r.noAsignado)}</strong>
+            </div>
+          `;
+        }).join("") || `<div class="empty">Sin fechas con no asignado.</div>`}
+      </div>
+    </article>
+  `;
+}
+
+function graficoTrabajoPendiente(trabajo) {
+  const filas = [trabajo.RESERVA, trabajo.OTRAS];
+  return `
+    <article class="dash-card wide-card">
+      <div class="subsection-head">
+        <h3>Avance trabajado vs pendiente</h3>
+        <span>segun DROP-COD-PLUS-ALM</span>
+      </div>
+      <div class="work-bars">
+        ${filas.map(r => {
+          const total = Math.max(1, r.pedido);
+          const pctTrabajado = Math.max(0, Math.min(100, (r.trabajado / total) * 100));
+          const pctPendiente = Math.max(0, 100 - pctTrabajado);
+          return `
+            <div class="work-row">
+              <div>
+                <strong>${htmlSeguro(r.origen)}</strong>
+                <span><b>${formatoDecimal(r.trabajado)}</b> trabajado | <b>${formatoDecimal(r.pendiente)}</b> pendiente</span>
+              </div>
+              <div class="stack-bar dashboard-stack">
+                <div style="width:${pctTrabajado}%"></div>
+                <div style="width:${pctPendiente}%"></div>
+              </div>
+              <b>${pctTrabajado.toFixed(1)}%</b>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    </article>
+  `;
+}
+
+function graficoSinStockPlus(row) {
+  const total = Math.max(1, numeroReal(row?.pedido));
+  const pctTrabajado = Math.max(0, Math.min(100, (numeroReal(row?.trabajado) / total) * 100));
+  return `
+    <article class="dash-card wide-card sin-stock-card">
+      <div class="subsection-head">
+        <h3>Sin stock ubicado en Plus</h3>
+        <span>solo validacion de avance</span>
+      </div>
+      <div class="sin-stock-summary">
+        <div><span>Requerido sin stock</span><strong>${formatoDecimal(row?.pedido || 0)}</strong></div>
+        <div><span>Encontrado en Plus</span><strong>${formatoDecimal(row?.trabajado || 0)}</strong></div>
+        <div><span>Pendiente</span><strong>${formatoDecimal(row?.pendiente || 0)}</strong></div>
+      </div>
+      <div class="percent-meter sin-stock-meter">
+        <div style="width:${pctTrabajado}%"></div>
+      </div>
+      <p class="coverage-note">${pctTrabajado.toFixed(1)}% ya aparece en DROP-COD-PLUS-ALM</p>
+    </article>
+  `;
 }
 
 function estadoInfo(key) {
@@ -2525,6 +2899,387 @@ function descargarExcel(tipo) {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = `${tipo}.xls`;
+  a.click();
+}
+
+function descargarExcelDetallePedido() {
+  const data = obtenerDetallePedido().filas;
+  if (!data.length) {
+    alert("No hay datos para exportar");
+    return;
+  }
+
+  let html = "<table border='1'>";
+  html += "<tr><th>FECHA_ORDEN</th><th>HORA_CREACION</th><th>COD_ALTERNATIVO</th><th>PRODUCTO</th><th>DESCRIPCION_PRODUCTO</th><th>FILAS_AGRUPADAS</th><th>BULTOS_NO_ASIGNADO</th></tr>";
+  html += data.map(r => `
+    <tr>
+      <td>${htmlSeguro(r.fecha)}</td>
+      <td>${htmlSeguro(r.hora)}</td>
+      ${celdaExcelTexto(r.codigoAlt)}
+      ${celdaExcelTexto(r.producto)}
+      <td>${htmlSeguro(r.descripcion)}</td>
+      <td>${formatoDecimal(r.filas)}</td>
+      <td>${formatoDecimal(r.noAsignado)}</td>
+    </tr>
+  `).join("");
+  html += "</table>";
+
+  const blob = new Blob([prepararHtmlExcel(html)], { type: "application/vnd.ms-excel" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "detalle_pedido_general.xls";
+  a.click();
+}
+
+function esLpnCodPlus(row) {
+  const estado = limpiarCodigo(row.ESTADO).toUpperCase();
+  const ubicacion = limpiarCodigo(row.UBICACION).toUpperCase();
+  return ubicacion === "DROP-COD-PLUS-ALM" && ["UBICADO", "ASIGNACION PARCIAL", "ASIGNACIÓN PARCIAL"].includes(estado);
+}
+
+function agruparAsignacionPorProducto(origen, data) {
+  const mapa = new Map();
+  (data || []).forEach(row => {
+    const codigo = limpiarCodigo(row.codigo);
+    if (!codigo) return;
+    const asignar = numeroReal(row.asignar);
+    if (asignar <= 0) return;
+    const ubicacion = limpiarCodigo(row.ubicacion);
+    const lpn = limpiarCodigo(row.lpn);
+    const pasillo = pasilloReserva(ubicacion);
+    const mayor30 = numeroReal(row.requerido) >= 30 || asignar >= 30;
+    const key = `${origen}|${mayor30 ? "MAYOR30" : pasillo || "SIN"}|${codigo}|${lpn}|${ubicacion}`;
+    if (!mapa.has(key)) {
+      mapa.set(key, {
+        origen,
+        codigo,
+        desc: row.desc || "",
+        requerido: numeroReal(row.requerido),
+        pedido: 0,
+        lpnsOrigen: new Set(),
+        ubicacionesOrigen: new Set(),
+        lpnOrigen: lpn,
+        ubicacionOrigen: ubicacion,
+        mayor30,
+        pasillo
+      });
+    }
+    const item = mapa.get(key);
+    item.pedido += asignar;
+    item.requerido = Math.max(item.requerido, numeroReal(row.requerido));
+    if (row.lpn) item.lpnsOrigen.add(row.lpn);
+    if (row.ubicacion) item.ubicacionesOrigen.add(row.ubicacion);
+  });
+  return Array.from(mapa.values());
+}
+
+function pasilloReserva(ubicacion) {
+  const partes = limpiarCodigo(ubicacion).toUpperCase().split("-");
+  if (partes[0] !== "MASS" || !partes[1]) return "";
+  return partes[1].padStart(2, "0");
+}
+
+function agruparSinStockValidacion(data) {
+  const mapa = new Map();
+  (data || []).forEach(row => {
+    const codigo = limpiarCodigo(row.codigo);
+    if (!codigo) return;
+    const bultos = numeroReal(row.bultos || row.asignar || row.requerido);
+    if (bultos <= 0) return;
+    const key = `SIN_STOCK|${codigo}`;
+    if (!mapa.has(key)) {
+      mapa.set(key, {
+        origen: "SIN_STOCK",
+        codigo,
+        desc: row.desc || "",
+        requerido: 0,
+        pedido: 0,
+        lpnsOrigen: new Set(),
+        ubicacionesOrigen: new Set(),
+        lpnOrigen: "",
+        ubicacionOrigen: "SIN STOCK",
+        mayor30: false,
+        pasillo: ""
+      });
+    }
+    const item = mapa.get(key);
+    item.pedido += bultos;
+    item.requerido += bultos;
+  });
+  return Array.from(mapa.values());
+}
+
+function ordenValidacionAvance(a, b) {
+  const origen = { RESERVA: 1, OTRAS: 2, SIN_STOCK: 3 };
+  const estado = { bad: 1, warn: 2, ok: 3 };
+  return (origen[a.origen] || 9) - (origen[b.origen] || 9) ||
+    (a.origen === "RESERVA" ? Number(!a.mayor30) - Number(!b.mayor30) : 0) ||
+    (a.origen === "RESERVA" ? String(a.pasillo || "99").localeCompare(String(b.pasillo || "99"), "es", { numeric: true }) : 0) ||
+    (estado[a.clase] || 9) - (estado[b.clase] || 9) ||
+    b.pedido - a.pedido;
+}
+
+function agruparCodPlusPorProducto() {
+  const porLpn = new Map();
+  (dataLPN || []).filter(esLpnCodPlus).forEach(row => {
+    const codigo = limpiarCodigo(row.CODIGO);
+    const lpn = limpiarCodigo(row.LPN);
+    if (!codigo || !lpn) return;
+    const key = `${codigo}|${lpn}`;
+    if (!porLpn.has(key)) {
+      porLpn.set(key, {
+        codigo,
+        desc: row.DESCRIPCION || "",
+        lpn,
+        ubicacion: row.UBICACION || "",
+        estado: row.ESTADO || "",
+        bultos: 0,
+        unidades: 0
+      });
+    }
+    const item = porLpn.get(key);
+    item.bultos += numeroReal(row.BULTOS);
+    item.unidades += numeroReal(row.UNACT || row.UNIDADES);
+  });
+
+  const porProducto = new Map();
+  porLpn.forEach(row => {
+    if (!porProducto.has(row.codigo)) {
+      porProducto.set(row.codigo, {
+        codigo: row.codigo,
+        desc: row.desc,
+        bultos: 0,
+        unidades: 0,
+        lpns: []
+      });
+    }
+    const item = porProducto.get(row.codigo);
+    item.bultos += row.bultos;
+    item.unidades += row.unidades;
+    item.lpns.push(row);
+  });
+  return porProducto;
+}
+
+function estadoValidacionAvance(pedido, codPlus) {
+  if (codPlus <= 0) return { texto: "Sin avance", clase: "bad" };
+  const diferencia = codPlus - pedido;
+  if (Math.abs(diferencia) < 0.0001) return { texto: "Trabajado completo", clase: "ok" };
+  if (diferencia < 0) return { texto: "Falta trabajar", clase: "warn" };
+  return { texto: "Se bajo de mas", clase: "bad" };
+}
+
+function obtenerValidacionAvance() {
+  if (cacheValidacionAvance) return cacheValidacionAvance;
+  procesarDatos();
+
+  const base = [
+    ...agruparAsignacionPorProducto("RESERVA", window.reservaData || []),
+    ...agruparAsignacionPorProducto("OTRAS", window.otrasData || []),
+    ...agruparSinStockValidacion(window.sinStockData || [])
+  ];
+  const codPlus = agruparCodPlusPorProducto();
+
+  const filas = base.map(item => {
+    const plus = codPlus.get(item.codigo) || { bultos: 0, unidades: 0, lpns: [] };
+    const diferencia = plus.bultos - item.pedido;
+    const estado = estadoValidacionAvance(item.pedido, plus.bultos);
+    return {
+      ...item,
+      codPlus: plus.bultos,
+      unidadesCodPlus: plus.unidades,
+      diferencia,
+      estado: estado.texto,
+      clase: estado.clase,
+      lpnsCodPlus: plus.lpns
+    };
+  }).sort(ordenValidacionAvance);
+
+  cacheValidacionAvance = { filas };
+  return cacheValidacionAvance;
+}
+
+function datosValidacionAvanceFiltrados() {
+  const { filas } = obtenerValidacionAvance();
+  return filas.filter(r => filtroValidacionAvance === "todo" || r.origen.toLowerCase() === filtroValidacionAvance);
+}
+
+function cambiarFiltroValidacionAvance(valor) {
+  filtroValidacionAvance = valor;
+  renderValidacionAvance();
+}
+
+function verValidacionAvance() {
+  renderValidacionAvance();
+}
+
+function renderValidacionAvance() {
+  const data = datosValidacionAvanceFiltrados();
+  const trabajado = data.filter(r => r.estado === "Trabajado completo").length;
+  const falta = data.filter(r => r.estado === "Falta trabajar" || r.estado === "Sin avance").length;
+  const exceso = data.filter(r => r.estado === "Se bajo de mas").length;
+  const pedido = data.reduce((a, b) => a + b.pedido, 0);
+  const codPlus = data.reduce((a, b) => a + Math.min(b.pedido, b.codPlus), 0);
+  const pendiente = data.reduce((a, b) => a + Math.max(0, b.pedido - b.codPlus), 0);
+  const bloques = bloquesValidacionAvance(data);
+
+  document.getElementById("contenido").innerHTML = `
+    <section class="section-card">
+      <div class="section-head">
+        <div>
+          <h2>Validacion de avance</h2>
+        </div>
+        <div class="section-actions">
+          <button onclick="descargarExcelValidacionAvance()">Excel</button>
+        </div>
+      </div>
+
+      <div class="filters-row">
+        <label>
+          Origen
+          <select onchange="cambiarFiltroValidacionAvance(this.value)">
+            <option value="todo" ${filtroValidacionAvance === "todo" ? "selected" : ""}>Todo</option>
+            <option value="reserva" ${filtroValidacionAvance === "reserva" ? "selected" : ""}>Reserva</option>
+            <option value="otras" ${filtroValidacionAvance === "otras" ? "selected" : ""}>Otras ubicaciones</option>
+            <option value="sin_stock" ${filtroValidacionAvance === "sin_stock" ? "selected" : ""}>Sin stock</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="kpi-grid compact">
+        <div class="kpi alert"><span>Total no asignado</span><strong>${formatoDecimal(pedido)}</strong><small>bultos por validar</small></div>
+        <div class="kpi ok"><span>Trabajado en Plus</span><strong>${formatoDecimal(codPlus)}</strong><small>bultos en DROP-COD-PLUS-ALM</small></div>
+        <div class="kpi"><span>Productos</span><strong>${formatoDecimal(data.length)}</strong><small>codigos evaluados</small></div>
+        <div class="kpi alert"><span>Queda por trabajar</span><strong>${formatoDecimal(pendiente)}</strong><small>bultos pendientes</small></div>
+        <div class="kpi ok"><span>Completos</span><strong>${formatoDecimal(trabajado)}</strong><small>productos cerrados</small></div>
+        <div class="kpi alert"><span>Con diferencia</span><strong>${formatoDecimal(falta + exceso)}</strong><small>faltan o se bajo de mas</small></div>
+      </div>
+
+      <div id="tablaValidacionAvance">
+        ${bloques.map(bloque => tablaBloqueValidacionAvance(bloque.titulo, bloque.data)).join("") || `<div class="empty">Sin datos para validar.</div>`}
+      </div>
+    </section>
+  `;
+}
+
+function bloquesValidacionAvance(data) {
+  const bloques = [];
+  const reserva = data.filter(r => r.origen === "RESERVA");
+  const mayores = reserva.filter(r => r.mayor30);
+  if (mayores.length) bloques.push({ titulo: "RESERVA - MAYORES A 30", data: mayores });
+  for (let i = 1; i <= 12; i += 1) {
+    const pasillo = String(i).padStart(2, "0");
+    const filas = reserva.filter(r => !r.mayor30 && r.pasillo === pasillo);
+    if (filas.length) bloques.push({ titulo: `RESERVA - PASILLO ${pasillo}`, data: filas });
+  }
+  const sinPasillo = reserva.filter(r => !r.mayor30 && !r.pasillo);
+  if (sinPasillo.length) bloques.push({ titulo: "RESERVA - SIN PASILLO", data: sinPasillo });
+  const otras = data.filter(r => r.origen === "OTRAS");
+  if (otras.length) bloques.push({ titulo: "OTRAS UBICACIONES", data: otras });
+  const sinStock = data.filter(r => r.origen === "SIN_STOCK");
+  if (sinStock.length) bloques.push({ titulo: "SIN STOCK EN PLUS", data: sinStock });
+  return bloques;
+}
+
+function tablaBloqueValidacionAvance(titulo, data) {
+  const totalPedido = data.reduce((a, b) => a + b.pedido, 0);
+  const totalPlus = data.reduce((a, b) => a + b.codPlus, 0);
+  return `
+    <section class="tabla-bloque">
+      <div class="subsection-head">
+        <h3>${htmlSeguro(titulo)}</h3>
+        <span>${formatoDecimal(data.length)} filas | ${formatoDecimal(totalPedido)} pedido | ${formatoDecimal(totalPlus)} plus</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>LPN origen</th>
+              <th>Ubicacion origen</th>
+              <th>Codigo</th>
+              <th>Descripcion</th>
+              <th>Pedido no asignado</th>
+              <th>Bultos CodPlus</th>
+              <th>Diferencia</th>
+              <th>Estado</th>
+              <th>LPNs CodPlus</th>
+              <th>Ver</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.map(r => `
+              <tr class="${r.clase}">
+                <td><strong>${htmlSeguro(r.lpnOrigen || "-")}</strong></td>
+                <td>${htmlSeguro(r.ubicacionOrigen || "-")}</td>
+                <td><strong>${htmlSeguro(r.codigo)}</strong></td>
+                <td>${htmlSeguro(r.desc)}</td>
+                <td class="number">${formatoDecimal(r.pedido)}</td>
+                <td class="number">${formatoDecimal(r.codPlus)}</td>
+                <td class="number"><strong>${formatoDecimal(r.diferencia)}</strong></td>
+                <td><strong>${htmlSeguro(r.estado)}</strong></td>
+                <td>${formatoDecimal(r.lpnsCodPlus.length)}</td>
+                <td><button class="compact" onclick="verDetalleValidacionAvance(${argumentoSeguro(r.origen)}, ${argumentoSeguro(r.codigo)}, ${argumentoSeguro(r.lpnOrigen)}, ${argumentoSeguro(r.ubicacionOrigen)})">Ver</button></td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function verDetalleValidacionAvance(origen, codigo, lpnOrigen = "", ubicacionOrigen = "") {
+  const item = datosValidacionAvanceFiltrados().find(r =>
+    r.origen === origen &&
+    r.codigo === codigo &&
+    limpiarCodigo(r.lpnOrigen) === limpiarCodigo(lpnOrigen) &&
+    limpiarCodigo(r.ubicacionOrigen) === limpiarCodigo(ubicacionOrigen)
+  );
+  if (!item) return;
+
+  document.getElementById("modal").innerHTML = `
+    <div class="modal-backdrop">
+      <div class="modal-card wide">
+        <div class="section-head">
+          <div>
+            <h2>${htmlSeguro(item.codigo)} | ${htmlSeguro(item.desc)}</h2>
+            <p>${htmlSeguro(item.origen)} | LPN ${htmlSeguro(item.lpnOrigen || "-")} | Ubicacion ${htmlSeguro(item.ubicacionOrigen || "-")} | Pedido ${formatoDecimal(item.pedido)} | CodPlus ${formatoDecimal(item.codPlus)}</p>
+          </div>
+          <button onclick="cerrarModal()">Cerrar</button>
+        </div>
+        ${tablaSimple(["LPN", "Ubicacion", "Estado", "Bultos", "UnAct"], item.lpnsCodPlus.map(r => `
+          <tr>
+            <td><strong>${htmlSeguro(r.lpn)}</strong></td>
+            <td>${htmlSeguro(r.ubicacion)}</td>
+            <td>${htmlSeguro(r.estado)}</td>
+            <td class="number">${formatoDecimal(r.bultos)}</td>
+            <td class="number">${formatoDecimal(r.unidades)}</td>
+          </tr>
+        `), "Sin LPNs en DROP-COD-PLUS-ALM.")}
+      </div>
+    </div>
+  `;
+}
+
+function descargarExcelValidacionAvance() {
+  const data = datosValidacionAvanceFiltrados();
+  if (!data.length) {
+    alert("No hay datos para exportar");
+    return;
+  }
+
+  let html = "<table border='1'>";
+  html += "<tr><th>ORIGEN</th><th>GRUPO</th><th>PASILLO</th><th>LPN_ORIGEN</th><th>UBICACION_ORIGEN</th><th>CODIGO</th><th>DESCRIPCION</th><th>PEDIDO_NO_ASIGNADO</th><th>BULTOS_CODPLUS</th><th>DIFERENCIA</th><th>ESTADO</th><th>LPNS_CODPLUS</th></tr>";
+  html += data.map(r => {
+    const grupo = r.origen === "RESERVA" ? (r.mayor30 ? "MAYOR A 30" : "PASILLO") : r.origen === "SIN_STOCK" ? "SIN STOCK" : "OTRAS";
+    return `<tr><td>${htmlSeguro(r.origen)}</td><td>${htmlSeguro(grupo)}</td><td>${htmlSeguro(r.pasillo || "-")}</td>${celdaExcelTexto(r.lpnOrigen || "")}<td>${htmlSeguro(r.ubicacionOrigen || "")}</td>${celdaExcelTexto(r.codigo)}<td>${htmlSeguro(r.desc)}</td><td>${formatoDecimal(r.pedido)}</td><td>${formatoDecimal(r.codPlus)}</td><td>${formatoDecimal(r.diferencia)}</td><td>${htmlSeguro(r.estado)}</td><td>${formatoDecimal(r.lpnsCodPlus.length)}</td></tr>`;
+  }).join("");
+  html += "</table>";
+
+  const blob = new Blob([prepararHtmlExcel(html)], { type: "application/vnd.ms-excel" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `validacion_avance_${filtroValidacionAvance}.xls`;
   a.click();
 }
 
