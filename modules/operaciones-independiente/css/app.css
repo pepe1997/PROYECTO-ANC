@@ -250,6 +250,26 @@ body {
   width: min(1280px, 98vw);
 }
 
+.modal-card.wide {
+  width: min(1320px, 98vw);
+}
+
+.filters.grow {
+  flex: 1 1 520px;
+}
+
+.filters.grow .search {
+  flex: 1 1 360px;
+}
+
+.control-piso-search .notice {
+  margin-top: 12px;
+}
+
+.nested-card {
+  box-shadow: none;
+}
+
 .split-view {
   display: grid;
   grid-template-columns: minmax(360px, .9fr) minmax(420px, 1.1fr);
@@ -588,6 +608,112 @@ button.soft {
   margin-bottom: 16px;
 }
 
+.capacity-kpis .kpi {
+  border-left: 5px solid var(--accent);
+}
+
+.capacity-dashboard {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.capacity-card {
+  min-height: 420px;
+}
+
+.capacity-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.capacity-head h3 {
+  margin: 0;
+  color: #3619a6;
+  text-transform: uppercase;
+}
+
+.capacity-head strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 46px;
+  line-height: 1;
+}
+
+.capacity-head span {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.capacity-ring {
+  width: 118px;
+  height: 118px;
+  flex: 0 0 118px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: conic-gradient(var(--success) calc(var(--p) * 1%), #e3e8ee 0);
+}
+
+.capacity-ring b {
+  width: 76px;
+  height: 76px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: white;
+  color: var(--text);
+  font-size: 22px;
+}
+
+.capacity-bars {
+  display: grid;
+  gap: 10px;
+}
+
+.capacity-aisle {
+  display: grid;
+  grid-template-columns: 86px minmax(160px, 1fr) 72px 150px;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--soft);
+}
+
+.capacity-aisle span,
+.capacity-aisle small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.capacity-aisle strong {
+  text-align: right;
+  font-size: 18px;
+}
+
+.capacity-track {
+  height: 18px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e3e8ee;
+}
+
+.capacity-track div {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--success), var(--accent));
+}
+
 .bar-row {
   display: grid;
   grid-template-columns: 180px 1fr 70px;
@@ -819,6 +945,7 @@ select {
 
 @media (max-width: 900px) {
   .dashboard-layout,
+  .capacity-dashboard,
   .alert-list,
   .split-view,
   .signal-grid.executive {
@@ -826,7 +953,8 @@ select {
   }
 
   .bar-row,
-  .aisle-row {
+  .aisle-row,
+  .capacity-aisle {
     grid-template-columns: 1fr;
   }
 
