@@ -4,6 +4,9 @@ let detalleOptimizacionReserva = new Map();
 let detalleReservaActivo = new Map();
 let detalleLpnsSinActivo = new Map();
 let detalleControlPiso = new Map();
+let prediccionPtsVista = { total: { ubicaciones: 0, bultos: 0, tareas: new Set(), lpns: new Set() }, resumen: [], ubicaciones: [] };
+let pasilloPrediccionPtsActivo = "";
+let recepcionUcaVista = { resumen: [], proveedores: [], proveedoresAsn: [], paleteros: [], paleterosAsn: [], total: {}, detalleAsnPasillo: [] };
 let cacheLpnsUbicacion = { key: "", control: [], activo: new Map(), reserva: new Map() };
 let cacheProductosPorCodigo = { key: "", mapa: new Map() };
 let timerRenderLpnsUbicacion = null;
@@ -172,17 +175,100 @@ function ubicacionMassValidaCapacidad(ubicacion) {
   return ubi.toUpperCase().startsWith("MASS-") && esPasilloCapacidadValido(pasillo);
 }
 
-function ubicacionesMaestroCapacidad() {
+function tipoCapacidadUbicacion(row) {
+  const tipo = normalizar(campo(row, ["TIPO", "Tipo", "tipo"]));
+  if (tipo.includes("ACTIVO")) return "ACTIVO";
+  if (tipo.includes("RESERVA")) return "RESERVA";
+  return "";
+}
+
+function tipoSeteoUbicacion(row) {
+  const tipo = normalizar(campo(row, [
+    "TIPO_UBICACION",
+    "TIPO UBICACION",
+    "TIPOUBICACION",
+    "Tipo ubicacion",
+    "Tipo Ubicacion"
+  ]));
+  if (tipo.includes("DIN")) return "DINAMICA";
+  if (tipo.includes("PER")) return "PERMANENTE";
+  return tipoUbicacion(row);
+}
+
+function parseUbicacionMassCapacidad(ubicacion) {
+  const partes = limpiar(ubicacion).toUpperCase().split("-");
+  if (partes.length < 5 || partes[0] !== "MASS") return null;
+  return {
+    pasillo: limpiar(partes[1]).padStart(2, "0"),
+    bahia: Number(partes[2]),
+    nivel: Number(partes[3]),
+    columna: Number(partes[4])
+  };
+}
+
+function enRangoCapacidad(valor, inicio, fin) {
+  return valor >= inicio && valor <= fin;
+}
+
+function esUbicacionReservaOcupadaPorRegla(ubicacion) {
+  const pos = parseUbicacionMassCapacidad(ubicacion);
+  if (!pos || !esPasilloCapacidadValido(pos.pasillo)) return false;
+  const { pasillo, bahia, nivel, columna } = pos;
+  const colValida = columna === 1 || columna === 2;
+
+  if (pasillo === "03") {
+    return (bahia === 6 && enRangoCapacidad(nivel, 1, 5) && columna === 2) ||
+      (bahia === 14 && enRangoCapacidad(nivel, 1, 5) && columna === 2) ||
+      ([12, 20, 28, 34].includes(bahia) && enRangoCapacidad(nivel, 1, 5) && columna === 1);
+  }
+  if (pasillo === "04") {
+    return bahia === 7 && enRangoCapacidad(nivel, 2, 5) && colValida;
+  }
+  if (pasillo === "07") {
+    return [5, 7].includes(bahia) && enRangoCapacidad(nivel, 1, 4) && colValida;
+  }
+  if (pasillo === "09") {
+    return true;
+  }
+  if (pasillo === "11") {
+    return (bahia >= 1 && bahia <= 33 && bahia % 2 === 1 && nivel === 7 && colValida) ||
+      (bahia >= 22 && bahia <= 34 && bahia % 2 === 0 && nivel === 4 && colValida);
+  }
+  if (pasillo === "12") {
+    return bahia >= 20 && bahia <= 34 && bahia % 2 === 0 && enRangoCapacidad(nivel, 2, 4) && colValida;
+  }
+  return false;
+}
+
+function ocupacionManualReservaCapacidad(base) {
+  if (!esUbicacionReservaOcupadaPorRegla(base.ubicacion)) return null;
+  return {
+    ubicacion: base.ubicacion,
+    pasillo: base.pasillo,
+    estado: "OCUPADA MANUAL",
+    origen: "REGLA OPERATIVA",
+    lpns: new Set(),
+    productos: new Set(),
+    bultos: 0,
+    unidades: 0,
+    detalle: []
+  };
+}
+
+function ubicacionesMaestroCapacidad(tipo = "") {
   const mapa = new Map();
   dataUbicaciones.forEach(row => {
     const ubicacion = limpiar(campo(row, ["MASCARA", "UBICACION", "Ubicacion"]));
     if (!ubicacionMassValidaCapacidad(ubicacion)) return;
+    const tipoCapacidad = tipoCapacidadUbicacion(row);
+    if (tipo && tipoCapacidad && tipoCapacidad !== tipo) return;
     const key = normalizar(ubicacion);
     if (!mapa.has(key)) {
       mapa.set(key, {
         ubicacion,
         pasillo: pasilloMass(ubicacion),
         tipo: tipoUbicacion(row),
+        tipoCapacidad: tipoCapacidad || tipo || "SIN TIPO",
         origen: "MAESTRO",
         productoSeteado: normalizar(campo(row, ["PRODUCTO", "Codigo", "CODIGO"])),
         descripcionSeteada: limpiar(campo(row, ["DESCRIPCION", "Descripcion"]))
@@ -311,7 +397,8 @@ function aplicarSeteosPendientesActivoCapacidad(ocupadasMap) {
   const pendientes = stockPendienteActivoPorProductoCapacidad();
   dataUbicaciones.forEach(row => {
     const ubicacion = limpiar(campo(row, ["MASCARA", "UBICACION", "Ubicacion"]));
-    if (!ubicacionMassValidaCapacidad(ubicacion) || tipoUbicacion(row) !== "PERMANENTE") return;
+    const tipoCapacidad = tipoCapacidadUbicacion(row);
+    if (!ubicacionMassValidaCapacidad(ubicacion) || (tipoCapacidad && tipoCapacidad !== "ACTIVO") || tipoSeteoUbicacion(row) !== "PERMANENTE") return;
     const codigo = normalizar(campo(row, ["PRODUCTO", "Codigo", "CODIGO"]));
     if (!codigo || codigo === "-----------") return;
     const pendiente = pendientes.get(codigo);
@@ -337,7 +424,7 @@ function aplicarSeteosPendientesActivoCapacidad(ocupadasMap) {
 }
 
 function construirCapacidadPorTipo(tipo, ocupadasMap) {
-  const universo = ubicacionesMaestroCapacidad();
+  const universo = ubicacionesMaestroCapacidad(tipo);
   if (tipo === "ACTIVO") aplicarSeteosPendientesActivoCapacidad(ocupadasMap);
   ocupadasMap.forEach(item => {
     const key = normalizar(item.ubicacion);
@@ -346,6 +433,7 @@ function construirCapacidadPorTipo(tipo, ocupadasMap) {
         ubicacion: item.ubicacion,
         pasillo: item.pasillo,
         tipo: "SIN MAESTRO",
+        tipoCapacidad: tipo,
         origen: "STOCK"
       });
     }
@@ -359,7 +447,7 @@ function construirCapacidadPorTipo(tipo, ocupadasMap) {
   Array.from(universo.values())
     .sort((a, b) => ordenarUbicacion(a.ubicacion, b.ubicacion))
     .forEach(base => {
-      const ocupado = ocupadasMap.get(normalizar(base.ubicacion));
+      const ocupado = ocupadasMap.get(normalizar(base.ubicacion)) || (tipo === "RESERVA" ? ocupacionManualReservaCapacidad(base) : null);
       const item = resumen.get(base.pasillo);
       if (!item) return;
       item.total += 1;
@@ -370,8 +458,9 @@ function construirCapacidadPorTipo(tipo, ocupadasMap) {
         tipo,
         pasillo: base.pasillo,
         ubicacion: base.ubicacion,
-        estado: ocupado ? "OCUPADA" : "LIBRE",
+        estado: ocupado ? (ocupado.estado || "OCUPADA") : "LIBRE",
         tipoUbicacion: base.tipo,
+        origenMaestro: base.origen,
         origen: ocupado?.origen || base.origen,
         lpns: ocupado?.lpns?.size || 0,
         productos: ocupado?.productos?.size || 0,
@@ -400,12 +489,114 @@ function calcularCapacidadCd() {
   };
 }
 
+function pertenecePtsAsignacion(row) {
+  const texto = [
+    campo(row, ["ASIGNACION", "ASIGNACION_TAREA"]),
+    campo(row, ["TIPO_ASIGANCION", "TIPO ASIGNACION", "Tipo Asignac", "TIPO", "TIPO_TAREA", "MODULO"]),
+    campo(row, ["ESTADO TAREA", "ESTADO_TAREA", "Estado Tarea2", "STATUS", "ESTADO", "Estado"]),
+    campo(row, ["NRO_TAREA", "Nro Tarea", "TAREA"]),
+    campo(row, ["DESCRIPCION", "DESC", "PRODUCTO_DESC"])
+  ].join(" ");
+  return normalizar(texto).includes("PTS");
+}
+
+function estadoPtsAsignacion(row) {
+  const tarea = limpiar(campo(row, ["NRO_TAREA", "Nro Tarea", "TAREA"]));
+  const lpnEntrada = limpiar(campo(row, ["Nbr LPN Entrada", "LPN_ENTRADA", "LPN", "LPN_ID"]));
+  const ubicLpn = limpiar(campo(row, ["ubic LPN", "UBIC LPN", "UBIC_LPN", "UBICACION_LPN", "DESDE_UBICACION", "Desde Ubicacion", "Desde Ubicación"]));
+  const ubicPallet = limpiar(campo(row, ["Ubic Pallet", "UBIC PALLET", "UBIC_PALLET", "UBICACION PALLET", "UBICACION_PALLET"]));
+  const estadoFuente = normalizar(campo(row, ["ESTADO TAREA", "ESTADO_TAREA", "Estado Tarea2", "STATUS", "ESTADO", "Estado"]));
+
+  if (normalizar(ubicPallet) === "DROPPICKINGMASS962") return "Terminado / Distribucion";
+  if (tarea && lpnEntrada && normalizar(ubicLpn).startsWith("MASS")) return "Listo";
+  if (estadoFuente === "LISTO") return "Listo";
+  if (estadoFuente.includes("PROCES")) return "Proceso iniciado";
+  if (estadoFuente.includes("TERMIN") || estadoFuente === "DISTRIBUCION") return "Terminado / Distribucion";
+  return campo(row, ["ESTADO TAREA", "ESTADO_TAREA", "Estado Tarea2", "STATUS", "ESTADO", "Estado"]) || "SIN ESTADO";
+}
+
+function ubicacionPtsAsignacion(row) {
+  return limpiar(campo(row, [
+    "ubic LPN",
+    "UBIC LPN",
+    "UBIC_LPN",
+    "UBICACION_LPN",
+    "DESDE_UBICACION",
+    "Desde Ubicacion",
+    "Desde Ubicación",
+    "UBICACION",
+    "UBICACION_ORIGEN",
+    "UBI"
+  ]));
+}
+
+function prediccionLiberacionPts() {
+  const mapa = new Map();
+  (dataAsignacionTareas || []).forEach(row => {
+    if (!pertenecePtsAsignacion(row) || estadoPtsAsignacion(row) !== "Listo") return;
+    const ubicacion = ubicacionPtsAsignacion(row);
+    if (!ubicacionMassValidaCapacidad(ubicacion)) return;
+    const pasillo = pasilloMass(ubicacion);
+    const key = normalizar(ubicacion);
+    const tarea = limpiar(campo(row, ["NRO_TAREA", "Nro Tarea", "TAREA"]));
+    const lpn = limpiar(campo(row, ["Nbr LPN Entrada", "LPN_ENTRADA", "LPN", "LPN_ID"]));
+    const codigo = normalizar(campo(row, ["CODIGO", "PRODUCTO", "SKU", "COD_PRODUCTO"]));
+    const descripcion = limpiar(campo(row, ["DESCRIPCION", "DESC", "PRODUCTO_DESC"]));
+    const bultos = num(campo(row, ["BULTOS", "QtyAsgn Cases", "BULTOS_PEDIDO", "CASES", "CS"]));
+
+    if (!mapa.has(key)) {
+      mapa.set(key, {
+        pasillo,
+        ubicacion,
+        tareas: new Set(),
+        lpns: new Set(),
+        productos: new Set(),
+        bultos: 0,
+        detalle: []
+      });
+    }
+    const item = mapa.get(key);
+    if (tarea) item.tareas.add(tarea);
+    if (lpn) item.lpns.add(lpn);
+    if (codigo) item.productos.add(codigo);
+    item.bultos += bultos;
+    item.detalle.push({ pasillo, ubicacion, tarea, lpn, codigo, descripcion, bultos });
+  });
+
+  const ubicaciones = Array.from(mapa.values()).sort((a, b) => ordenarUbicacion(a.ubicacion, b.ubicacion));
+  const porPasillo = new Map();
+  ["01", "02", "03", "04", "05", "06", "07", "08", "09", "11", "12"].forEach(pasillo => {
+    porPasillo.set(pasillo, { pasillo, ubicaciones: 0, tareas: new Set(), lpns: new Set(), bultos: 0 });
+  });
+  ubicaciones.forEach(row => {
+    const item = porPasillo.get(row.pasillo);
+    if (!item) return;
+    item.ubicaciones += 1;
+    row.tareas.forEach(x => item.tareas.add(x));
+    row.lpns.forEach(x => item.lpns.add(x));
+    item.bultos += row.bultos;
+  });
+
+  const resumen = Array.from(porPasillo.values());
+  const total = resumen.reduce((acc, row) => {
+    acc.ubicaciones += row.ubicaciones;
+    acc.bultos += row.bultos;
+    row.tareas.forEach(x => acc.tareas.add(x));
+    row.lpns.forEach(x => acc.lpns.add(x));
+    return acc;
+  }, { ubicaciones: 0, bultos: 0, tareas: new Set(), lpns: new Set() });
+
+  return { total, resumen, ubicaciones };
+}
+
 function verCapacidadCd() {
   const data = calcularCapacidadCd();
+  const prediccionPts = prediccionLiberacionPts();
   document.getElementById("modulo").innerHTML = `
     <div class="section-head">
       <div>
-        <h2>UK / Capacidad CD</h2>
+        <h2>UCA</h2>
+        <p class="muted-note">Utilizacion de la Capacidad de Almacenamiento: ubicaciones ocupadas frente al total disponible del CD.</p>
       </div>
       <div class="filters">
         <button onclick="exportarCapacidadCd('reserva')">Excel reserva</button>
@@ -426,6 +617,8 @@ function verCapacidadCd() {
       ${graficoCapacidad("Reserva", data.reserva)}
       ${graficoCapacidad("Activo", data.activo)}
     </section>
+
+    ${bloquePrediccionPts(prediccionPts)}
 
     <section class="dashboard-layout">
       <div class="card">
@@ -463,6 +656,23 @@ function verCapacidadCd() {
   `;
 }
 
+function verRecepcionProyectada() {
+  const capacidad = calcularCapacidadCd();
+  const prediccionPts = prediccionLiberacionPts();
+  const recepcion = calcularRecepcionUca(capacidad, prediccionPts);
+  document.getElementById("modulo").innerHTML = `
+    <div class="section-head">
+      <div>
+        <h2>Recepcion</h2>
+        <p class="muted-note">Proyeccion de pallets por recibir contra capacidad de reserva y liberacion PTS del dia.</p>
+      </div>
+      <button type="button" onclick="exportarRecepcionUca()">Excel recepcion</button>
+    </div>
+
+    ${bloqueRecepcionUca(recepcion, false)}
+  `;
+}
+
 function graficoCapacidad(titulo, data) {
   return `
     <article class="card capacity-card">
@@ -476,23 +686,1120 @@ function graficoCapacidad(titulo, data) {
           <b>${data.total.pct.toFixed(0)}%</b>
         </div>
       </div>
+      <div class="capacity-mini-kpis">
+        <div>
+          <span>Total</span>
+          <strong>${fmt(data.total.total)}</strong>
+        </div>
+        <div>
+          <span>Ocupadas</span>
+          <strong>${fmt(data.total.ocupadas)}</strong>
+        </div>
+        <div>
+          <span>Libres</span>
+          <strong>${fmt(data.total.libres)}</strong>
+        </div>
+      </div>
       <div class="capacity-bars">
         ${data.resumen.map(row => {
-          const ancho = Math.max(0, Math.min(100, row.pct));
+          const ocupado = Math.max(0, Math.min(100, row.pct));
+          const libre = Math.max(0, 100 - ocupado);
           return `
             <div class="capacity-aisle">
-              <span>Pasillo ${htmlSeguro(row.pasillo)}</span>
-              <div class="capacity-track">
-                <div style="width:${ancho}%"></div>
+              <div class="capacity-aisle-title">
+                <span>Pasillo ${htmlSeguro(row.pasillo)}</span>
+                <strong>${row.pct.toFixed(1)}%</strong>
               </div>
-              <strong>${row.pct.toFixed(1)}%</strong>
-              <small>${fmt(row.ocupadas)} ocup. | ${fmt(row.libres)} lib.</small>
+              <div class="capacity-stack" title="${row.pct.toFixed(1)}% ocupado">
+                <i class="occupied" style="width:${ocupado}%"></i>
+                <i class="free" style="width:${libre}%"></i>
+              </div>
+              <div class="capacity-aisle-values">
+                <b>${fmt(row.ocupadas)}</b><small>ocupadas</small>
+                <b>${fmt(row.libres)}</b><small>libres</small>
+              </div>
             </div>
           `;
         }).join("")}
       </div>
     </article>
   `;
+}
+
+function bloquePrediccionPts(data) {
+  prediccionPtsVista = data;
+  pasilloPrediccionPtsActivo = "";
+  const maxUbicaciones = Math.max(1, ...data.resumen.map(row => row.ubicaciones));
+  return `
+    <section class="card pts-release-card">
+      <div class="section-head">
+        <div>
+          <h2>Prediccion de liberacion PTS</h2>
+          <p class="muted-note">Tareas PTS en estado Listo ubicadas en reserva. Son posiciones que deberian liberarse durante el dia al trabajar pallets completos.</p>
+        </div>
+      </div>
+      <div class="capacity-mini-kpis pts-release-kpis">
+        <div>
+          <span>Ubicaciones por liberar</span>
+          <strong>${fmt(data.total.ubicaciones)}</strong>
+        </div>
+        <div>
+          <span>Tareas PTS listas</span>
+          <strong>${fmt(data.total.tareas.size)}</strong>
+        </div>
+        <div>
+          <span>Bultos comprometidos</span>
+          <strong>${fmt(data.total.bultos)}</strong>
+        </div>
+        <div>
+          <span>LPNs entrada</span>
+          <strong>${fmt(data.total.lpns.size)}</strong>
+        </div>
+      </div>
+      <div class="pts-release-grid">
+        <div class="pts-release-bars">
+          ${data.resumen.map(row => {
+            const ancho = Math.max(0, Math.min(100, (row.ubicaciones / maxUbicaciones) * 100));
+            return `
+              <button class="pts-release-row" type="button" data-pasillo="${atributoSeguro(row.pasillo)}" onclick="filtrarPrediccionPts('${atributoSeguro(row.pasillo)}')">
+                <span>Pasillo ${htmlSeguro(row.pasillo)}</span>
+                <div class="pts-release-track"><i style="width:${ancho}%"></i></div>
+                <strong>${fmt(row.ubicaciones)}</strong>
+                <small>${fmt(row.bultos)} bultos</small>
+              </button>
+            `;
+          }).join("")}
+        </div>
+        <div class="pts-release-detail-card">
+          <div class="section-head compact-head">
+            <h3 id="tituloPrediccionPts">Detalle todos los pasillos</h3>
+            <button type="button" onclick="filtrarPrediccionPts('')">Ver todos</button>
+          </div>
+          <div id="detallePrediccionPts">
+            ${tablaPrediccionPts(data.ubicaciones)}
+          </div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function tablaPrediccionPts(rows) {
+  return tabla(["Pasillo", "Ubicacion", "Tareas", "LPNs", "Productos", "Bultos"], rows.map(row => `
+    <tr>
+      <td><strong>${htmlSeguro(row.pasillo)}</strong></td>
+      <td>${htmlSeguro(row.ubicacion)}</td>
+      <td class="number">${fmt(row.tareas.size)}</td>
+      <td class="number">${fmt(row.lpns.size)}</td>
+      <td class="number">${fmt(row.productos.size)}</td>
+      <td class="number"><strong>${fmt(row.bultos)}</strong></td>
+    </tr>
+  `), "Sin tareas PTS listas en reserva");
+}
+
+function filtrarPrediccionPts(pasillo) {
+  pasilloPrediccionPtsActivo = limpiar(pasillo);
+  const rows = pasilloPrediccionPtsActivo
+    ? prediccionPtsVista.ubicaciones.filter(row => row.pasillo === pasilloPrediccionPtsActivo)
+    : prediccionPtsVista.ubicaciones;
+  const titulo = document.getElementById("tituloPrediccionPts");
+  const detalle = document.getElementById("detallePrediccionPts");
+  if (titulo) titulo.textContent = pasilloPrediccionPtsActivo ? `Detalle Pasillo ${pasilloPrediccionPtsActivo}` : "Detalle todos los pasillos";
+  if (detalle) detalle.innerHTML = tablaPrediccionPts(rows);
+  document.querySelectorAll(".pts-release-row").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.pasillo === pasilloPrediccionPtsActivo);
+  });
+}
+
+function canonColumnaRecepcion(valor) {
+  return limpiar(valor)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Z0-9]/gi, "")
+    .toUpperCase();
+}
+
+function campoRecepcion(row, nombres) {
+  const directo = campo(row, nombres);
+  if (directo !== "") return directo;
+  const objetivos = new Set(nombres.map(canonColumnaRecepcion));
+  const key = Object.keys(row || {}).find(k => objetivos.has(canonColumnaRecepcion(k)));
+  return key ? row[key] : "";
+}
+
+function codigoRecepcion(row) {
+  return normalizar(campoRecepcion(row, ["Codigo", "CODIGO", "Producto", "PRODUCTO"]));
+}
+
+function codigoAltRecepcion(row) {
+  return normalizar(campoRecepcion(row, ["Codigo Alternativo", "CODIGO ALTERNATIVO", "CODIGO_ALT", "Cod Alternat", "Artic Padre"]));
+}
+
+function descripcionRecepcion(row) {
+  return limpiar(campoRecepcion(row, ["Descrip Artic", "Descrip Artíc", "Descrip ArtÃ­c", "Descripcion", "DESCRIPCION", "Descripcion Producto"]));
+}
+
+function bultosRecepcion(row) {
+  const bultos = num(campoRecepcion(row, ["BULTOS", "Bultos", "Cases", "CS"]));
+  if (bultos > 0) return bultos;
+  const unidades = [
+    campoRecepcion(row, ["Un Rcb", "UN RCB"]),
+    campoRecepcion(row, ["Un Env", "UN ENV"]),
+    campoRecepcion(row, ["UnPreRcb", "UN PRERCB", "Un CodHijo PreRcb"])
+  ].map(num).find(v => v > 0) || 0;
+  const std = num(campoRecepcion(row, ["Std Case Qty", "STD CASE QTY", "STD_CASE_QTY"]));
+  return std > 0 ? unidades / std : unidades;
+}
+
+function numRecepcion(valor) {
+  const texto = limpiar(valor).replace(/\s/g, "");
+  if (!texto) return 0;
+  if (/^-?\d{1,3}([.,]\d{3})+$/.test(texto)) return Number(texto.replace(/[.,]/g, ""));
+  if (/^-?\d{1,3}([.,]\d{3})+[.,]\d+$/.test(texto)) {
+    const decimal = texto.match(/[.,](\d+)$/);
+    if (decimal && decimal[1].length !== 3) {
+      return Number(texto.slice(0, -decimal[0].length).replace(/[.,]/g, "") + "." + decimal[1]);
+    }
+    return Number(texto.replace(/[.,]/g, ""));
+  }
+  const normal = Number(texto.replace(",", "."));
+  return Number.isFinite(normal) ? normal : 0;
+}
+
+function bultosProveedorRecepcion(row) {
+  const unidades = numRecepcion(campoRecepcion(row, ["Un Env", "UN ENV"]));
+  const caseQty = numRecepcion(campoRecepcion(row, ["Std Case Qty", "STD CASE QTY", "STD_CASE_QTY", "Case Qty", "CASE QTY"]));
+  return caseQty > 0 ? unidades / caseQty : unidades;
+}
+
+function claveProductoRecepcion(codigo, alternativo) {
+  return normalizar(codigo) || normalizar(alternativo);
+}
+
+function productoContextoRecepcion() {
+  const porCodigo = new Map();
+  const porAlt = new Map();
+  dataProductos.forEach(row => {
+    const codigo = normalizar(campoRecepcion(row, ["CODIGO", "Codigo", "PRODUCTO"]));
+    const alt = normalizar(campoRecepcion(row, ["CODIGO_ALT", "COD_ALT", "CODIGO ALTERNATIVO", "Codigo Alternativo", "Cod Alternat"]));
+    if (codigo && !porCodigo.has(codigo)) porCodigo.set(codigo, row);
+    if (alt && !porAlt.has(alt)) porAlt.set(alt, row);
+  });
+  return { porCodigo, porAlt };
+}
+
+function productoRecepcion(ctx, codigo, alternativo) {
+  return ctx.productos.porCodigo.get(normalizar(codigo)) || ctx.productos.porAlt.get(normalizar(alternativo));
+}
+
+function jerarquiaRecepcion(ctx, codigo, alternativo, row = {}) {
+  const producto = productoRecepcion(ctx, codigo, alternativo) || {};
+  return limpiar(campoRecepcion(producto, [
+    "JERARQUIA 2",
+    "JERARQUIA2",
+    "JERARQ2",
+    "Jerarq2",
+    "Jerarquia 2",
+    "JERARQUIA"
+  ]) || campoRecepcion(row, ["JERARQUIA 2", "JERARQUIA2", "JERARQ2", "Jerarq2", "Jerarquia 2", "JERARQUIA"]));
+}
+
+function sumarNestedMapa(mapa, clave, subclave, valor) {
+  if (!clave || !subclave || !valor) return;
+  if (!mapa.has(clave)) mapa.set(clave, new Map());
+  const inner = mapa.get(clave);
+  inner.set(subclave, (inner.get(subclave) || 0) + valor);
+}
+
+function ganadorMapa(mapa) {
+  let mejor = "";
+  let mayor = -1;
+  (mapa || new Map()).forEach((valor, clave) => {
+    if (valor > mayor) {
+      mayor = valor;
+      mejor = clave;
+    }
+  });
+  return mejor;
+}
+
+function construirContextoRecepcionUca() {
+  const productos = productoContextoRecepcion();
+  const porProductoPasillo = new Map();
+  const porJerarquiaPasillo = new Map();
+  const palletsPorProducto = new Map();
+
+  lpnsOperativos().forEach(row => {
+    const ubicacion = limpiar(row.UBICACION);
+    if (!ubicacionMassValidaCapacidad(ubicacion)) return;
+    const codigo = normalizar(row.CODIGO);
+    const alternativo = normalizar(row.CODIGO_ALT);
+    const keyProducto = claveProductoRecepcion(codigo, alternativo);
+    const bultos = num(row.BULTOS);
+    if (!keyProducto || bultos <= 0) return;
+    const pasillo = pasilloMass(ubicacion);
+    sumarNestedMapa(porProductoPasillo, keyProducto, pasillo, bultos);
+
+    const jerarquia = jerarquiaRecepcion({ productos }, codigo, alternativo, row);
+    if (jerarquia) sumarNestedMapa(porJerarquiaPasillo, normalizar(jerarquia), pasillo, bultos);
+
+    const lpn = limpiar(row.LPN);
+    const clavePallet = `${keyProducto}|${lpn || ubicacion}`;
+    if (!palletsPorProducto.has(clavePallet)) {
+      palletsPorProducto.set(clavePallet, { keyProducto, bultos: 0 });
+    }
+    palletsPorProducto.get(clavePallet).bultos += bultos;
+  });
+
+  const repeticionesPallet = new Map();
+  palletsPorProducto.forEach(item => {
+    const cantidad = Math.round(item.bultos * 100) / 100;
+    if (cantidad <= 15) return;
+    sumarNestedMapa(repeticionesPallet, item.keyProducto, String(cantidad), 1);
+  });
+
+  const maxPalletPorProducto = new Map();
+  repeticionesPallet.forEach((cantidades, keyProducto) => {
+    let mejor = 0;
+    cantidades.forEach((repeticiones, cantidadTexto) => {
+      const cantidad = num(cantidadTexto);
+      if (repeticiones > 1 && cantidad > mejor) mejor = cantidad;
+    });
+    if (mejor > 0) maxPalletPorProducto.set(keyProducto, mejor);
+  });
+
+  return { productos, porProductoPasillo, porJerarquiaPasillo, maxPalletPorProducto };
+}
+
+function resolverPasilloRecepcion(ctx, codigo, alternativo, row = {}) {
+  const keyProducto = claveProductoRecepcion(codigo, alternativo);
+  const porProducto = ganadorMapa(ctx.porProductoPasillo.get(keyProducto));
+  if (porProducto) return { pasillo: porProducto, metodo: "HISTORICO PRODUCTO" };
+
+  const jerarquia = jerarquiaRecepcion(ctx, codigo, alternativo, row);
+  const porJerarquia = ganadorMapa(ctx.porJerarquiaPasillo.get(normalizar(jerarquia)));
+  if (porJerarquia) return { pasillo: porJerarquia, metodo: `JERARQUIA ${jerarquia}` };
+
+  return { pasillo: "SIN CLASIFICAR", metodo: jerarquia ? `VALIDAR ${jerarquia}` : "SIN HISTORICO" };
+}
+
+function detalleProductoRecepcion(ctx, row) {
+  const codigo = codigoRecepcion(row);
+  const alternativo = codigoAltRecepcion(row);
+  const producto = productoRecepcion(ctx, codigo, alternativo) || {};
+  return {
+    codigo,
+    alternativo,
+    descripcion: descripcionRecepcion(row) || limpiar(campoRecepcion(producto, ["DESCRIPCION", "Descripcion", "Descrip Artic"]))
+  };
+}
+
+function recepcionPendienteAlmacenaje(row) {
+  const estado = normalizar(campoRecepcion(row, ["Estado de LPN", "Estado LPN", "ESTADO", "Estado"]));
+  const ubicacion = limpiar(campoRecepcion(row, ["Ubicacion", "UBICACION", "Ubicación"]));
+  return !(estado.includes("UBICADO") && ubicacionMassValidaCapacidad(ubicacion));
+}
+
+function diagnosticoGrupoRecepcion(rows) {
+  return (rows || []).reduce((acc, row) => {
+    acc.total += 1;
+    const ubicadoMass = !recepcionPendienteAlmacenaje(row);
+    if (ubicadoMass) acc.ubicadosMass += 1;
+    else acc.pendientes += 1;
+    const codigo = codigoRecepcion(row) || codigoAltRecepcion(row);
+    const cantidad = bultosRecepcion(row);
+    if (!codigo || cantidad <= 0) acc.sinDato += 1;
+    return acc;
+  }, { total: 0, pendientes: 0, ubicadosMass: 0, sinDato: 0 });
+}
+
+function diagnosticoRecepcionProyectada() {
+  const proveedorConLpn = (dataRecepcionProveedores || []).filter(row => limpiar(campoRecepcion(row, ["Nro LPN", "LPN", "NRO LPN"]))).length;
+  const proveedorSinLpn = (dataRecepcionProveedores || []).length - proveedorConLpn;
+  return {
+    proveedores: { ...diagnosticoGrupoRecepcion(dataRecepcionProveedores), conLpn: proveedorConLpn, sinLpn: proveedorSinLpn },
+    paleteros: diagnosticoGrupoRecepcion(dataRecepcionPaleteros)
+  };
+}
+
+function bloqueDatosTomadosRecepcion(diagnostico) {
+  const proveedorEjemplo = (dataRecepcionProveedores || []).find(row => codigoRecepcion(row) || codigoAltRecepcion(row)) || {};
+  const paleteroEjemplo = (dataRecepcionPaleteros || []).find(row => codigoRecepcion(row) || codigoAltRecepcion(row)) || {};
+  return `
+    <section class="dashboard-layout recepcion-reglas">
+      <div class="card">
+        <h3>Datos tomados de proveedores</h3>
+        <p class="muted-note">No es la misma logica que paleteros: aca cada LPN declarado se toma como 1 pallet del ASN.</p>
+        ${tabla(["Dato", "Columna usada", "Ejemplo"], [
+          filaDatoRecepcion("ASN", "ASN Entrada", campoRecepcion(proveedorEjemplo, ["ASN Entrada", "ASN"])),
+          filaDatoRecepcion("Producto", "Codigo / Codigo Alternativo", codigoRecepcion(proveedorEjemplo) || codigoAltRecepcion(proveedorEjemplo)),
+          filaDatoRecepcion("Descripcion", "Descrip Artic", descripcionRecepcion(proveedorEjemplo)),
+          filaDatoRecepcion("Pallet", "Nro LPN", campoRecepcion(proveedorEjemplo, ["Nro LPN", "LPN"])),
+          filaDatoRecepcion("Cantidad", "Un Env / Std Case Qty", fmt(bultosProveedorRecepcion(proveedorEjemplo))),
+          filaDatoRecepcion("Agrupacion", "ASN Entrada + Nro LPN", `${diagnostico.proveedores.conLpn} filas con LPN / ${diagnostico.proveedores.sinLpn} sin LPN`),
+          filaDatoRecepcion("Filtro", "Estado de LPN + Ubicacion", `${diagnostico.proveedores.pendientes} pendientes / ${diagnostico.proveedores.ubicadosMass} ya ubicados Mass`)
+        ])}
+      </div>
+      <div class="card">
+        <h3>Datos tomados de paleteros</h3>
+        <p class="muted-note">Aca se agrupa por Nro Pallet. Si un pallet tiene mas de un producto se marca como MULTI.</p>
+        ${tabla(["Dato", "Columna usada", "Ejemplo"], [
+          filaDatoRecepcion("ASN", "ASN Entrada", campoRecepcion(paleteroEjemplo, ["ASN Entrada", "ASN"])),
+          filaDatoRecepcion("Paletero", "Nombre de instalacion", campoRecepcion(paleteroEjemplo, ["Nombre de instalacion", "Nombre de instalación", "Nombre de instalaciÃ³n"])),
+          filaDatoRecepcion("Producto", "Codigo / Codigo Alternativo", codigoRecepcion(paleteroEjemplo) || codigoAltRecepcion(paleteroEjemplo)),
+          filaDatoRecepcion("Descripcion", "Descrip Artic", descripcionRecepcion(paleteroEjemplo)),
+          filaDatoRecepcion("Pallet", "Nro Pallet", campoRecepcion(paleteroEjemplo, ["Nro Pallet", "Pallet"])),
+          filaDatoRecepcion("LPN detalle", "Nro LPN", campoRecepcion(paleteroEjemplo, ["Nro LPN", "LPN"])),
+          filaDatoRecepcion("Filtro", "Estado de LPN + Ubicacion", `${diagnostico.paleteros.pendientes} pendientes / ${diagnostico.paleteros.ubicadosMass} ya ubicados Mass`)
+        ])}
+      </div>
+    </section>
+  `;
+}
+
+function filaDatoRecepcion(dato, columna, ejemplo) {
+  return `
+    <tr>
+      <td><strong>${htmlSeguro(dato)}</strong></td>
+      <td>${htmlSeguro(columna)}</td>
+      <td>${htmlSeguro(limpiar(ejemplo) || "SIN DATO")}</td>
+    </tr>
+  `;
+}
+
+function gruposProveedorRecepcion(ctx) {
+  const conLpn = new Map();
+  const sinLpnProducto = new Map();
+
+  (dataRecepcionProveedores || []).forEach(row => {
+    if (!recepcionPendienteAlmacenaje(row)) return;
+    const asn = limpiar(campoRecepcion(row, ["ASN Entrada", "ASN", "ASN_ENTRADA"]));
+    const lpn = limpiar(campoRecepcion(row, ["Nro LPN", "LPN", "NRO LPN"]));
+    const producto = detalleProductoRecepcion(ctx, row);
+    const unidades = numRecepcion(campoRecepcion(row, ["Un Env", "UN ENV"]));
+    const caseQty = numRecepcion(campoRecepcion(row, ["Std Case Qty", "STD CASE QTY", "STD_CASE_QTY", "Case Qty", "CASE QTY"]));
+    const bultos = bultosProveedorRecepcion(row);
+    if (!producto.codigo && !producto.alternativo && bultos <= 0) return;
+
+    if (lpn) {
+      const key = `${asn}|${lpn}`;
+      if (!conLpn.has(key)) {
+        conLpn.set(key, { tipo: "PROVEEDOR", asn, lpn, productos: new Map(), bultos: 0, unidades: 0, pallets: 1, metodoPallet: "ASN + LPN" });
+      }
+      const item = conLpn.get(key);
+      const keyProducto = claveProductoRecepcion(producto.codigo, producto.alternativo);
+      if (!item.productos.has(keyProducto)) item.productos.set(keyProducto, { ...producto, bultos: 0, unidades: 0, caseQty, row });
+      item.productos.get(keyProducto).bultos += bultos;
+      item.productos.get(keyProducto).unidades += unidades;
+      item.bultos += bultos;
+      item.unidades += unidades;
+      return;
+    }
+
+    const keyProducto = claveProductoRecepcion(producto.codigo, producto.alternativo);
+    const key = `${asn}|${keyProducto}`;
+    if (!sinLpnProducto.has(key)) {
+      sinLpnProducto.set(key, { tipo: "PROVEEDOR", asn, lpn: "", productos: new Map(), bultos: 0, unidades: 0, pallets: 0, metodoPallet: "SIN LPN: ESTIMADO POR MAX PALLET" });
+    }
+    const item = sinLpnProducto.get(key);
+    if (!item.productos.has(keyProducto)) item.productos.set(keyProducto, { ...producto, bultos: 0, unidades: 0, caseQty, row });
+    item.productos.get(keyProducto).bultos += bultos;
+    item.productos.get(keyProducto).unidades += unidades;
+    item.bultos += bultos;
+    item.unidades += unidades;
+  });
+
+  sinLpnProducto.forEach(item => {
+    const prod = Array.from(item.productos.values())[0] || {};
+    const maxPallet = ctx.maxPalletPorProducto.get(claveProductoRecepcion(prod.codigo, prod.alternativo)) || 0;
+    item.maxPallet = maxPallet;
+    item.pallets = maxPallet > 0 ? Math.ceil(item.bultos / maxPallet) : 1;
+    item.metodoPallet = maxPallet > 0
+      ? `SIN LPN: ${fmt(item.bultos)} / ${fmt(maxPallet)} max pallet`
+      : "SIN LPN: VALIDAR MAX PALLET";
+  });
+
+  return [...conLpn.values(), ...sinLpnProducto.values()];
+}
+
+function gruposPaleteroRecepcion(ctx) {
+  const mapa = new Map();
+  (dataRecepcionPaleteros || []).forEach(row => {
+    if (!recepcionPendienteAlmacenaje(row)) return;
+    const asn = limpiar(campoRecepcion(row, ["ASN Entrada", "ASN", "ASN_ENTRADA"]));
+    const proveedor = limpiar(campoRecepcion(row, ["Nombre de instalacion", "Nombre de instalación", "Nombre de instalaciÃ³n", "Proveedor", "PROVEEDOR"]));
+    const nroPallet = limpiar(campoRecepcion(row, ["Nro Pallet", "NRO PALLET", "Pallet", "PALLET"]));
+    const lpn = limpiar(campoRecepcion(row, ["Nro LPN", "LPN", "NRO LPN"]));
+    const producto = detalleProductoRecepcion(ctx, row);
+    const unidades = numRecepcion(campoRecepcion(row, ["Un Env", "UN ENV"]));
+    const bultos = bultosRecepcion(row);
+    const key = `${asn}|${nroPallet || lpn || claveProductoRecepcion(producto.codigo, producto.alternativo)}`;
+    if (!mapa.has(key)) {
+      mapa.set(key, { tipo: "PALETERO", asn, proveedor, nroPallet: nroPallet || lpn, lpn: nroPallet || lpn, lpnsSet: new Set(), productos: new Map(), bultos: 0, unidades: 0, pallets: 1, metodoPallet: "ASN + NRO PALLET" });
+    }
+    const item = mapa.get(key);
+    if (lpn) item.lpnsSet.add(lpn);
+    const keyProducto = claveProductoRecepcion(producto.codigo, producto.alternativo);
+    if (!item.productos.has(keyProducto)) item.productos.set(keyProducto, { ...producto, bultos: 0, unidades: 0, row });
+    item.productos.get(keyProducto).bultos += bultos;
+    item.productos.get(keyProducto).unidades += unidades;
+    item.bultos += bultos;
+    item.unidades += unidades;
+  });
+  return Array.from(mapa.values());
+}
+
+function completarGrupoRecepcion(ctx, grupo) {
+  const productos = Array.from(grupo.productos.values());
+  const dominante = productos.slice().sort((a, b) => b.bultos - a.bultos)[0] || {};
+  const pasilloInfo = resolverPasilloRecepcion(ctx, dominante.codigo, dominante.alternativo, dominante.row || {});
+  const productosTxt = productos.map(p => p.codigo || p.alternativo).filter(Boolean).join(" | ");
+  const descripciones = productos.map(p => p.descripcion).filter(Boolean).slice(0, 3).join(" | ");
+  return {
+    ...grupo,
+    pasillo: pasilloInfo.pasillo,
+    metodo: pasilloInfo.metodo,
+    productos: productos.length,
+    lpns: grupo.lpnsSet ? grupo.lpnsSet.size : (grupo.lpn ? 1 : 0),
+    lpnsTxt: grupo.lpnsSet ? Array.from(grupo.lpnsSet).join(" | ") : (grupo.lpn || ""),
+    productosTxt,
+    productosDetalle: productos.map(p => ({
+      codigo: p.codigo || "",
+      alternativo: p.alternativo || "",
+      descripcion: p.descripcion || "",
+      bultos: p.bultos || 0,
+      unidades: p.unidades || 0
+    })),
+    descripcion: descripciones,
+    clasePallet: productos.length <= 1 ? "MONO" : "MULTI"
+  };
+}
+
+function resumenAsnProveedores(proveedores) {
+  const mapa = new Map();
+  (proveedores || []).forEach(row => {
+    const asn = row.asn || "SIN ASN";
+    if (!mapa.has(asn)) {
+      mapa.set(asn, {
+        asn,
+        pallets: 0,
+        lpnsSet: new Set(),
+        productosSet: new Set(),
+        bultos: 0,
+        unidades: 0,
+        pasillosSet: new Set()
+      });
+    }
+    const item = mapa.get(asn);
+    item.pallets += Number(row.pallets) || 0;
+    item.bultos += Number(row.bultos) || 0;
+    item.unidades += Number(row.unidades) || 0;
+    if (row.lpn) item.lpnsSet.add(row.lpn);
+    if (row.pasillo) item.pasillosSet.add(row.pasillo);
+    String(row.productosTxt || "").split(" | ").map(limpiar).filter(Boolean).forEach(codigo => item.productosSet.add(codigo));
+  });
+  return Array.from(mapa.values()).map(item => ({
+    asn: item.asn,
+    pallets: item.pallets,
+    lpns: item.lpnsSet.size,
+    productos: item.productosSet.size,
+    bultos: item.bultos,
+    unidades: item.unidades,
+    pasillos: Array.from(item.pasillosSet).sort((a, b) => a.localeCompare(b)).join(" | ")
+  })).sort((a, b) => b.pallets - a.pallets || String(a.asn).localeCompare(String(b.asn)));
+}
+
+function resumenAsnPaleteros(paleteros) {
+  const mapa = new Map();
+  (paleteros || []).forEach(row => {
+    const asn = row.asn || "SIN ASN";
+    if (!mapa.has(asn)) {
+      mapa.set(asn, {
+        asn,
+        pallets: 0,
+        lpns: 0,
+        productosSet: new Set(),
+        mono: 0,
+        multi: 0,
+        bultos: 0,
+        pasillosSet: new Set()
+      });
+    }
+    const item = mapa.get(asn);
+    item.pallets += Number(row.pallets) || 0;
+    item.lpns += Number(row.lpns) || 0;
+    item.bultos += Number(row.bultos) || 0;
+    if (row.clasePallet === "MONO") item.mono += 1;
+    if (row.clasePallet === "MULTI") item.multi += 1;
+    if (row.pasillo) item.pasillosSet.add(row.pasillo);
+    String(row.productosTxt || "").split(" | ").map(limpiar).filter(Boolean).forEach(codigo => item.productosSet.add(codigo));
+  });
+  return Array.from(mapa.values()).map(item => ({
+    asn: item.asn,
+    pallets: item.pallets,
+    lpns: item.lpns,
+    productos: item.productosSet.size,
+    mono: item.mono,
+    multi: item.multi,
+    bultos: item.bultos,
+    pasillos: Array.from(item.pasillosSet).sort((a, b) => a.localeCompare(b)).join(" | ")
+  })).sort((a, b) => b.pallets - a.pallets || String(a.asn).localeCompare(String(b.asn)));
+}
+
+function detalleRecepcionPorAsnPasillo(proveedores, paleterosAlmacenables, resumenPasillo) {
+  const capacidadPorPasillo = new Map((resumenPasillo || []).map(row => [row.pasillo, row]));
+  const mapa = new Map();
+  const agregar = (row, origen) => {
+    const pasillo = row.pasillo || "SIN CLASIFICAR";
+    const asn = row.asn || "SIN ASN";
+    const key = `${pasillo}|${asn}|${origen}`;
+    if (!mapa.has(key)) {
+      mapa.set(key, { pasillo, asn, origen, pallets: 0, lpns: 0, productosSet: new Set(), bultos: 0 });
+    }
+    const item = mapa.get(key);
+    item.pallets += Number(row.pallets) || 0;
+    item.lpns += Number(row.lpns) || (row.lpn ? 1 : 0);
+    item.bultos += Number(row.bultos) || 0;
+    String(row.productosTxt || "").split(" | ").map(limpiar).filter(Boolean).forEach(codigo => item.productosSet.add(codigo));
+  };
+  (proveedores || []).forEach(row => agregar(row, "PROVEEDOR"));
+  (paleterosAlmacenables || []).forEach(row => agregar(row, "PALETERO MONO"));
+  return Array.from(mapa.values()).map(item => {
+    const capacidad = capacidadPorPasillo.get(item.pasillo);
+    const capProyectada = capacidad?.capacidadProyectada || 0;
+    const llegadaPasillo = capacidad?.llegada || 0;
+    return {
+      ...item,
+      productos: item.productosSet.size,
+      capacidad: capProyectada,
+      llegadaPasillo,
+      estadoPasillo: capacidad?.estado || "VALIDAR"
+    };
+  }).sort((a, b) => a.pasillo.localeCompare(b.pasillo) || a.origen.localeCompare(b.origen) || b.pallets - a.pallets);
+}
+
+function calcularRecepcionUca(capacidad, prediccionPts) {
+  const ctx = construirContextoRecepcionUca();
+  const proveedores = gruposProveedorRecepcion(ctx).map(g => completarGrupoRecepcion(ctx, g));
+  const proveedoresAsn = resumenAsnProveedores(proveedores);
+  const paleteros = gruposPaleteroRecepcion(ctx).map(g => completarGrupoRecepcion(ctx, g));
+  const paleterosMono = paleteros.filter(row => row.clasePallet === "MONO");
+  const paleterosMulti = paleteros.filter(row => row.clasePallet === "MULTI");
+  const paleterosAsn = resumenAsnPaleteros(paleteros);
+  const todosAlmacenables = [...proveedores, ...paleterosMono];
+  const ptsPorPasillo = new Map((prediccionPts?.resumen || []).map(row => [row.pasillo, row.ubicaciones]));
+  const reservaPorPasillo = new Map((capacidad?.reserva?.resumen || []).map(row => [row.pasillo, row]));
+  const pasillos = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "11", "12"];
+  const resumen = pasillos.map(pasillo => {
+    const libres = reservaPorPasillo.get(pasillo)?.libres || 0;
+    const pts = ptsPorPasillo.get(pasillo) || 0;
+    const prov = proveedores.filter(row => row.pasillo === pasillo).reduce((a, b) => a + b.pallets, 0);
+    const pal = paleterosMono.filter(row => row.pasillo === pasillo).reduce((a, b) => a + b.pallets, 0);
+    const palMulti = paleterosMulti.filter(row => row.pasillo === pasillo).reduce((a, b) => a + b.pallets, 0);
+    const llegada = prov + pal;
+    const capacidadProyectada = libres + pts;
+    const diferencia = capacidadProyectada - llegada;
+    const diferenciaActual = libres - llegada;
+    const estadoActual = llegada <= libres ? "ALCANZA" : "LIBERAR ESPACIO";
+    const estado = llegada <= libres ? "ALCANZA" : llegada <= capacidadProyectada ? "DEPENDE PTS" : "FALTA ESPACIO";
+    return { pasillo, libres, pts, capacidadActual: libres, capacidadProyectada, proveedores: prov, paleteros: pal, paleterosMulti: palMulti, llegada, diferencia, diferenciaActual, estadoActual, estado };
+  });
+  const sinClasificar = todosAlmacenables.filter(row => row.pasillo === "SIN CLASIFICAR").reduce((a, b) => a + b.pallets, 0);
+  const total = resumen.reduce((acc, row) => {
+    acc.libres += row.libres;
+    acc.pts += row.pts;
+    acc.capacidadProyectada += row.capacidadProyectada;
+    acc.proveedores += row.proveedores;
+    acc.paleteros += row.paleteros;
+    acc.paleterosMulti += row.paleterosMulti;
+    acc.llegada += row.llegada;
+    acc.deficitActual += Math.max(0, -row.diferenciaActual);
+    acc.deficit += Math.max(0, -row.diferencia);
+    return acc;
+  }, { libres: 0, pts: 0, capacidadProyectada: 0, proveedores: 0, paleteros: 0, paleterosMulti: 0, llegada: 0, deficitActual: 0, deficit: 0, sinClasificar });
+  total.paleterosMulti = paleterosMulti.reduce((acc, row) => acc + (Number(row.pallets) || 0), 0);
+  total.paleterosTotal = total.paleteros + total.paleterosMulti;
+
+  const detalleAsnPasillo = detalleRecepcionPorAsnPasillo(proveedores, paleterosMono, resumen);
+
+  return { total, resumen, proveedores, proveedoresAsn, paleteros, paleterosMono, paleterosMulti, paleterosAsn, detalleAsnPasillo };
+}
+
+function claseEstadoRecepcion(estado) {
+  if (estado === "ALCANZA") return "ok";
+  if (estado === "DEPENDE PTS") return "warn";
+  return "danger";
+}
+
+function resumenVisualRecepcion(data, proveedoresAsn, paleterosAsn) {
+  const capacidad = data.total.libres || 0;
+  const llegada = data.total.llegada || 0;
+  const pctUso = pct(llegada, Math.max(capacidad, llegada, 1));
+  const estado = data.total.deficitActual > 0 ? "LIBERAR ESPACIO" : "ALCANZA";
+  const estadoClase = data.total.deficitActual > 0 ? "warn" : "ok";
+  return `
+    <div class="recepcion-hero-dashboard ${estadoClase}">
+      <article class="recepcion-main-card">
+        <span>Resumen general</span>
+        <strong>${htmlSeguro(estado)}</strong>
+        <p>${fmt(llegada)} pallets por recibir contra ${fmt(capacidad)} ubicaciones libres reales.</p>
+        <div class="recepcion-main-track"><i style="width:${Math.min(100, pctUso)}%"></i></div>
+        <small>${pctUso.toFixed(1)}% de uso real | faltan ${fmt(data.total.deficitActual)} antes de PTS</small>
+      </article>
+      <article>
+        <span>Proveedores</span>
+        <strong>${fmt(data.total.proveedores)}</strong>
+        <p>${fmt(proveedoresAsn.length)} ASN unicos</p>
+      </article>
+      <article>
+        <span>Paleteros mono</span>
+        <strong>${fmt(data.total.paleteros)}</strong>
+        <p>${fmt(data.total.paleterosMulti)} multi no almacenan en reserva</p>
+      </article>
+      <article>
+        <span>Liberacion PTS</span>
+        <strong>${fmt(data.total.pts)}</strong>
+        <p>ubicaciones que deberian liberarse en el dia</p>
+      </article>
+    </div>
+  `;
+}
+
+function tarjetasPasilloRecepcion(rows) {
+  return `
+    <div class="recepcion-aisle-board">
+      ${rows.map(row => {
+        const pctUso = pct(row.llegada, Math.max(row.capacidadProyectada, row.llegada, 1));
+        return `
+          <article class="recepcion-aisle-card ${claseEstadoRecepcion(row.estado)}">
+            <div>
+              <span>Pasillo ${htmlSeguro(row.pasillo)}</span>
+              <strong>${fmt(row.llegada)} / ${fmt(row.capacidadProyectada)}</strong>
+            </div>
+            <div class="recepcion-track"><i style="width:${Math.min(100, pctUso)}%"></i></div>
+            <div class="recepcion-aisle-mini">
+              <b>Prov. ${fmt(row.proveedores)}</b>
+              <b>Palet. ${fmt(row.paleteros)}</b>
+              <b>Dif. ${fmt(row.diferencia)}</b>
+            </div>
+            <em>${htmlSeguro(row.estado)}</em>
+          </article>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function tableroPasilloRecepcion(rows) {
+  return `
+    <div class="recepcion-capacity-board">
+      ${rows.map(row => {
+        const pctReal = pct(row.llegada, Math.max(row.libres, row.llegada, 1));
+        const necesitaPts = row.diferenciaActual < 0 && row.diferencia >= 0;
+        const clase = row.diferenciaActual >= 0 ? "ok" : necesitaPts ? "warn" : "danger";
+        return `
+          <article class="recepcion-capacity-tile ${clase}">
+            <div class="recepcion-tile-head">
+              <span>Pasillo ${htmlSeguro(row.pasillo)}</span>
+              <strong>${htmlSeguro(row.estadoActual)}</strong>
+            </div>
+            <div class="recepcion-tile-main">
+              <b>${fmt(row.llegada)}</b>
+              <small>pallets llegada</small>
+            </div>
+            <div class="recepcion-tile-metrics">
+              <div><span>Libre</span><b>${fmt(row.libres)}</b></div>
+              <div><span>PTS</span><b>${fmt(row.pts)}</b></div>
+              <div><span>Prov.</span><b>${fmt(row.proveedores)}</b></div>
+              <div><span>Mono</span><b>${fmt(row.paleteros)}</b></div>
+            </div>
+            <div class="recepcion-tile-progress">
+              <i style="width:${Math.min(100, pctReal)}%"></i>
+            </div>
+            <div class="recepcion-tile-foot">
+              <span>Dif. real <b>${fmt(row.diferenciaActual)}</b></span>
+              <span>Con PTS <b>${fmt(row.diferencia)}</b></span>
+            </div>
+          </article>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function compactoOrigenPasilloRecepcion(rows) {
+  const conMovimiento = rows.filter(row => row.llegada > 0 || row.pts > 0);
+  return `
+    <div class="recepcion-origin-strip">
+      ${conMovimiento.map(row => {
+        const total = Math.max(row.llegada, 1);
+        return `
+          <div class="recepcion-origin-row">
+            <strong>P${htmlSeguro(row.pasillo)}</strong>
+            <div>
+              <i class="prov" style="width:${Math.min(100, pct(row.proveedores, total))}%"></i>
+              <i class="pal" style="width:${Math.min(100, pct(row.paleteros, total))}%"></i>
+            </div>
+            <span>${fmt(row.llegada)} pallets</span>
+          </div>
+        `;
+      }).join("") || `<p class="muted-note">Sin llegada por pasillo.</p>`}
+      <div class="recepcion-chart-legend">
+        <span><i class="prov"></i>Proveedor</span>
+        <span><i class="pal"></i>Paletero mono</span>
+      </div>
+    </div>
+  `;
+}
+
+function graficoBarrasPasilloRecepcion(rows) {
+  return `
+    <div class="recepcion-board-layout">
+      <div>
+        <div class="recepcion-board-title">
+          <strong>Pasillos</strong>
+          <span>Libre real, llegada y PTS proyectado</span>
+        </div>
+        ${tableroPasilloRecepcion(rows)}
+      </div>
+      <div>
+        <div class="recepcion-board-title">
+          <strong>Origen</strong>
+          <span>Proveedor / paletero</span>
+        </div>
+        ${compactoOrigenPasilloRecepcion(rows)}
+      </div>
+    </div>
+  `;
+}
+
+function alertaPtsRecepcion(data) {
+  const cubrePts = data.total.deficitActual > 0 && data.total.deficit === 0;
+  return `
+    <div class="recepcion-pts-alert ${cubrePts ? "warn" : data.total.deficit > 0 ? "danger" : "ok"}">
+      <div>
+        <span>Liberacion PTS estimada</span>
+        <strong>${fmt(data.total.pts)} ubicaciones</strong>
+      </div>
+      <p>
+        Capacidad libre actual: <b>${fmt(data.total.libres)}</b> |
+        Pallets por llegar: <b>${fmt(data.total.llegada)}</b> |
+        Falta antes de PTS: <b>${fmt(data.total.deficitActual)}</b> |
+        Falta si se libera PTS: <b>${fmt(data.total.deficit)}</b>
+      </p>
+    </div>
+  `;
+}
+
+function tarjetasAsnRecepcion(titulo, rows, tipo) {
+  return `
+    <div class="recepcion-asn-block">
+      <div class="section-head compact-head">
+        <h3>${htmlSeguro(titulo)}</h3>
+        <span class="muted-note">${fmt(rows.length)} ASN unicos</span>
+      </div>
+      <div class="recepcion-asn-grid">
+        ${rows.map(row => `
+          <article class="recepcion-asn-card ${tipo}">
+            <span>${htmlSeguro(row.asn)}</span>
+            <strong>${fmt(row.pallets)} pallets</strong>
+            <div>
+              <b>${fmt(row.lpns)}</b><small>LPNs</small>
+              <b>${fmt(row.productos)}</b><small>Codigos</small>
+              <b>${fmt(row.bultos)}</b><small>Bultos</small>
+            </div>
+            ${tipo === "paletero" ? `<p>Mono ${fmt(row.mono)} almacenan | Multi ${fmt(row.multi)} no reserva</p>` : `<p>Un Env ${fmt(row.unidades)}</p>`}
+            <em>${htmlSeguro(row.pasillos || "SIN CLASIFICAR")}</em>
+          </article>
+        `).join("") || `<p class="muted-note">Sin ASN cargados.</p>`}
+      </div>
+    </div>
+  `;
+}
+
+function tarjetasPasilloAsnRecepcion(rows) {
+  return `
+    <div class="recepcion-matrix-grid">
+      ${rows.map(row => {
+        const pctUso = pct(row.pallets, Math.max(row.capacidad, row.llegadaPasillo, row.pallets, 1));
+        return `
+          <article class="recepcion-matrix-card ${claseEstadoRecepcion(row.estadoPasillo)}">
+            <div>
+              <span>Pasillo ${htmlSeguro(row.pasillo)} | ${htmlSeguro(row.origen)}</span>
+              <strong>${htmlSeguro(row.asn)}</strong>
+            </div>
+            <div class="recepcion-track"><i style="width:${Math.min(100, pctUso)}%"></i></div>
+            <div class="recepcion-aisle-mini">
+              <b>${fmt(row.pallets)} pallets</b>
+              <b>${fmt(row.lpns)} LPNs</b>
+              <b>${fmt(row.bultos)} bultos</b>
+            </div>
+            <small>${fmt(row.llegadaPasillo)} llegada pasillo / ${fmt(row.capacidad)} capacidad | ${htmlSeguro(row.estadoPasillo)}</small>
+          </article>
+        `;
+      }).join("") || `<p class="muted-note">Sin resumen por pasillo y ASN.</p>`}
+    </div>
+  `;
+}
+
+function cuadroPasilloAsnRecepcion(rows) {
+  const ordenPasillos = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "11", "12", "SIN CLASIFICAR"];
+  const porPasillo = new Map();
+  rows.forEach(row => {
+    const pasillo = row.pasillo || "SIN CLASIFICAR";
+    if (!porPasillo.has(pasillo)) porPasillo.set(pasillo, []);
+    porPasillo.get(pasillo).push(row);
+  });
+  return `
+    <div class="recepcion-asn-summary">
+      ${ordenPasillos.filter(pasillo => porPasillo.has(pasillo)).map(pasillo => {
+        const items = porPasillo.get(pasillo).sort((a, b) => a.origen.localeCompare(b.origen) || b.pallets - a.pallets);
+        const totalPallets = items.reduce((acc, row) => acc + row.pallets, 0);
+        const estado = items[0]?.estadoPasillo || "VALIDAR";
+        const capacidad = items[0]?.capacidad || 0;
+        return `
+          <section class="recepcion-asn-group ${claseEstadoRecepcion(estado)}">
+            <div class="recepcion-asn-group-head">
+              <strong>Pasillo ${htmlSeguro(pasillo)}</strong>
+              <span>${fmt(totalPallets)} pallets llegada | ${fmt(capacidad)} capacidad proyectada | ${htmlSeguro(estado)}</span>
+            </div>
+            <div class="recepcion-asn-lines">
+              ${items.map(row => `
+                <div class="recepcion-asn-line">
+                  <div>
+                    <b>${htmlSeguro(row.asn)}</b>
+                    <span>${htmlSeguro(row.origen)}</span>
+                  </div>
+                  <em>${fmt(row.pallets)} pallets</em>
+                  <small>${fmt(row.lpns)} LPNs</small>
+                  <small>${fmt(row.productos)} cod.</small>
+                  <small>${fmt(row.bultos)} bultos</small>
+                </div>
+              `).join("")}
+            </div>
+          </section>
+        `;
+      }).join("") || `<p class="muted-note">Sin resumen por pasillo y ASN.</p>`}
+    </div>
+  `;
+}
+
+function bloqueRecepcionUca(data, mostrarBotonExcel = true) {
+  recepcionUcaVista = data;
+  const proveedoresAsn = data.proveedoresAsn || [];
+  const paleterosAsn = data.paleterosAsn || [];
+  const detalleAsnPasillo = data.detalleAsnPasillo || [];
+  const ordenPasillos = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "11", "12"];
+  const resumenOrdenado = data.resumen.slice().sort((a, b) => ordenPasillos.indexOf(a.pasillo) - ordenPasillos.indexOf(b.pasillo));
+  return `
+    <section class="card uca-recepcion-card">
+      <div class="section-head">
+        <div>
+          <h2>Recepcion proyectada</h2>
+          <p class="muted-note">Cruce de pallets por recibir contra ubicaciones libres y liberacion PTS estimada.</p>
+        </div>
+        ${mostrarBotonExcel ? `<button type="button" onclick="exportarRecepcionUca()">Excel recepcion</button>` : ""}
+      </div>
+      ${resumenVisualRecepcion(data, proveedoresAsn, paleterosAsn)}
+      <div class="recepcion-summary-card">
+        <div class="section-head compact-head">
+          <h3>Capacidad vs llegada por pasillo</h3>
+          <span class="muted-note">Comparativo para decidir si ingresa o falta liberar espacio</span>
+        </div>
+        ${graficoBarrasPasilloRecepcion(resumenOrdenado)}
+        ${alertaPtsRecepcion(data)}
+        ${data.total.sinClasificar ? `<p class="muted-note">Pallets sin clasificar por pasillo: <strong>${fmt(data.total.sinClasificar)}</strong>. Requieren validar jerarquia o historico.</p>` : ""}
+      </div>
+      ${data.total.paleterosMulti ? `<div class="notice">Paleteros MULTI detectados: <strong>${fmt(data.total.paleterosMulti)}</strong> pallets. Se muestran en el detalle, pero no se suman a la llegada de reserva porque no se almacenan.</div>` : ""}
+      <div class="recepcion-asn-layout">
+        ${tarjetasAsnRecepcion("Proveedores por ASN", proveedoresAsn, "proveedor")}
+        ${tarjetasAsnRecepcion("Paleteros por ASN", paleterosAsn, "paletero")}
+      </div>
+      <div class="dashboard-layout recepcion-detalles">
+        <div>
+          <div class="section-head compact-head">
+            <h3>Detalle proveedor</h3>
+            <div class="filters">
+              <span class="muted-note">${fmt(data.proveedores.length)} grupos ASN/LPN</span>
+              <button type="button" onclick="exportarRecepcionDetalleProveedores()">Excel proveedor</button>
+            </div>
+          </div>
+          ${tabla(["ASN", "LPN / Grupo", "Pasillo", "Pallets", "Un Env", "Bultos", "Metodo"], data.proveedores.slice(0, 80).map(row => `
+            <tr>
+              <td>${htmlSeguro(row.asn)}</td>
+              <td>${htmlSeguro(row.lpn || row.productosTxt)}</td>
+              <td><strong>${htmlSeguro(row.pasillo)}</strong></td>
+              <td class="number">${fmt(row.pallets)}</td>
+              <td class="number">${fmt(row.unidades)}</td>
+              <td class="number">${fmt(row.bultos)}</td>
+              <td>${htmlSeguro(row.metodoPallet)} / ${htmlSeguro(row.metodo)}</td>
+            </tr>
+          `), "Sin detalle de proveedores cargado")}
+        </div>
+        <div>
+          <div class="section-head compact-head">
+            <h3>Detalle paletero</h3>
+            <div class="filters">
+              <span class="muted-note">${fmt(data.paleterosMono?.length || 0)} mono almacenables / ${fmt(data.paleterosMulti?.length || 0)} multi no reserva</span>
+              <button type="button" onclick="exportarRecepcionDetallePaleteros()">Excel paletero</button>
+              <button type="button" onclick="exportarRecepcionPaleterosMulti()">Excel multi</button>
+            </div>
+          </div>
+          ${tabla(["ASN", "Pallet", "LPNs", "Codigos", "Tipo", "Pasillo", "Bultos", "Metodo"], data.paleteros.slice(0, 80).map(row => `
+            <tr>
+              <td>${htmlSeguro(row.asn)}</td>
+              <td>${htmlSeguro(row.lpn)}</td>
+              <td class="number">${fmt(row.lpns)}</td>
+              <td class="number">${fmt(row.productos)}</td>
+              <td><strong>${htmlSeguro(row.clasePallet)}</strong><small>${row.clasePallet === "MULTI" ? "No va a reserva" : "Almacenable"}</small></td>
+              <td><strong>${htmlSeguro(row.pasillo)}</strong></td>
+              <td class="number">${fmt(row.bultos)}</td>
+              <td>${htmlSeguro(row.metodo)}</td>
+            </tr>
+          `), "Sin paleteros cargados")}
+        </div>
+      </div>
+      <div class="section-head compact-head subhead">
+        <h3>Resumen por pasillo y ASN</h3>
+        <span class="muted-note">Pallets por origen contra capacidad proyectada</span>
+      </div>
+      ${cuadroPasilloAsnRecepcion(detalleAsnPasillo)}
+    </section>
+  `;
+}
+
+function exportarRecepcionUca() {
+  const data = recepcionUcaVista;
+  if (!data || !data.resumen) return alert("No hay data de recepcion para exportar");
+  descargarExcelHojas("uca_recepcion_proyectada", [
+    {
+      nombre: "Resumen pasillo",
+      filas: [
+        ["PASILLO", "LIBRE ACTUAL", "LIBERACION PTS", "CAPACIDAD CON PTS", "PALLETS PROVEEDORES", "PALETEROS MONO ALMACENABLES", "PALETEROS MULTI NO RESERVA", "LLEGADA A RESERVA", "DIF. ACTUAL", "DIF. CON PTS", "ESTADO ACTUAL", "ESTADO CON PTS"],
+        ...data.resumen.map(row => [row.pasillo, row.libres, row.pts, row.capacidadProyectada, row.proveedores, row.paleteros, row.paleterosMulti, row.llegada, row.diferenciaActual, row.diferencia, row.estadoActual, row.estado])
+      ]
+    },
+    {
+      nombre: "Proveedores ASN",
+      filas: [
+        ["ASN", "PALLETS", "LPNS", "PRODUCTOS", "UN ENV", "BULTOS", "PASILLOS"],
+        ...(data.proveedoresAsn || []).map(row => [row.asn, row.pallets, row.lpns, row.productos, row.unidades || 0, row.bultos, row.pasillos])
+      ]
+    },
+    {
+      nombre: "Detalle proveedores",
+      filas: [
+        ["ASN", "LPN O GRUPO", "PASILLO", "PALLETS", "UN ENV", "BULTOS", "PRODUCTOS", "DESCRIPCION", "METODO PALLET", "METODO PASILLO"],
+        ...data.proveedores.map(row => [row.asn, row.lpn || row.productosTxt, row.pasillo, row.pallets, row.unidades || 0, row.bultos, row.productosTxt, row.descripcion, row.metodoPallet, row.metodo])
+      ]
+    },
+    {
+      nombre: "Paleteros ASN",
+      filas: [
+        ["ASN", "PALLETS", "LPNS", "CODIGOS", "MONO", "MULTI", "BULTOS", "PASILLOS"],
+        ...(data.paleterosAsn || []).map(row => [row.asn, row.pallets, row.lpns, row.productos, row.mono, row.multi, row.bultos, row.pasillos])
+      ]
+    },
+    {
+      nombre: "Pasillo ASN",
+      filas: [
+        ["PASILLO", "ASN", "ORIGEN", "PALLETS", "LPNS", "PRODUCTOS", "BULTOS", "CAPACIDAD PASILLO", "LLEGADA PASILLO", "ESTADO"],
+        ...(data.detalleAsnPasillo || []).map(row => [row.pasillo, row.asn, row.origen, row.pallets, row.lpns, row.productos, row.bultos, row.capacidad, row.llegadaPasillo, row.estadoPasillo])
+      ]
+    },
+    {
+      nombre: "Paleteros",
+      filas: [
+        ["ASN", "PALLET", "LPNS", "CODIGOS", "TIPO", "ALMACENA EN RESERVA", "PASILLO", "PALLETS", "BULTOS", "PRODUCTOS", "DESCRIPCION", "METODO PASILLO"],
+        ...data.paleteros.map(row => [row.asn, row.lpn, row.lpns, row.productos, row.clasePallet, row.clasePallet === "MONO" ? "SI" : "NO", row.pasillo, row.pallets, row.bultos, row.productosTxt, row.descripcion, row.metodo])
+      ]
+    }
+  ]);
+}
+
+function filasDetalleProductosPaletero(rows) {
+  return (rows || []).flatMap(row => {
+    const productos = row.productosDetalle?.length ? row.productosDetalle : [{
+      codigo: row.productosTxt || "",
+      alternativo: "",
+      descripcion: row.descripcion || "",
+      bultos: row.bultos || 0,
+      unidades: row.unidades || 0
+    }];
+    return productos.map(prod => [
+      row.asn,
+      row.lpn,
+      row.lpnsTxt || "",
+      row.lpns,
+      row.productos,
+      row.clasePallet,
+      row.clasePallet === "MONO" ? "SI" : "NO",
+      row.pasillo,
+      row.metodo,
+      prod.codigo,
+      prod.alternativo,
+      prod.descripcion,
+      prod.bultos,
+      prod.unidades
+    ]);
+  });
+}
+
+function exportarRecepcionDetalleProveedores() {
+  const data = recepcionUcaVista;
+  if (!data?.proveedores) return alert("No hay detalle de proveedores para exportar");
+  descargarExcelHojas("recepcion_detalle_proveedores", [
+    {
+      nombre: "Detalle proveedores",
+      filas: [
+        ["ASN", "LPN O GRUPO", "PASILLO", "PALLETS", "UN ENV", "BULTOS", "PRODUCTOS", "DESCRIPCION", "METODO PALLET", "METODO PASILLO"],
+        ...data.proveedores.map(row => [row.asn, row.lpn || row.productosTxt, row.pasillo, row.pallets, row.unidades || 0, row.bultos, row.productosTxt, row.descripcion, row.metodoPallet, row.metodo])
+      ]
+    }
+  ]);
+}
+
+function exportarRecepcionDetallePaleteros() {
+  const data = recepcionUcaVista;
+  if (!data?.paleteros) return alert("No hay detalle de paleteros para exportar");
+  descargarExcelHojas("recepcion_detalle_paleteros", [
+    {
+      nombre: "Resumen pallets",
+      filas: [
+        ["ASN", "PALLET", "LPNS", "LPNS DETALLE", "CODIGOS", "TIPO", "ALMACENA EN RESERVA", "PASILLO", "PALLETS", "BULTOS", "PRODUCTOS", "DESCRIPCION", "METODO PASILLO"],
+        ...data.paleteros.map(row => [row.asn, row.lpn, row.lpns, row.lpnsTxt || "", row.productos, row.clasePallet, row.clasePallet === "MONO" ? "SI" : "NO", row.pasillo, row.pallets, row.bultos, row.productosTxt, row.descripcion, row.metodo])
+      ]
+    },
+    {
+      nombre: "Detalle productos",
+      filas: [
+        ["ASN", "PALLET", "LPNS DETALLE", "CANTIDAD LPNS", "CANTIDAD CODIGOS", "TIPO", "ALMACENA EN RESERVA", "PASILLO", "METODO PASILLO", "CODIGO", "CODIGO ALTERNATIVO", "DESCRIPCION", "BULTOS", "UNIDADES"],
+        ...filasDetalleProductosPaletero(data.paleteros)
+      ]
+    }
+  ]);
+}
+
+function exportarRecepcionPaleterosMulti() {
+  const data = recepcionUcaVista;
+  const multi = data?.paleterosMulti || [];
+  if (!multi.length) return alert("No hay pallets multi para exportar");
+  descargarExcelHojas("recepcion_paleteros_multi_no_reserva", [
+    {
+      nombre: "Multi resumen",
+      filas: [
+        ["ASN", "PALLET", "LPNS", "LPNS DETALLE", "CODIGOS", "PASILLO REFERENCIAL", "PALLETS", "BULTOS", "PRODUCTOS", "DESCRIPCION", "METODO PASILLO", "ALMACENA EN RESERVA"],
+        ...multi.map(row => [row.asn, row.lpn, row.lpns, row.lpnsTxt || "", row.productos, row.pasillo, row.pallets, row.bultos, row.productosTxt, row.descripcion, row.metodo, "NO"])
+      ]
+    },
+    {
+      nombre: "Multi productos",
+      filas: [
+        ["ASN", "PALLET", "LPNS DETALLE", "CANTIDAD LPNS", "CANTIDAD CODIGOS", "TIPO", "ALMACENA EN RESERVA", "PASILLO REFERENCIAL", "METODO PASILLO", "CODIGO", "CODIGO ALTERNATIVO", "DESCRIPCION", "BULTOS", "UNIDADES"],
+        ...filasDetalleProductosPaletero(multi)
+      ]
+    }
+  ]);
 }
 
 function filasTablaCapacidadResumen(data) {
@@ -2208,11 +3515,51 @@ function analizarOptimizacionReserva() {
   };
 }
 
+function pasilloReservaOptimizar(ubicacion) {
+  const pasillo = pasilloMass(ubicacion);
+  return pasillo && pasillo !== "10" ? pasillo : "";
+}
+
+function productosMaximoPorPasillo(ubicaciones, maximos) {
+  const mapa = new Map();
+  Object.entries(maximos)
+    .filter(([, r]) => num(r.maximo) > 15)
+    .forEach(([codigo, registro]) => {
+      const maximo = num(registro.maximo);
+      ubicaciones
+        .filter(u => u.codigo === codigo)
+        .filter(u => pasilloReservaOptimizar(u.ubicacion))
+        .filter(u => Math.abs(num(u.bultos) - maximo) < 0.001 || (registro.origen === "VALIDADO PRESENCIALMENTE" && num(u.bultos) > 15))
+        .forEach(u => {
+          const pasillo = pasilloReservaOptimizar(u.ubicacion);
+          const key = `${pasillo}|${codigo}`;
+          if (!mapa.has(key)) {
+            mapa.set(key, {
+              pasillo,
+              codigo,
+              desc: registro.desc || u.desc || "",
+              maximo,
+              origen: registro.origen || "APRENDIDO POR REPETICION",
+              repeticiones: num(registro.repeticiones),
+              pallets: 0
+            });
+          }
+          mapa.get(key).pallets += 1;
+        });
+    });
+
+  return Array.from(mapa.values())
+    .sort((a, b) =>
+      Number(a.pasillo) - Number(b.pasillo) ||
+      b.pallets - a.pallets ||
+      b.maximo - a.maximo ||
+      a.desc.localeCompare(b.desc)
+    );
+}
+
 function verOptimizarReserva() {
   const analisis = analizarOptimizacionReserva();
-  const productosMaximo = Object.entries(analisis.maximos)
-    .filter(([, r]) => num(r.maximo) > 15)
-    .sort((a, b) => num(b[1].maximo) - num(a[1].maximo));
+  const productosMaximo = productosMaximoPorPasillo(analisis.ubicaciones, analisis.maximos);
   const sinActivo = analisis.criticos.filter(r => r.estado === "SIN UBICACION ACTIVA");
   const conActivo = analisis.criticos.filter(r => r.estado === "INGRESAR A ACTIVO");
   const bultosLiberables = analisis.liberables.reduce((a, b) => a + b.bultos, 0);
@@ -2284,9 +3631,17 @@ function verOptimizarReserva() {
         <div><h2>Registro de pallet completo aprendido</h2></div>
         <button onclick="exportarTablaVisible('tablaPalletMaximo', 'registro_pallet_maximo')">Excel</button>
       </div>
-      ${tablaConId("tablaPalletMaximo", ["Codigo", "Descripcion", "Max pallet", "Origen", "Repeticiones", "Ver"], productosMaximo.map(([codigo, r]) => `
-        <tr><td><strong>${htmlSeguro(codigo)}</strong></td><td>${htmlSeguro(r.desc)}</td><td class="number">${fmt(r.maximo)}</td><td>${htmlSeguro(r.origen || "APRENDIDO POR REPETICION")}</td><td>${fmt(r.repeticiones || 0)}</td>
-        <td><button class="soft" onclick="abrirDetalleOptimizacion(${argumentoSeguro(codigo)})">Ver</button></td></tr>
+      ${tablaConId("tablaPalletMaximo", ["Pasillo", "Codigo", "Descripcion", "Max pallet", "Pallets", "Origen", "Repeticiones", "Ver"], productosMaximo.map(r => `
+        <tr>
+          <td><strong>${htmlSeguro(r.pasillo)}</strong></td>
+          <td><strong>${htmlSeguro(r.codigo)}</strong></td>
+          <td>${htmlSeguro(r.desc)}</td>
+          <td class="number">${fmt(r.maximo)}</td>
+          <td class="number">${fmt(r.pallets)}</td>
+          <td>${htmlSeguro(r.origen || "APRENDIDO POR REPETICION")}</td>
+          <td>${fmt(r.repeticiones || 0)}</td>
+          <td><button class="soft" onclick="abrirDetalleOptimizacion(${argumentoSeguro(r.codigo)})">Ver</button></td>
+        </tr>
       `), "Aun no hay productos con un pallet completo repetido.")}
     </section>
     <div id="modalOptimizacionReserva" class="modal-backdrop" hidden></div>
@@ -3916,12 +5271,9 @@ function filasFaltantesUnicasPorLpnProducto(data, prefijo = "") {
   });
 }
 
-function aplicarPrecioUnicoFaltante(rows) {
+function aplicarPrecioUnicoControl(rows) {
   const vistos = new Set();
   return rows.map(r => {
-    if (!esUbicacionFaltanteAncPn(r.ubicacion)) {
-      return { ...r, precioUnitarioUnico: "", precioTotalUnico: "" };
-    }
     const clave = claveLpnProductoControl(r);
     if (!clave || clave === "|" || vistos.has(clave)) {
       return { ...r, precioUnitarioUnico: "", precioTotalUnico: "" };
@@ -4098,7 +5450,7 @@ function abrirDetallePuntoControl(detalleKey) {
     return;
   }
 
-  const rows = aplicarPrecioUnicoFaltante(detallePuntoControlFilas(detalle.data));
+  const rows = aplicarPrecioUnicoControl(detallePuntoControlFilas(detalle.data));
   const totalBultos = detalle.data.reduce((a, b) => a + b.bultos, 0);
   const totalLpns = new Set(detalle.data.map(r => r.lpn)).size;
   destino.innerHTML = `
@@ -4157,7 +5509,7 @@ function exportarDetallePuntosControlGeneral() {
     r.zona !== "MASS" &&
     (!q || [r.zona, r.ubicacion, r.lpn, r.codigo, r.desc].join(" ").toLowerCase().includes(q))
   );
-  const rows = aplicarPrecioUnicoFaltante(detallePuntoControlFilas(data));
+  const rows = aplicarPrecioUnicoControl(detallePuntoControlFilas(data));
 
   if (!rows.length) return alert("No hay detalle para exportar");
 

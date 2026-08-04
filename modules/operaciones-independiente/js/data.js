@@ -1,4 +1,7 @@
 const SHEET_ID = "1-v6vXjHpLlIn0-_lVZw0BtGopnxSHH0zqoOrW8aBwcg";
+const TAREAS_ASIGNACION_SHEET_ID = "1h0nR2IYyWDdmjcE-lWuTsqueCXq3aHQ49v_nJsrug0U";
+const RECEPCION_PROVEEDORES_SHEET_ID = "18iiFahjssG-2Or8HE9KjBer3DcuG0mDaMpxZj-rqycI";
+const RECEPCION_PALETEROS_SHEET_ID = "18WCnUcTQUdMunHaazPT663x0CmAaE72TvUPRNQZm7ts";
 
 let dataLPN = [];
 let dataProductos = [];
@@ -6,11 +9,14 @@ let dataPedido = [];
 let dataInventario = [];
 let dataUbicaciones = [];
 let dataBloqueo = [];
+let dataAsignacionTareas = [];
+let dataRecepcionProveedores = [];
+let dataRecepcionPaleteros = [];
 let datosListos = false;
 let advertenciasCarga = [];
 
-async function cargarHoja(nombre) {
-  const url = `https://opensheet.elk.sh/${SHEET_ID}/${encodeURIComponent(nombre)}`;
+async function cargarHojaDesde(sheetId, nombre) {
+  const url = `https://opensheet.elk.sh/${sheetId}/${encodeURIComponent(nombre)}`;
   const errores = [];
 
   try {
@@ -28,12 +34,16 @@ async function cargarHoja(nombre) {
   }
 
   try {
-    return await cargarHojaCsv(nombre);
+    return await cargarHojaCsvDesde(sheetId, nombre);
   } catch (error) {
     errores.push(`Google CSV: ${error.message || error}`);
   }
 
   throw new Error(`No se pudo cargar la hoja ${nombre}. Detalle: ${errores.join(" | ")}. Revisa que la pestana exista con ese nombre exacto, que el Google Sheet sea publico/visible y que la app este abierta desde server.js.`);
+}
+
+async function cargarHoja(nombre) {
+  return cargarHojaDesde(SHEET_ID, nombre);
 }
 
 function detectarSeparadorCsv(texto) {
@@ -89,8 +99,8 @@ function csvAObjetos(csv) {
   });
 }
 
-async function cargarHojaCsv(nombre) {
-  const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(nombre)}`;
+async function cargarHojaCsvDesde(sheetId, nombre) {
+  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(nombre)}`;
   let csv = "";
 
   try {
@@ -111,6 +121,76 @@ async function cargarHojaCsv(nombre) {
   return data;
 }
 
+async function cargarHojaCsv(nombre) {
+  return cargarHojaCsvDesde(SHEET_ID, nombre);
+}
+
+async function cargarHojaCsvPrincipalDesde(sheetId) {
+  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv`;
+  let csv = "";
+
+  try {
+    if (location.protocol === "file:") throw new Error("carga local");
+    if (window.parent !== window && typeof window.parent.ancCargarTexto === "function") {
+      csv = await window.parent.ancCargarTexto(url);
+    }
+  } catch (error) {}
+
+  if (!csv) {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText || ""}`.trim());
+    csv = await res.text();
+  }
+
+  const data = csvAObjetos(csv);
+  if (!data.length) throw new Error("CSV sin filas");
+  return data;
+}
+
+function cargarHojaGvizPrincipalDesde(sheetId) {
+  return new Promise((resolve, reject) => {
+    const callback = `ancGviz_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const script = document.createElement("script");
+    const limpiarScript = () => {
+      delete window[callback];
+      script.remove();
+    };
+    const timer = setTimeout(() => {
+      limpiarScript();
+      reject(new Error("Google GViz sin respuesta"));
+    }, 20000);
+
+    window[callback] = payload => {
+      clearTimeout(timer);
+      limpiarScript();
+      try {
+        const table = payload?.table;
+        const headers = (table?.cols || []).map(col => limpiar(col.label || col.id));
+        const data = (table?.rows || []).map(row => {
+          const obj = {};
+          headers.forEach((header, index) => {
+            const cell = row.c?.[index];
+            obj[header] = cell ? (cell.f ?? cell.v ?? "") : "";
+          });
+          return obj;
+        });
+        if (!data.length) throw new Error("GViz sin filas");
+        resolve(data);
+      } catch (error) {
+        reject(error);
+      }
+    };
+
+    script.onerror = () => {
+      clearTimeout(timer);
+      limpiarScript();
+      reject(new Error("No se pudo cargar Google GViz"));
+    };
+    script.src = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=responseHandler:${callback}`;
+    document.head.appendChild(script);
+  });
+}
+
 async function cargarOpcional(nombre) {
   try {
     return await cargarHoja(nombre);
@@ -118,6 +198,30 @@ async function cargarOpcional(nombre) {
     console.warn(error.message);
     return [];
   }
+}
+
+async function cargarOpcionalDesde(sheetId, nombre) {
+  try {
+    return await cargarHojaDesde(sheetId, nombre);
+  } catch (error) {
+    console.warn(error.message);
+    return [];
+  }
+}
+
+async function cargarOpcionalPrincipalDesde(sheetId, etiqueta) {
+  try {
+    return await cargarHojaCsvPrincipalDesde(sheetId);
+  } catch (error) {
+    console.warn(`CSV ${etiqueta}: ${error.message || error}`);
+  }
+
+  try {
+    return await cargarHojaGvizPrincipalDesde(sheetId);
+  } catch (error) {
+    console.warn(`No se pudo cargar ${etiqueta}: ${error.message || error}`);
+  }
+  return [];
 }
 
 function estado(texto) {
@@ -213,13 +317,16 @@ async function cargarDatos() {
   datosListos = false;
   estado("Cargando hojas base...");
 
-  const [lpns, productos, pedido, inventario, ubicaciones, bloqueo] = await Promise.all([
+  const [lpns, productos, pedido, inventario, ubicaciones, bloqueo, asignacionTareas, recepcionProveedores, recepcionPaleteros] = await Promise.all([
     cargarHoja("LPNS"),
     cargarHoja("PRODUCTOS"),
     cargarHoja("PEDIDO"),
     cargarHoja("INV_ACTIVO"),
     cargarOpcional("UBICACION"),
-    cargarOpcional("BLOQUEO")
+    cargarOpcional("BLOQUEO"),
+    cargarOpcionalDesde(TAREAS_ASIGNACION_SHEET_ID, "ASIGNACION"),
+    cargarOpcionalPrincipalDesde(RECEPCION_PROVEEDORES_SHEET_ID, "recepcion proveedores"),
+    cargarOpcionalPrincipalDesde(RECEPCION_PALETEROS_SHEET_ID, "recepcion paleteros")
   ]);
 
   dataLPN = lpns.map(normalizarFilaLpn);
@@ -228,10 +335,13 @@ async function cargarDatos() {
   dataInventario = inventario;
   dataUbicaciones = ubicaciones;
   dataBloqueo = bloqueo;
+  dataAsignacionTareas = asignacionTareas;
+  dataRecepcionProveedores = recepcionProveedores;
+  dataRecepcionPaleteros = recepcionPaleteros;
   validarDatosBase();
   datosListos = true;
 
-  estado(`LPNS ${lpns.length} | Productos ${productos.length} | Pedido ${pedido.length} | INV ${inventario.length}${advertenciasCarga.length ? " | Revisar columnas" : ""}`);
+  estado(`LPNS ${lpns.length} | Productos ${productos.length} | Pedido ${pedido.length} | INV ${inventario.length} | Recepcion ${recepcionProveedores.length + recepcionPaleteros.length}${advertenciasCarga.length ? " | Revisar columnas" : ""}`);
 }
 
 async function iniciarAplicacion() {

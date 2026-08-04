@@ -934,8 +934,7 @@ function obtenerDetallePedido() {
     item.filas += 1;
   });
 
-  const filas = Array.from(mapa.values())
-    .sort((a, b) => b.noAsignado - a.noAsignado || String(a.fecha).localeCompare(String(b.fecha), "es", { numeric: true }) || String(a.hora).localeCompare(String(b.hora), "es", { numeric: true }));
+  const filas = Array.from(mapa.values()).sort(ordenDetallePedidoReciente);
 
   const fechas = [...new Set(filas.map(r => r.fecha))].sort((a, b) => String(a).localeCompare(String(b), "es", { numeric: true }));
   cacheDetallePedido = { filas, fechas };
@@ -947,7 +946,13 @@ function datosDetallePedidoFiltrados() {
   const { filas } = obtenerDetallePedido();
   return filas
     .filter(r => !fechaDetallePedidoSeleccionada || r.fecha === fechaDetallePedidoSeleccionada)
-    .sort((a, b) => b.noAsignado - a.noAsignado || String(a.hora).localeCompare(String(b.hora), "es", { numeric: true }));
+    .sort(ordenDetallePedidoReciente);
+}
+
+function ordenDetallePedidoReciente(a, b) {
+  const fecha = String(a.fecha).localeCompare(String(b.fecha), "es", { numeric: true });
+  const hora = String(b.hora).localeCompare(String(a.hora), "es", { numeric: true });
+  return fecha || hora || b.noAsignado - a.noAsignado || String(a.producto).localeCompare(String(b.producto), "es", { numeric: true });
 }
 
 function cambiarFechaDetallePedido(valor) {
