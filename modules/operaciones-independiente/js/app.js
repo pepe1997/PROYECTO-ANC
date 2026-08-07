@@ -4,6 +4,12 @@ let detalleOptimizacionReserva = new Map();
 let detalleReservaActivo = new Map();
 let detalleLpnsSinActivo = new Map();
 let detalleControlPiso = new Map();
+let detallePlanMultiPiso = new Map();
+let detalleSimulacionCincoPallets = new Map();
+let detallePaquetesInteligentes = new Map();
+let detalleUnificacionProductoPiso = new Map();
+let detalleDestinoPiso = new Map();
+let cachePlanMultiPiso = { key: "", data: null };
 let prediccionPtsVista = { total: { ubicaciones: 0, bultos: 0, tareas: new Set(), lpns: new Set() }, resumen: [], ubicaciones: [] };
 let pasilloPrediccionPtsActivo = "";
 let recepcionUcaVista = { resumen: [], proveedores: [], proveedoresAsn: [], paleteros: [], paleterosAsn: [], total: {}, detalleAsnPasillo: [] };
@@ -95,6 +101,10 @@ function fmtDisponibilidad(valor, dinamica) {
 
 function pct(a, b) {
   return b > 0 ? (a / b) * 100 : 0;
+}
+
+function pctLimitado(a, b) {
+  return Math.max(0, Math.min(100, pct(a, b)));
 }
 
 function parseFecha(valor) {
@@ -4070,8 +4080,12 @@ function grupoLpnControlUbicacion(ubicacion) {
   return "";
 }
 
+function esGrupoPisoOperativo(grupo) {
+  return ["BLANCO", "BUFFER", "DROP-STOCK DESBLOQ", "DROP-STOCK", "RAMPA"].includes(limpiar(grupo).toUpperCase());
+}
+
 function esGrupoLpnControl(ubicacion) {
-  return ["BLANCO", "BUFFER", "DROP-STOCK DESBLOQ", "DROP-STOCK", "RAMPA"].includes(grupoLpnControlUbicacion(ubicacion));
+  return esGrupoPisoOperativo(grupoLpnControlUbicacion(ubicacion));
 }
 
 function normalizarLpnControl(row) {
@@ -4095,7 +4109,7 @@ function lpnsControlOperativo() {
   const vistos = new Map();
   lpnsOperativos()
     .map(normalizarLpnControl)
-    .filter(r => r.codigo && r.lpn && ["BLANCO", "BUFFER", "DROP-STOCK DESBLOQ", "DROP-STOCK", "RAMPA"].includes(r.grupo))
+    .filter(r => r.codigo && r.lpn && esGrupoPisoOperativo(r.grupo))
     .forEach(r => {
       const key = `${r.lpn}|${r.codigo}|${r.ubicacion}`;
       if (!vistos.has(key)) vistos.set(key, { ...r });
@@ -4251,7 +4265,7 @@ function indicesLpnsUbicacion() {
   const vistos = new Map();
   lpnsOperativos()
     .map(normalizarLpnControl)
-    .filter(r => r.codigo && r.lpn && ["BLANCO", "BUFFER", "DROP-STOCK DESBLOQ", "DROP-STOCK", "RAMPA"].includes(r.grupo))
+    .filter(r => r.codigo && r.lpn && esGrupoPisoOperativo(r.grupo))
     .forEach(r => {
       const itemKey = `${r.lpn}|${r.codigo}|${r.ubicacion}`;
       if (!vistos.has(itemKey)) vistos.set(itemKey, { ...r });
@@ -4705,7 +4719,7 @@ function enriquecerControlPiso(data = consolidarControlPisoPorLpnProducto()) {
   });
 }
 
-function verControlPiso(tab = "buscar") {
+function verControlPiso(tab = "plan") {
   detalleControlPiso = new Map();
   document.getElementById("modulo").innerHTML = `
     <div class="section-head">
@@ -4713,6 +4727,7 @@ function verControlPiso(tab = "buscar") {
         <h2>Control piso / LPN a dividir</h2>
       </div>
       <div class="filters">
+        <button class="${tab === "plan" ? "" : "ghost"}" onclick="verControlPiso('plan')">Plan multi piso</button>
         <button class="${tab === "buscar" ? "" : "ghost"}" onclick="verControlPiso('buscar')">Buscar LPN</button>
         <button class="${tab === "reporte" ? "" : "ghost"}" onclick="verControlPiso('reporte')">Reporte piso</button>
       </div>
@@ -4721,6 +4736,7 @@ function verControlPiso(tab = "buscar") {
     <div id="modalControlPiso" class="modal-backdrop" hidden></div>
   `;
   if (tab === "reporte") renderReporteControlPiso();
+  else if (tab === "plan") renderPlanMultiPiso();
   else renderBuscadorControlPiso();
 }
 
@@ -5065,6 +5081,1774 @@ function exportarControlPisoDetalle(detalleKey) {
     { nombre: "Detalle LPN", filas: filasControlPisoDetalleLpn(base) },
     { nombre: "Validacion activo", filas: filasControlPisoActivo(base) },
     { nombre: "Reserva acople", filas: filasControlPisoReserva(base) }
+  ]);
+}
+
+function keyCachePlanMultiPiso() {
+  return [
+    keyCacheLpnsUbicacion(),
+    dataPedido.length,
+    limpiar(dataPedido[0]?.PRODUCTO || dataPedido[0]?.Codigo || dataPedido[0]?.CODIGO),
+    limpiar(dataPedido[dataPedido.length - 1]?.PRODUCTO || dataPedido[dataPedido.length - 1]?.Codigo || dataPedido[dataPedido.length - 1]?.CODIGO),
+    localStorage.getItem("operaciones_pallet_maximo") || "",
+    localStorage.getItem("operaciones_validacion_reserva") || ""
+  ].join("|");
+}
+
+function pedidoNoAsignadoPorProducto() {
+  const mapa = new Map();
+  (dataPedido || []).forEach(row => {
+    const codigo = normalizar(campo(row, ["PRODUCTO", "Producto", "CODIGO", "Codigo"]));
+    if (!codigo) return;
+    const bultos = num(campo(row, [
+      "BULTOS_NO_ASIGNADO",
+      "BULTOS_NO_ASIGNADOS",
+      "BULTO_NO_ASIGNADO",
+      "BULTO_NO_ASIGANDO",
+      "BULTOS_NO_ASIGANDO",
+      "NO_ASIGNADO",
+      "NO ASIGNADO"
+    ]));
+    if (bultos <= 0) return;
+    if (!mapa.has(codigo)) {
+      mapa.set(codigo, {
+        codigo,
+        codigoAlt: codigoAlternativoProducto(codigo, row),
+        descripcion: descripcionProducto(codigo, row),
+        bultos: 0,
+        fechas: new Set()
+      });
+    }
+    const item = mapa.get(codigo);
+    item.bultos += bultos;
+    const fecha = limpiar(campo(row, ["FECHA_ORDEN", "FECHA", "Fecha", "Fecha Orden", "FECHA ORDEN"]));
+    if (fecha) item.fechas.add(fecha);
+  });
+  return mapa;
+}
+
+function maxPalletAprendidoPlan() {
+  const ubicaciones = consolidarReservaParaOptimizar();
+  return calcularPalletMaximo(ubicaciones);
+}
+
+function productosPlanMultiDesdePiso() {
+  const porProducto = new Map();
+  lpnsControlOperativo().forEach(row => {
+    if (!row.codigo || row.stock <= 0) return;
+    if (!porProducto.has(row.codigo)) {
+      porProducto.set(row.codigo, {
+        codigo: row.codigo,
+        codigoAlt: row.codigoAlt,
+        descripcion: row.descripcion,
+        bultos: 0,
+        unidades: 0,
+        lpns: new Set(),
+        ubicaciones: new Set(),
+        grupos: new Set(),
+        antiguedad: 0,
+        detalle: []
+      });
+    }
+    const item = porProducto.get(row.codigo);
+    item.bultos += num(row.stock);
+    item.unidades += num(row.unidades);
+    item.lpns.add(row.lpn);
+    item.ubicaciones.add(row.ubicacion);
+    item.grupos.add(row.grupo);
+    item.antiguedad = Math.max(item.antiguedad, num(row.antiguedad));
+    item.detalle.push(row);
+  });
+  return Array.from(porProducto.values());
+}
+
+function reservasIncompletasPlan(codigo, maximo) {
+  return detalleReservaProducto(codigo)
+    .map(r => ({
+      ...r,
+      faltantePallet: maximo > 0 ? Math.max(0, maximo - num(r.stock)) : 0,
+      pctPallet: maximo > 0 ? pctLimitado(num(r.stock), maximo) : 0
+    }))
+    .filter(r => maximo <= 0 || num(r.stock) < maximo * 0.98)
+    .sort((a, b) => b.stock - a.stock || ordenarUbicacion(a.ubicacion, b.ubicacion));
+}
+
+function activoSugeridoPlan(item) {
+  return detalleActivoProducto(item.codigo)
+    .map(a => ({
+      ...a,
+      ingresaTodo: a.capacidadDinamica || num(a.disponibleBultos) >= num(item.bultos),
+      ingresa: a.capacidadDinamica || num(a.disponibleBultos) >= num(item.bultos),
+      ingresaAlgo: a.capacidadDinamica || num(a.disponibleBultos) > 0,
+      faltanteBultos: a.capacidadDinamica ? 0 : Math.max(0, num(item.bultos) - num(a.disponibleBultos)),
+      faltanteUnidades: a.capacidadDinamica ? 0 : Math.max(0, num(item.unidades) - num(a.disponibleUnidades))
+    }))
+    .sort((a, b) => Number(b.ingresaTodo) - Number(a.ingresaTodo) || b.disponibleBultos - a.disponibleBultos || ordenarUbicacion(a.ubicacion, b.ubicacion));
+}
+
+function decidirPlanMultiPiso(item, contexto) {
+  const maximo = num(contexto.maximos[item.codigo]?.maximo);
+  const pedido = contexto.pedido.get(item.codigo);
+  const activo = activoSugeridoPlan(item);
+  const reserva = reservasIncompletasPlan(item.codigo, maximo);
+  const disponibleActivo = activo.reduce((a, b) => a + (b.capacidadDinamica ? item.bultos : Math.max(0, num(b.disponibleBultos))), 0);
+  const mejorReserva = reserva[0];
+  const pctPallet = maximo > 0 ? pctLimitado(item.bultos, maximo) : 0;
+  const acoplaReserva = mejorReserva && (maximo <= 0 || num(mejorReserva.stock) + num(item.bultos) <= maximo * 1.05);
+
+  let accion = "Baja prioridad";
+  let prioridad = "BAJA";
+  let motivo = "Menor a 15 bultos sin pedido, activo o reserva clara.";
+  let resultado = "Dejar al final y validar fisicamente.";
+  let score = item.antiguedad;
+
+  if (pedido?.bultos > 0) {
+    accion = "Atacar pedido";
+    prioridad = "ALTA";
+    motivo = `Pedido no asignado solicita ${fmt(pedido.bultos)} bultos.`;
+    resultado = "Separar primero para cubrir no asignado y evitar doble trabajo.";
+    score += 1000 + pedido.bultos;
+  } else if (maximo > 15 && item.bultos >= maximo * 0.5) {
+    accion = "Unificar y rackear";
+    prioridad = "ALTA";
+    motivo = `Piso llega al ${pctPallet.toFixed(1)}% del pallet aprendido (${fmt(maximo)} bultos).`;
+    resultado = "Formar pallet para reserva y retirar LPNs de piso.";
+    score += 850 + item.bultos;
+  } else if (acoplaReserva) {
+    accion = "Acoplar a reserva";
+    prioridad = item.bultos >= 15 ? "ALTA" : "MEDIA";
+    motivo = `Existe reserva incompleta en ${mejorReserva.ubicacion}.`;
+    resultado = "Unir con reserva para liberar piso sin crear pallet pequeño.";
+    score += 700 + item.bultos + num(mejorReserva.stock);
+  } else if (activo.some(a => a.ingresaTodo)) {
+    accion = "Ingresar a activo";
+    prioridad = item.bultos >= 15 ? "MEDIA" : "ALTA";
+    motivo = "Activo disponible recibe todo el stock del piso.";
+    resultado = "Mover a activo y cerrar el LPN de piso.";
+    score += 650 + item.bultos;
+  } else if (!maximo && item.bultos >= 30) {
+    accion = "Validar fisico";
+    prioridad = "MEDIA";
+    motivo = "No hay max pallet aprendido, pero el volumen amerita validar rackeo.";
+    resultado = "Validar fisicamente si puede subir a reserva.";
+    score += 420 + item.bultos;
+  } else if (item.bultos >= 15 && activo.some(a => a.ingresaAlgo)) {
+    accion = "Parcial a activo";
+    prioridad = "MEDIA";
+    motivo = `Activo tiene ${fmt(disponibleActivo)} bultos disponibles, pero no completa todo.`;
+    resultado = "Mover parcial a activo y revisar saldo.";
+    score += 360 + item.bultos;
+  } else if (item.bultos >= 15) {
+    accion = "Validar destino";
+    prioridad = "MEDIA";
+    motivo = "Tiene 15+ bultos, pero no se detecto destino automatico.";
+    resultado = "Validar con operacion para no dejarlo en piso.";
+    score += 250 + item.bultos;
+  }
+
+  if (item.detalle.length <= 3) score += 80;
+  if (item.antiguedad > 1) score += 120;
+
+  return { accion, prioridad, motivo, resultado, score, maximo, pctPallet, pedido, activo, reserva, mejorReserva };
+}
+
+function calcularPlanMultiPiso() {
+  const key = keyCachePlanMultiPiso();
+  if (cachePlanMultiPiso.key === key && cachePlanMultiPiso.data) return cachePlanMultiPiso.data;
+
+  const contexto = {
+    maximos: maxPalletAprendidoPlan(),
+    pedido: pedidoNoAsignadoPorProducto()
+  };
+  detallePlanMultiPiso = new Map();
+  const filas = productosPlanMultiDesdePiso().map((item, index) => {
+    const decision = decidirPlanMultiPiso(item, contexto);
+    const id = `${item.codigo}|${index}`;
+    const row = {
+      ...item,
+      id,
+      ...decision,
+      lpnsCount: item.lpns.size,
+      ubicacionesTxt: Array.from(item.ubicaciones).sort(ordenarUbicacion).join(", "),
+      gruposTxt: Array.from(item.grupos).sort().join(" / ")
+    };
+    detallePlanMultiPiso.set(id, row);
+    return row;
+  }).sort((a, b) => b.score - a.score || b.bultos - a.bultos || a.descripcion.localeCompare(b.descripcion));
+
+  const data = {
+    filas,
+    total: {
+      productos: filas.length,
+      lpns: new Set(filas.flatMap(r => Array.from(r.lpns))).size,
+      bultos: filas.reduce((a, b) => a + b.bultos, 0),
+      alta: filas.filter(r => r.prioridad === "ALTA").length,
+      media: filas.filter(r => r.prioridad === "MEDIA").length,
+      baja: filas.filter(r => r.prioridad === "BAJA").length,
+      pedido: filas.filter(r => r.accion === "Atacar pedido").length,
+      rackear: filas.filter(r => r.accion === "Unificar y rackear").length,
+      acoplar: filas.filter(r => r.accion === "Acoplar a reserva").length,
+      activo: filas.filter(r => r.accion === "Ingresar a activo").length
+    }
+  };
+
+  cachePlanMultiPiso = { key, data };
+  return data;
+}
+
+function filtrarPlanMultiPiso(data) {
+  const rows = Array.isArray(data) ? data : (data?.filas || []);
+  const q = limpiar(document.getElementById("filtroPlanMultiPiso")?.value).toLowerCase();
+  const accion = limpiar(document.getElementById("filtroAccionPlanMultiPiso")?.value);
+  const prioridad = limpiar(document.getElementById("filtroPrioridadPlanMultiPiso")?.value);
+  return rows
+    .filter(r => !accion || r.accion === accion)
+    .filter(r => !prioridad || r.prioridad === prioridad)
+    .filter(r => !q || [r.codigo, r.codigoAlt, r.descripcion, r.ubicacionesTxt, r.gruposTxt, r.accion, r.motivo].join(" ").toLowerCase().includes(q));
+}
+
+function destinoProductoSimulacionCinco(row, contexto) {
+  const maximo = num(contexto.maximos[row.codigo]?.maximo);
+  const pedido = contexto.pedido.get(row.codigo);
+  const activo = activoDisponibleParaLpn(row);
+  const activoOk = activo.find(a => a.ingresa);
+  if (activoOk) {
+    const disponible = activoOk.capacidadDinamica ? "SIN LIMITE" : fmt(activoOk.disponibleBultos);
+    return {
+      destino: "ACTIVO",
+      estado: "DESAPARECE",
+      ubicaciones: activo.slice(0, 3).map(a => a.ubicacion).join(", "),
+      destinoUbicacion: activoOk.ubicacion,
+      destinoLpn: "",
+      destinoStock: activoOk.bultos,
+      destinoDisponible: disponible,
+      motivo: pedido?.bultos > 0
+        ? `Ingresar ${fmt(row.stock)} bultos desde ${row.lpn}; activo ${activoOk.ubicacion} tiene ${disponible} bultos disponibles y pedido solicita ${fmt(pedido.bultos)}.`
+        : `Ingresar ${fmt(row.stock)} bultos desde ${row.lpn}; activo ${activoOk.ubicacion} tiene ${disponible} bultos disponibles.`,
+      pedido: pedido?.bultos || 0
+    };
+  }
+
+  const reserva = reservasIncompletasPlan(row.codigo, maximo)
+    .filter(r => normalizar(r.lpn) !== normalizar(row.lpn));
+  const reservaOk = reserva.find(r => maximo <= 0 || num(r.stock) + num(row.stock) <= maximo * 1.05) || reserva[0];
+  if (reservaOk) {
+    const faltante = maximo > 0 ? Math.max(0, maximo - num(reservaOk.stock)) : "";
+    return {
+      destino: "RESERVA / ACOPLE",
+      estado: "DESAPARECE",
+      ubicaciones: reserva.slice(0, 3).map(r => r.ubicacion).join(", "),
+      destinoUbicacion: reservaOk.ubicacion,
+      destinoLpn: reservaOk.lpn,
+      destinoStock: reservaOk.stock,
+      destinoDisponible: faltante === "" ? "VALIDAR" : fmt(faltante),
+      motivo: `Acoplar ${fmt(row.stock)} bultos del LPN ${row.lpn} con reserva ${reservaOk.lpn} en ${reservaOk.ubicacion}; reserva actual ${fmt(reservaOk.stock)} bultos${maximo > 0 ? `, max pallet ${fmt(maximo)}, espacio aprox. ${fmt(faltante)}` : ""}.`,
+      pedido: pedido?.bultos || 0
+    };
+  }
+
+  if (maximo > 15 && num(row.stock) >= maximo * 0.5) {
+    return {
+      destino: "RESERVA NUEVA",
+      estado: "DESAPARECE",
+      ubicaciones: "Validar ubicacion libre",
+      destinoUbicacion: "Ubicacion libre reserva",
+      destinoLpn: "",
+      destinoStock: 0,
+      destinoDisponible: fmt(maximo),
+      motivo: `Rackear ${fmt(row.stock)} bultos del LPN ${row.lpn}; forma ${pctLimitado(row.stock, maximo).toFixed(1)}% del pallet aprendido (${fmt(maximo)} bultos).`,
+      pedido: pedido?.bultos || 0
+    };
+  }
+
+  return {
+    destino: "PENDIENTE",
+    estado: "VALIDAR",
+    ubicaciones: "-",
+    destinoUbicacion: "-",
+    destinoLpn: "",
+    destinoStock: "",
+    destinoDisponible: "",
+    motivo: "No se detecto activo completo, reserva para acoplar ni volumen suficiente para rackear.",
+    pedido: pedido?.bultos || 0
+  };
+}
+
+function calcularSimulacionCincoPallets() {
+  const contexto = {
+    maximos: maxPalletAprendidoPlan(),
+    pedido: pedidoNoAsignadoPorProducto()
+  };
+  const porLpn = new Map();
+  consolidarControlPisoPorLpnProducto()
+    .filter(row => esGrupoPisoOperativo(row.grupo))
+    .forEach(row => {
+    if (!row.lpn || num(row.stock) <= 0) return;
+    const key = normalizar(row.lpn);
+    if (!porLpn.has(key)) {
+      porLpn.set(key, {
+        id: key,
+        lpn: row.lpn,
+        ubicaciones: new Set(),
+        grupos: new Set(),
+        productos: [],
+        bultos: 0,
+        unidades: 0,
+        antiguedad: 0
+      });
+    }
+    const item = porLpn.get(key);
+    item.ubicaciones.add(row.ubicacion);
+    item.grupos.add(row.grupo);
+    item.productos.push(row);
+    item.bultos += num(row.stock);
+    item.unidades += num(row.unidades);
+    item.antiguedad = Math.max(item.antiguedad, num(row.antiguedad));
+  });
+
+  detalleSimulacionCincoPallets = new Map();
+  const candidatos = Array.from(porLpn.values()).map(item => {
+    const detalle = item.productos.map(row => ({
+      ...row,
+      ...destinoProductoSimulacionCinco(row, contexto)
+    }));
+    const pendientes = detalle.filter(r => r.estado !== "DESAPARECE").length;
+    const conPedido = detalle.filter(r => r.pedido > 0).length;
+    const destinos = new Set(detalle.map(r => r.destino));
+    const completos = pendientes === 0;
+    const codigosCount = new Set(detalle.map(r => r.codigo)).size;
+    const tipoLpn = normalizar(item.lpn).startsWith("IC962") ? "IC962" : "OTROS";
+    const prioridad = completos && conPedido ? "ALTA" : completos ? "MEDIA" : "BAJA";
+    const score = (completos ? 100000 : 0) + (conPedido * 5000) + (item.antiguedad * 250) + item.bultos - (codigosCount * 120) - (pendientes * 10000);
+    const row = {
+      ...item,
+      detalle,
+      pendientes,
+      conPedido,
+      completo: completos,
+      prioridad,
+      tipoLpn,
+      score,
+      productosCount: item.productos.length,
+      codigosCount,
+      ubicacionesTxt: Array.from(item.ubicaciones).sort(ordenarUbicacion).join(", "),
+      gruposTxt: Array.from(item.grupos).sort().join(" / "),
+      destinoTxt: Array.from(destinos).join(" + "),
+      estado: completos ? "DESAPARECE DE PISO" : "VALIDAR"
+    };
+    detalleSimulacionCincoPallets.set(row.id, row);
+    return row;
+  }).sort((a, b) => b.score - a.score || a.productosCount - b.productosCount || b.bultos - a.bultos);
+
+  const seleccion = filtrarSimulacionCincoPallets(candidatos);
+  const grupos = agruparSimulacionCincoPallets(seleccion);
+  return {
+    filas: seleccion,
+    grupos,
+    total: {
+      pallets: seleccion.length,
+      completos: seleccion.filter(r => r.completo).length,
+      pendientes: seleccion.reduce((a, b) => a + b.pendientes, 0),
+      productos: seleccion.reduce((a, b) => a + b.productosCount, 0),
+      bultos: seleccion.reduce((a, b) => a + b.bultos, 0),
+      unidades: seleccion.reduce((a, b) => a + b.unidades, 0)
+    }
+  };
+}
+
+function filtrarSimulacionCincoPallets(data) {
+  const antiguedad = limpiar(document.getElementById("filtroSimCincoAntiguedad")?.value);
+  const codigos = limpiar(document.getElementById("filtroSimCincoCodigos")?.value);
+  const estado = limpiar(document.getElementById("filtroSimCincoEstado")?.value) || "DESAPARECE";
+  const prioridad = limpiar(document.getElementById("filtroSimCincoPrioridad")?.value);
+  return data
+    .filter(r => !antiguedad || (antiguedad === "0" ? r.antiguedad <= 0 : antiguedad === "1" ? r.antiguedad === 1 : r.antiguedad > 1))
+    .filter(r => !codigos || (codigos === "1" ? r.codigosCount === 1 : codigos === "2" ? r.codigosCount === 2 : r.codigosCount >= 3))
+    .filter(r => estado === "TODOS" || (estado === "DESAPARECE" ? r.completo : !r.completo))
+    .filter(r => !prioridad || r.prioridad === prioridad);
+}
+
+function agruparSimulacionCincoPallets(data) {
+  const grupos = [
+    { tipo: "IC962", titulo: "LPNs IC962", filas: data.filter(r => r.tipoLpn === "IC962") },
+    { tipo: "OTROS", titulo: "Otros LPNs", filas: data.filter(r => r.tipoLpn !== "IC962") }
+  ];
+  grupos.forEach(grupo => {
+    grupo.bloques = [];
+    for (let i = 0; i < grupo.filas.length; i += 5) {
+      grupo.bloques.push({
+        numero: Math.floor(i / 5) + 1,
+        filas: grupo.filas.slice(i, i + 5)
+      });
+    }
+  });
+  return grupos;
+}
+
+function filasSimulacionConGrupo(data) {
+  return data.flatMap(grupo => grupo.bloques.flatMap(bloque => bloque.filas.map((row, index) => ({
+    ...row,
+    grupoCinco: bloque.numero,
+    ordenGrupo: index + 1
+  }))));
+}
+
+function tablaSimulacionCincoPallets(data, tablaId = "tablaSimulacionCincoPallets") {
+  return tablaConId(tablaId, ["Grupo 5", "Orden", "LPN", "Ubicacion piso", "Codigos", "Productos", "Bultos", "Unidades", "Antig.", "Prioridad", "Destino", "Estado", "Ver"], data.map(r => `
+    <tr class="${r.completo ? "ok" : "warn"}">
+      <td><strong>${fmt(r.grupoCinco)}</strong></td>
+      <td><strong>${fmt(r.ordenGrupo)}</strong></td>
+      <td><strong>${htmlSeguro(r.lpn)}</strong><br><small>${htmlSeguro(r.gruposTxt)}</small></td>
+      <td>${htmlSeguro(r.ubicacionesTxt)}</td>
+      <td class="number">${fmt(r.codigosCount)}</td>
+      <td class="number">${fmt(r.productosCount)}</td>
+      <td class="number"><strong>${fmt(r.bultos)}</strong></td>
+      <td class="number">${fmt(r.unidades)}</td>
+      <td class="number">${fmt(r.antiguedad)}</td>
+      <td><strong>${htmlSeguro(r.prioridad)}</strong></td>
+      <td>${htmlSeguro(r.destinoTxt)}</td>
+      <td><strong>${htmlSeguro(r.estado)}</strong>${r.pendientes ? `<br><small>${fmt(r.pendientes)} pendientes</small>` : ""}</td>
+      <td><button class="compact" onclick="abrirDetalleSimulacionCinco(${argumentoSeguro(r.id)})">Ver</button></td>
+    </tr>
+  `), "No hay LPNs de piso para simular.");
+}
+
+function bloqueSimulacionCincoPallets(simulacion) {
+  const gruposCompletos = [
+    { tipo: "IC962", titulo: "LPNs IC962 que desaparecen completos", filas: simulacion.filas.filter(r => r.completo && r.tipoLpn === "IC962") },
+    { tipo: "OTROS", titulo: "Otros LPNs que desaparecen completos", filas: simulacion.filas.filter(r => r.completo && r.tipoLpn !== "IC962") }
+  ].map(grupo => {
+    const base = { ...grupo, bloques: [] };
+    for (let i = 0; i < grupo.filas.length; i += 5) {
+      base.bloques.push({
+        numero: Math.floor(i / 5) + 1,
+        filas: grupo.filas.slice(i, i + 5)
+      });
+    }
+    return base;
+  });
+
+  return gruposCompletos.map(grupo => `
+    <section class="card subcard sim-group-card">
+      <div class="section-head">
+        <div>
+          <h3>${htmlSeguro(grupo.titulo)}</h3>
+        </div>
+        <span class="muted-note">${fmt(grupo.filas.length)} LPNs completos | grupos de 5</span>
+      </div>
+      <p class="muted-note">Solo aparecen LPNs donde todos sus productos tienen salida sugerida: activo, acople a reserva o reserva nueva.</p>
+      <div class="sim-scroll-table">
+        ${tablaSimulacionCincoPallets(filasSimulacionConGrupo([grupo]), `tablaSimulacionCincoPallets_${grupo.tipo}`)}
+      </div>
+    </section>
+  `).join("");
+}
+
+function codigosDeLpnSimulado(row) {
+  return new Set((row.detalle || []).map(d => normalizar(d.codigo)).filter(Boolean));
+}
+
+function scoreRelacionPaquete(row, paquete) {
+  const codigosRow = codigosDeLpnSimulado(row);
+  const codigosPaquete = paquete.codigos || new Set();
+  let coincidencias = 0;
+  codigosRow.forEach(codigo => {
+    if (codigosPaquete.has(codigo)) coincidencias += 1;
+  });
+  const mezclaTipo = paquete.tipos?.has(row.tipoLpn) ? 0 : 350;
+  return (coincidencias * 8000)
+    + (row.conPedido * 2000)
+    + (row.antiguedad * 180)
+    + (row.bultos * 0.5)
+    + mezclaTipo
+    - (row.codigosCount * 80);
+}
+
+function calcularPaquetesInteligentes(simulacion) {
+  const tamano = Math.max(1, num(document.getElementById("filtroSimInteligenteTamano")?.value) || 5);
+  const filas = (simulacion?.filas || []);
+  const baseOtros = filas
+    .filter(r => r.tipoLpn !== "IC962")
+    .sort((a, b) => b.conPedido - a.conPedido || b.score - a.score || b.antiguedad - a.antiguedad);
+  const baseIc962 = filas
+    .filter(r => r.tipoLpn === "IC962")
+    .sort((a, b) => b.score - a.score || b.antiguedad - a.antiguedad);
+  const pendientes = new Map(baseOtros.map(r => [r.id, r]));
+  const paquetes = [];
+
+  detallePaquetesInteligentes = new Map();
+
+  while (pendientes.size) {
+    const paquete = {
+      id: `GRUPO-${String(paquetes.length + 1).padStart(2, "0")}`,
+      numero: paquetes.length + 1,
+      filas: [],
+      complementos: [],
+      codigos: new Set(),
+      tipos: new Set()
+    };
+
+    const semilla = Array.from(pendientes.values())
+      .sort((a, b) => b.conPedido - a.conPedido || b.score - a.score || a.codigosCount - b.codigosCount)[0];
+    if (!semilla) break;
+
+    paquete.filas.push(semilla);
+    codigosDeLpnSimulado(semilla).forEach(c => paquete.codigos.add(c));
+    paquete.tipos.add(semilla.tipoLpn);
+    pendientes.delete(semilla.id);
+
+    while (paquete.filas.length < tamano && pendientes.size) {
+      const siguiente = Array.from(pendientes.values())
+        .map(row => ({ row, score: scoreRelacionPaquete(row, paquete) }))
+        .sort((a, b) => b.score - a.score || b.row.score - a.row.score)[0]?.row;
+      if (!siguiente) break;
+      paquete.filas.push(siguiente);
+      codigosDeLpnSimulado(siguiente).forEach(c => paquete.codigos.add(c));
+      paquete.tipos.add(siguiente.tipoLpn);
+      pendientes.delete(siguiente.id);
+    }
+
+    paquete.complementos = baseIc962
+      .filter(row => [...codigosDeLpnSimulado(row)].some(codigo => paquete.codigos.has(codigo)))
+      .slice(0, tamano);
+
+    const conteoCodigos = new Map();
+    [...paquete.filas, ...paquete.complementos].forEach(row => {
+      codigosDeLpnSimulado(row).forEach(codigo => conteoCodigos.set(codigo, (conteoCodigos.get(codigo) || 0) + 1));
+    });
+    const codigosComunes = [...conteoCodigos.entries()].filter(([, total]) => total > 1).length;
+    const productos = evaluarProductosPaqueteInteligente(paquete);
+    const destinos = new Set(productos.map(d => d.decision));
+    const pendientesProductos = paquete.filas.reduce((a, b) => a + b.pendientes, 0);
+    const conPedido = paquete.filas.reduce((a, b) => a + b.conPedido, 0);
+    const palletsFormables = productos.reduce((a, b) => a + b.pallets, 0);
+    const rackFisico = productos.filter(p => p.decision === "RACKEAR / VALIDAR FISICO").length;
+    const activo = productos.filter(p => p.decision === "INGRESAR A ACTIVO").length;
+    const acople = productos.filter(p => p.decision === "ACOPLAR A RESERVA").length;
+    const pendientesDestino = productos.filter(p => p.decision.includes("PENDIENTE") || p.decision.includes("VALIDAR")).length;
+
+    Object.assign(paquete, {
+      lpnsCount: paquete.filas.length,
+      complementosCount: paquete.complementos.length,
+      ic962: paquete.complementos.length,
+      otros: paquete.filas.filter(r => r.tipoLpn !== "IC962").length,
+      codigosCount: paquete.codigos.size,
+      codigosComunes,
+      productos,
+      productosCount: productos.length,
+      bultos: paquete.filas.reduce((a, b) => a + b.bultos, 0),
+      unidades: paquete.filas.reduce((a, b) => a + b.unidades, 0),
+      antiguedad: Math.max(0, ...paquete.filas.map(r => num(r.antiguedad))),
+      conPedido,
+      palletsFormables,
+      rackFisico,
+      activo,
+      acople,
+      pendientesDestino,
+      destinoTxt: [...destinos].join(" + "),
+      estado: pendientesDestino ? "VALIDAR SALDOS" : "PLAN COMPLETO",
+      motivo: codigosComunes
+        ? `${codigosComunes} codigo(s) conectan estos LPNs. Primero formar pallet completo; luego activo o acople.`
+        : "Grupo armado por prioridad y antiguedad. Validar porque la coincidencia de codigos es baja."
+    });
+
+    detallePaquetesInteligentes.set(paquete.id, paquete);
+    paquetes.push(paquete);
+  }
+
+  return paquetes;
+}
+
+function evaluarProductosPaqueteInteligente(paquete) {
+  const contexto = {
+    maximos: maxPalletAprendidoPlan(),
+    pedido: pedidoNoAsignadoPorProducto()
+  };
+  const porCodigo = new Map();
+  [...paquete.filas, ...paquete.complementos].forEach(lpn => {
+    (lpn.detalle || []).forEach(d => {
+      if (!porCodigo.has(d.codigo)) {
+        porCodigo.set(d.codigo, {
+          codigo: d.codigo,
+          codigoAlt: d.codigoAlt,
+          descripcion: d.descripcion,
+          lpns: new Set(),
+          lpnsOtros: new Set(),
+          lpnsIc962: new Set(),
+          ubicaciones: new Set(),
+          bultos: 0,
+          unidades: 0,
+          antiguedad: 0
+        });
+      }
+      const item = porCodigo.get(d.codigo);
+      item.lpns.add(lpn.lpn);
+      if (lpn.tipoLpn === "IC962") item.lpnsIc962.add(lpn.lpn);
+      else item.lpnsOtros.add(lpn.lpn);
+      item.ubicaciones.add(d.ubicacion);
+      item.bultos += num(d.stock);
+      item.unidades += num(d.unidades);
+      item.antiguedad = Math.max(item.antiguedad, num(d.antiguedad));
+    });
+  });
+
+  return Array.from(porCodigo.values()).map(item => {
+    const maximo = num(contexto.maximos[item.codigo]?.maximo);
+    const pct = maximo > 0 ? pctLimitado(item.bultos, maximo) : 0;
+    const pallets = maximo > 0 ? Math.floor(item.bultos / maximo) : 0;
+    const saldo = maximo > 0 ? Math.max(0, item.bultos - (pallets * maximo)) : item.bultos;
+    const reservaOk = reservasIncompletasPlan(item.codigo, maximo).find(r => maximo <= 0 || num(r.stock) + saldo <= maximo * 1.05);
+    const activoOk = detalleActivoProducto(item.codigo).find(a => a.capacidadDinamica || num(a.disponibleBultos) >= saldo);
+    let decision = "PENDIENTE / VALIDAR";
+    let destino = "-";
+    let motivo = "No alcanza maximo aprendido ni se encontro destino automatico.";
+
+    if (maximo > 0 && pallets > 0) {
+      decision = "FORMAR PALLET COMPLETO";
+      destino = "Reserva nueva";
+      motivo = `Forma ${fmt(pallets)} pallet(s) de ${fmt(maximo)} bultos${saldo > 0 ? ` y deja saldo ${fmt(saldo)}` : ""}.`;
+    } else if (maximo > 0 && item.bultos >= maximo * 0.5) {
+      decision = "RACKEAR / VALIDAR FISICO";
+      destino = "Reserva nueva validada";
+      motivo = `Llega al ${pct.toFixed(1)}% del max pallet (${fmt(maximo)} bultos).`;
+    } else if (saldo > 0 && activoOk) {
+      decision = "INGRESAR A ACTIVO";
+      destino = activoOk.ubicacion;
+      motivo = `Activo disponible recibe ${fmt(saldo)} bultos.`;
+    } else if (saldo > 0 && reservaOk) {
+      decision = "ACOPLAR A RESERVA";
+      destino = `${reservaOk.ubicacion} / ${reservaOk.lpn}`;
+      motivo = `Acoplar saldo ${fmt(saldo)} con reserva de ${fmt(reservaOk.stock)} bultos.`;
+    }
+
+    return {
+      ...item,
+      lpnsCount: item.lpns.size,
+      lpnsOtrosCount: item.lpnsOtros.size,
+      lpnsIc962Count: item.lpnsIc962.size,
+      ubicacionesTxt: Array.from(item.ubicaciones).sort(ordenarUbicacion).join(", "),
+      lpnsTxt: Array.from(item.lpns).sort().join(", "),
+      maximo,
+      pct,
+      pallets,
+      saldo,
+      decision,
+      destino,
+      motivo
+    };
+  }).sort((a, b) => b.pallets - a.pallets || b.bultos - a.bultos || b.lpnsCount - a.lpnsCount);
+}
+
+function tablaPaquetesInteligentes(paquetes) {
+  return tablaConId("tablaPaquetesInteligentes", ["Grupo", "LPNs OTROS", "Complemento IC962", "Codigos conectados", "Pallets completos", "Rack/validar", "Activo", "Acople", "Pendientes", "Bultos OTROS", "Estado", "Ver"], paquetes.map(p => `
+    <tr class="${p.estado === "PLAN COMPLETO" ? "ok" : "warn"}">
+      <td><strong>${htmlSeguro(p.id)}</strong><br><small>${fmt(p.lpnsCount)} LPNs base</small></td>
+      <td>${p.filas.map(r => `<strong>${htmlSeguro(r.lpn)}</strong>`).join("<br>")}</td>
+      <td class="number"><strong>${fmt(p.complementosCount)}</strong></td>
+      <td class="number"><strong>${fmt(p.codigosComunes)}</strong></td>
+      <td class="number"><strong>${fmt(p.palletsFormables)}</strong></td>
+      <td class="number">${fmt(p.rackFisico)}</td>
+      <td class="number">${fmt(p.activo)}</td>
+      <td class="number">${fmt(p.acople)}</td>
+      <td class="number">${fmt(p.pendientesDestino)}</td>
+      <td class="number"><strong>${fmt(p.bultos)}</strong></td>
+      <td><strong>${htmlSeguro(p.estado)}</strong><br><small>${htmlSeguro(p.motivo)}</small></td>
+      <td><button class="compact" onclick="abrirDetallePaqueteInteligente(${argumentoSeguro(p.id)})">Ver</button></td>
+    </tr>
+  `), "No hay grupos por coincidencia para mostrar con los filtros actuales.");
+}
+
+function bloquePaquetesInteligentes(simulacion, paquetes, tamanoActual) {
+  return `
+    <section class="card subcard smart-package-wrap">
+      <div class="section-head">
+        <div>
+          <h3>Grupos recomendados por coincidencia de productos</h3>
+        </div>
+        <div class="filters">
+          <select class="select-filter" id="filtroSimInteligenteTamano" onchange="renderPlanMultiPiso()">
+            <option value="5" ${tamanoActual !== "10" ? "selected" : ""}>Grupos de 5 LPNs</option>
+            <option value="10" ${tamanoActual === "10" ? "selected" : ""}>Grupos de 10 LPNs</option>
+          </select>
+          <button onclick="exportarSimulacionCincoPallets()">Excel completo</button>
+        </div>
+      </div>
+      <p class="muted-note">Primero escoge LPNs de piso que no son IC962. Luego busca IC962 solo si comparte codigos para completar pallet, rackear, ingresar a activo o acoplar en reserva.</p>
+      <section class="kpi-grid compact">
+        ${kpi("Grupos", fmt(paquetes.length), `base de ${fmt(simulacion.total.pallets)} LPNs`)}
+        ${kpi("LPNs OTROS", fmt(paquetes.reduce((a, b) => a + b.lpnsCount, 0)), "seleccionados para trabajar")}
+        ${kpi("Complemento IC962", fmt(paquetes.reduce((a, b) => a + b.complementosCount, 0)), "por coincidencia de producto")}
+        ${kpi("Codigos comunes", fmt(paquetes.reduce((a, b) => a + b.codigosComunes, 0)), "productos repetidos entre LPNs")}
+        ${kpi("Pallets completos", fmt(paquetes.reduce((a, b) => a + b.palletsFormables, 0)), "formables por max aprendido")}
+      </section>
+      <div class="sim-scroll-table">
+        ${tablaPaquetesInteligentes(paquetes)}
+      </div>
+    </section>
+  `;
+}
+
+function abrirDetallePaqueteInteligente(id) {
+  const paquete = detallePaquetesInteligentes.get(id);
+  const destino = document.getElementById("modalControlPiso");
+  if (!destino) return;
+  if (!paquete) {
+    destino.innerHTML = `<div class="modal-card"><button class="ghost" onclick="cerrarControlPisoModal()">Cerrar</button><p>Sin detalle para mostrar.</p></div>`;
+    destino.hidden = false;
+    return;
+  }
+
+  const filasLpnDetalle = [...paquete.filas, ...paquete.complementos];
+  const resumenLpns = tablaConId("tablaDetallePaqueteLpns", ["LPN", "Tipo", "Rol", "Ubicacion piso", "Codigos", "Productos", "Bultos", "Unidades", "Antig.", "Prioridad", "Estado"], filasLpnDetalle.map(r => `
+    <tr class="${r.completo ? "ok" : "warn"}">
+      <td><strong>${htmlSeguro(r.lpn)}</strong></td>
+      <td>${htmlSeguro(r.tipoLpn)}</td>
+      <td><strong>${r.tipoLpn === "IC962" ? "COMPLEMENTO" : "BASE OTROS"}</strong></td>
+      <td>${htmlSeguro(r.ubicacionesTxt)}</td>
+      <td class="number">${fmt(r.codigosCount)}</td>
+      <td class="number">${fmt(r.productosCount)}</td>
+      <td class="number"><strong>${fmt(r.bultos)}</strong></td>
+      <td class="number">${fmt(r.unidades)}</td>
+      <td class="number">${fmt(r.antiguedad)}</td>
+      <td><strong>${htmlSeguro(r.prioridad)}</strong></td>
+      <td>${htmlSeguro(r.estado)}</td>
+    </tr>
+  `), "Sin LPNs.");
+
+  const detalleProductos = tablaConId("tablaDetallePaqueteProductos", ["Codigo", "Descripcion", "LPNs", "OTROS", "IC962", "Bultos", "Unidades", "Max pallet", "%", "Pallets", "Saldo", "Decision", "Destino", "Motivo"], paquete.productos.map(d => `
+    <tr class="${d.decision.includes("PENDIENTE") ? "warn" : "ok"}">
+      <td><strong>${htmlSeguro(d.codigo)}</strong><br><small>${htmlSeguro(d.codigoAlt)}</small></td>
+      <td>${htmlSeguro(d.descripcion)}</td>
+      <td>${htmlSeguro(d.lpnsTxt)}</td>
+      <td class="number">${fmt(d.lpnsOtrosCount)}</td>
+      <td class="number">${fmt(d.lpnsIc962Count)}</td>
+      <td class="number"><strong>${fmt(d.bultos)}</strong></td>
+      <td class="number">${fmt(d.unidades)}</td>
+      <td class="number">${d.maximo ? fmt(d.maximo) : "VALIDAR"}</td>
+      <td class="number">${d.maximo ? `${d.pct.toFixed(1)}%` : "-"}</td>
+      <td class="number"><strong>${fmt(d.pallets)}</strong></td>
+      <td class="number">${fmt(d.saldo)}</td>
+      <td><strong>${htmlSeguro(d.decision)}</strong></td>
+      <td>${htmlSeguro(d.destino)}</td>
+      <td>${htmlSeguro(d.motivo)}</td>
+    </tr>
+  `), "Sin productos.");
+
+  destino.innerHTML = `
+    <div class="modal-card wide">
+      <div class="section-head">
+        <div>
+          <h2>${htmlSeguro(paquete.id)} por coincidencia</h2>
+          <p class="muted-note">${fmt(paquete.lpnsCount)} LPNs OTROS | ${fmt(paquete.complementosCount)} IC962 complemento | ${fmt(paquete.palletsFormables)} pallets formables.</p>
+        </div>
+        <div class="filters">
+          <button onclick="exportarPaqueteInteligenteDetalle(${argumentoSeguro(paquete.id)})">Excel detalle</button>
+          <button class="ghost" onclick="cerrarControlPisoModal()">Cerrar</button>
+        </div>
+      </div>
+      <div class="smart-package-detail">
+        <section>
+          <h3>LPNs del paquete</h3>
+          ${resumenLpns}
+        </section>
+        <section>
+          <h3>Productos a resolver</h3>
+          ${detalleProductos}
+        </section>
+      </div>
+    </div>
+  `;
+  destino.hidden = false;
+}
+
+function calcularUnificacionProductoPiso() {
+  const contexto = {
+    maximos: maxPalletAprendidoPlan(),
+    pedido: pedidoNoAsignadoPorProducto()
+  };
+  const porProducto = new Map();
+
+  consolidarControlPisoPorLpnProducto()
+    .filter(row => esGrupoPisoOperativo(row.grupo))
+    .forEach(row => {
+      if (!row.codigo || !row.lpn || num(row.stock) <= 0) return;
+      if (!porProducto.has(row.codigo)) {
+        porProducto.set(row.codigo, {
+          id: row.codigo,
+          codigo: row.codigo,
+          codigoAlt: row.codigoAlt,
+          descripcion: row.descripcion,
+          lpns: new Set(),
+          ubicaciones: new Set(),
+          grupos: new Set(),
+          bultos: 0,
+          unidades: 0,
+          antiguedad: 0,
+          detalle: []
+        });
+      }
+      const item = porProducto.get(row.codigo);
+      item.lpns.add(row.lpn);
+      item.ubicaciones.add(row.ubicacion);
+      item.grupos.add(row.grupo);
+      item.bultos += num(row.stock);
+      item.unidades += num(row.unidades);
+      item.antiguedad = Math.max(item.antiguedad, num(row.antiguedad));
+      item.detalle.push({
+        ...row,
+        ...destinoProductoSimulacionCinco(row, contexto)
+      });
+    });
+
+  detalleUnificacionProductoPiso = new Map();
+  return Array.from(porProducto.values())
+    .filter(item => item.lpns.size >= 2)
+    .map(item => {
+      const maximo = num(contexto.maximos[item.codigo]?.maximo);
+      const pedido = contexto.pedido.get(item.codigo);
+      const pctPallet = maximo > 0 ? pctLimitado(item.bultos, maximo) : 0;
+      const reserva = reservasIncompletasPlan(item.codigo, maximo);
+      const reservaOk = reserva.find(r => maximo <= 0 || num(r.stock) + num(item.bultos) <= maximo * 1.05);
+      const activoOk = detalleActivoProducto(item.codigo).find(a => a.capacidadDinamica || num(a.disponibleBultos) >= num(item.bultos));
+
+      let accion = "VALIDAR FISICO";
+      let prioridad = "MEDIA";
+      let motivo = "Producto repetido en piso, pero sin maximo aprendido suficiente.";
+      let score = item.bultos + item.antiguedad * 100 + item.lpns.size * 250;
+
+      if (maximo > 0 && item.bultos >= maximo) {
+        accion = "FORMAR PALLET COMPLETO";
+        prioridad = "ALTA";
+        motivo = `Los LPNs de piso suman ${pctPallet.toFixed(1)}% del pallet aprendido.`;
+        score += 12000;
+      } else if (maximo > 0 && item.bultos >= maximo * 0.5) {
+        accion = "FORMAR PALLET PARA RACK";
+        prioridad = "ALTA";
+        motivo = `Supera el 50% del pallet aprendido (${fmt(maximo)} bultos).`;
+        score += 9000;
+      } else if (reservaOk) {
+        accion = "ACOPLAR A RESERVA";
+        prioridad = "ALTA";
+        motivo = `Puede acoplarse con reserva existente ${reservaOk.ubicacion}.`;
+        score += 7000;
+      } else if (activoOk) {
+        accion = "INGRESAR A ACTIVO";
+        prioridad = "MEDIA";
+        motivo = `Activo disponible en ${activoOk.ubicacion}.`;
+        score += 5000;
+      } else if (item.bultos < 15) {
+        prioridad = "BAJA";
+        motivo = "Menor a 15 bultos; dejar al final si no existe coincidencia mejor.";
+        score -= 3000;
+      }
+
+      const row = {
+        ...item,
+        lpnsCount: item.lpns.size,
+        ubicacionesTxt: Array.from(item.ubicaciones).sort(ordenarUbicacion).join(", "),
+        gruposTxt: Array.from(item.grupos).sort().join(" / "),
+        maximo,
+        pctPallet,
+        pedido: pedido?.bultos || 0,
+        accion,
+        prioridad,
+        motivo,
+        score
+      };
+      detalleUnificacionProductoPiso.set(row.id, row);
+      return row;
+    })
+    .filter(row => row.accion.includes("FORMAR") || row.accion === "ACOPLAR A RESERVA" || (row.bultos >= 15 && row.lpnsCount >= 2))
+    .sort((a, b) => b.score - a.score || b.bultos - a.bultos || b.lpnsCount - a.lpnsCount);
+}
+
+function tablaUnificacionProductoPiso(data) {
+  return tablaConId("tablaUnificacionProductoPiso", ["Prioridad", "Accion", "Codigo", "Descripcion", "LPNs piso", "Bultos", "Unidades", "Max pallet", "% pallet", "Pedido", "Ubicaciones piso", "Motivo", "Ver"], data.map(r => `
+    <tr class="${r.prioridad === "ALTA" ? "warn" : ""}">
+      <td><strong>${htmlSeguro(r.prioridad)}</strong></td>
+      <td><strong>${htmlSeguro(r.accion)}</strong></td>
+      <td><strong>${htmlSeguro(r.codigo)}</strong><br><small>${htmlSeguro(r.codigoAlt)}</small></td>
+      <td>${htmlSeguro(r.descripcion)}</td>
+      <td class="number"><strong>${fmt(r.lpnsCount)}</strong></td>
+      <td class="number"><strong>${fmt(r.bultos)}</strong></td>
+      <td class="number">${fmt(r.unidades)}</td>
+      <td class="number">${r.maximo ? fmt(r.maximo) : "SIN MAX"}</td>
+      <td class="number">${r.maximo ? `${r.pctPallet.toFixed(1)}%` : "-"}</td>
+      <td class="number">${fmt(r.pedido)}</td>
+      <td>${htmlSeguro(r.ubicacionesTxt)}</td>
+      <td>${htmlSeguro(r.motivo)}</td>
+      <td><button class="compact" onclick="abrirDetalleUnificacionProductoPiso(${argumentoSeguro(r.id)})">Ver</button></td>
+    </tr>
+  `), "No hay productos repetidos en piso que sumen prioridad.");
+}
+
+function bloqueUnificacionProductoPiso(data) {
+  return `
+    <section class="card subcard smart-package-wrap">
+      <div class="section-head">
+        <div>
+          <h3>Sugerencia para formar pallet por coincidencia</h3>
+        </div>
+        <span class="muted-note">${fmt(data.length)} productos candidatos</span>
+      </div>
+      <p class="muted-note">Agrupa productos repetidos en LPNs de piso para formar un pallet valido, rackearlo o acoplarlo en reserva.</p>
+      <div class="sim-scroll-table">
+        ${tablaUnificacionProductoPiso(data)}
+      </div>
+    </section>
+  `;
+}
+
+function resumenDestinoPiso(d) {
+  if (d.destino === "RESERVA / ACOPLE") return `Acoplar en ${d.destinoUbicacion || d.ubicaciones}`;
+  if (d.destino === "ACTIVO") return `Ingresar a ${d.destinoUbicacion || d.ubicaciones}`;
+  if (d.destino === "RESERVA NUEVA") return "Formar pallet para reserva";
+  if (d.destino === "PENDIENTE") return "Validar manual";
+  return d.destino || "Ver detalle";
+}
+
+function registrarDetalleDestinoPiso(prefijo, parentId, index, d, extra = {}) {
+  const id = `${prefijo}|${normalizar(parentId)}|${index}`;
+  detalleDestinoPiso.set(id, { ...d, ...extra });
+  return id;
+}
+
+function cerrarDetalleDestinoPiso() {
+  document.getElementById("modalDestinoPisoDetalle")?.remove();
+}
+
+function abrirDetalleDestinoPiso(id) {
+  const d = detalleDestinoPiso.get(id);
+  const padre = document.getElementById("modalControlPiso");
+  if (!padre) return;
+  cerrarDetalleDestinoPiso();
+  if (!d) {
+    padre.insertAdjacentHTML("beforeend", `<div id="modalDestinoPisoDetalle" class="modal-child"><div class="modal-card"><button class="ghost" onclick="cerrarDetalleDestinoPiso()">Cerrar</button><p>Sin detalle para mostrar.</p></div></div>`);
+    return;
+  }
+  padre.insertAdjacentHTML("beforeend", `
+    <div id="modalDestinoPisoDetalle" class="modal-child">
+    <div class="modal-card detail-modal">
+      <div class="section-head">
+        <div>
+          <h2>${htmlSeguro(d.destino || d.accion || "Detalle operativo")}</h2>
+          <p class="muted-note">${htmlSeguro(d.codigo || "")} | ${htmlSeguro(d.descripcion || "")}</p>
+        </div>
+        <button class="ghost" onclick="cerrarDetalleDestinoPiso()">Cerrar</button>
+      </div>
+      <section class="kpi-grid compact">
+        ${kpi("LPN origen", htmlSeguro(d.lpn || ""), htmlSeguro(d.ubicacion || "sin ubicacion"))}
+        ${kpi("Bultos origen", fmt(d.stock), `${fmt(d.unidades)} unidades`)}
+        ${kpi("Destino", htmlSeguro(d.destino || ""), htmlSeguro(d.destinoUbicacion || d.ubicaciones || ""))}
+        ${kpi("Disponible", htmlSeguro(d.destinoDisponible || ""), d.destinoLpn ? `LPN ${htmlSeguro(d.destinoLpn)}` : "destino sugerido")}
+      </section>
+      ${tablaConId("tablaMotivoDestinoPiso", ["Campo", "Detalle"], [
+        ["Codigo", d.codigo],
+        ["Cod alternativo", d.codigoAlt],
+        ["Producto", d.descripcion],
+        ["LPN origen", d.lpn],
+        ["Ubicacion origen", d.ubicacion],
+        ["Bultos origen", fmt(d.stock)],
+        ["Unidades origen", fmt(d.unidades)],
+        ["Antiguedad", fmt(d.antiguedad)],
+        ["Destino sugerido", d.destino],
+        ["Ubicacion destino", d.destinoUbicacion || d.ubicaciones],
+        ["LPN destino", d.destinoLpn || ""],
+        ["Stock destino", d.destinoStock === "" ? "" : fmt(d.destinoStock)],
+        ["Disponible destino", d.destinoDisponible || ""],
+        ["Pedido no asignado", fmt(d.pedido || 0)],
+        ["Motivo", d.motivo]
+      ].map(([campo, valor]) => `
+        <tr>
+          <td><strong>${htmlSeguro(campo)}</strong></td>
+          <td>${htmlSeguro(valor)}</td>
+        </tr>
+      `), "Sin detalle.")}
+    </div>
+    </div>
+  `);
+}
+
+function abrirDetalleUnificacionProductoPiso(id) {
+  const row = detalleUnificacionProductoPiso.get(id);
+  const destino = document.getElementById("modalControlPiso");
+  if (!destino) return;
+  if (!row) {
+    destino.innerHTML = `<div class="modal-card"><button class="ghost" onclick="cerrarControlPisoModal()">Cerrar</button><p>Sin detalle para mostrar.</p></div>`;
+    destino.hidden = false;
+    return;
+  }
+  const planGrupo = planUnificacionProducto(row);
+  const detalleVista = row.detalle.map(d => ({
+    ...d,
+    destino: planGrupo.destino,
+    destinoUbicacion: planGrupo.ubicacion,
+    destinoLpn: planGrupo.lpn,
+    destinoStock: planGrupo.stock,
+    destinoDisponible: planGrupo.disponible,
+    motivo: planGrupo.motivo
+  }));
+  destino.innerHTML = `
+    <div class="modal-card wide">
+      <div class="section-head">
+        <div>
+          <h2>${htmlSeguro(row.codigo)} | ${htmlSeguro(row.descripcion)}</h2>
+          <p class="muted-note">${fmt(row.lpnsCount)} LPNs en piso | ${fmt(row.bultos)} bultos | ${htmlSeguro(row.accion)}</p>
+        </div>
+        <div class="filters">
+          <button onclick="exportarUnificacionProductoDetalle(${argumentoSeguro(row.id)})">Excel detalle</button>
+          <button class="ghost" onclick="cerrarControlPisoModal()">Cerrar</button>
+        </div>
+      </div>
+      ${tablaConId("tablaPlanGrupoUnificacion", ["Decision grupo", "Max pallet", "Bultos piso", "Pallets a formar", "Saldo", "Destino saldo", "Observacion"], [`
+        <tr class="${planGrupo.saldo > 0 ? "warn" : "ok"}">
+          <td><strong>${htmlSeguro(planGrupo.destino)}</strong></td>
+          <td class="number">${row.maximo ? fmt(row.maximo) : "VALIDAR"}</td>
+          <td class="number"><strong>${fmt(row.bultos)}</strong></td>
+          <td class="number"><strong>${fmt(planGrupo.pallets)}</strong></td>
+          <td class="number">${fmt(planGrupo.saldo)}</td>
+          <td>${htmlSeguro(planGrupo.destinoSaldo)}</td>
+          <td>${htmlSeguro(planGrupo.motivo)}</td>
+        </tr>
+      `], "Sin decision grupal.")}
+      ${tablaConId("tablaDetalleUnificacionProducto", ["LPN origen", "Ubicacion piso", "Bultos", "Unidades", "Antig.", "Destino", "Ubicacion destino", "Disponible", "Resumen", "Ver"], detalleVista.map((d, index) => {
+        const detalleId = registrarDetalleDestinoPiso("UNI", row.id, index, d);
+        return `
+          <tr class="${d.estado === "DESAPARECE" ? "ok" : "warn"}">
+            <td><strong>${htmlSeguro(d.lpn)}</strong><br><small>${htmlSeguro(d.grupo)}</small></td>
+            <td>${htmlSeguro(d.ubicacion)}</td>
+            <td class="number"><strong>${fmt(d.stock)}</strong></td>
+            <td class="number">${fmt(d.unidades)}</td>
+            <td class="number">${fmt(d.antiguedad)}</td>
+            <td><strong>${htmlSeguro(d.destino)}</strong></td>
+            <td>${htmlSeguro(d.destinoUbicacion || d.ubicaciones)}</td>
+            <td class="number">${htmlSeguro(d.destinoDisponible || "")}</td>
+            <td>${htmlSeguro(resumenDestinoPiso(d))}</td>
+            <td><button class="compact" onclick="abrirDetalleDestinoPiso(${argumentoSeguro(detalleId)})">Ver</button></td>
+          </tr>
+        `;
+      }), "Sin LPNs de piso para este producto.")}
+    </div>
+  `;
+  destino.hidden = false;
+}
+
+function planUnificacionProducto(row) {
+  if (!row.accion.includes("FORMAR")) {
+    const primero = row.detalle[0] || {};
+    return {
+      destino: primero.destino || row.accion,
+      ubicacion: primero.destinoUbicacion || primero.ubicaciones || "",
+      lpn: primero.destinoLpn || "",
+      stock: primero.destinoStock ?? "",
+      disponible: primero.destinoDisponible || "",
+      pallets: 0,
+      saldo: 0,
+      destinoSaldo: row.accion,
+      motivo: row.motivo
+    };
+  }
+
+  const maximo = num(row.maximo);
+  const pallets = maximo > 0 ? Math.max(1, Math.floor(num(row.bultos) / maximo)) : 1;
+  const bultosRack = maximo > 0 ? pallets * maximo : num(row.bultos);
+  const saldo = maximo > 0 ? Math.max(0, num(row.bultos) - bultosRack) : 0;
+  const reservaSaldo = saldo > 0
+    ? reservasIncompletasPlan(row.codigo, maximo).find(r => maximo <= 0 || num(r.stock) + saldo <= maximo * 1.05)
+    : null;
+  const activoSaldo = saldo > 0
+    ? detalleActivoProducto(row.codigo).find(a => a.capacidadDinamica || num(a.disponibleBultos) >= saldo)
+    : null;
+  let destinoSaldo = "Sin saldo";
+  if (saldo > 0 && reservaSaldo) destinoSaldo = `Acoplar saldo en ${reservaSaldo.ubicacion}`;
+  else if (saldo > 0 && activoSaldo) destinoSaldo = `Ingresar saldo a activo ${activoSaldo.ubicacion}`;
+  else if (saldo > 0) destinoSaldo = "Validar saldo fisicamente";
+
+  const motivoSaldo = saldo > 0
+    ? ` Queda saldo de ${fmt(saldo)} bultos: ${destinoSaldo}.`
+    : " No queda saldo en piso.";
+
+  return {
+    destino: "JUNTAR Y FORMAR PALLET",
+    ubicacion: "Pallet nuevo para reserva",
+    lpn: reservaSaldo?.lpn || "",
+    stock: reservaSaldo?.stock ?? "",
+    disponible: maximo > 0 ? fmt(maximo) : "VALIDAR",
+    pallets,
+    saldo,
+    destinoSaldo,
+    motivo: `Juntar ${fmt(row.lpnsCount)} LPNs de piso y formar ${fmt(pallets)} pallet(s) de ${maximo > 0 ? fmt(maximo) : "maximo a validar"} bultos.${motivoSaldo}`
+  };
+}
+
+function abrirDetalleSimulacionCinco(id) {
+  const row = detalleSimulacionCincoPallets.get(id);
+  const destino = document.getElementById("modalControlPiso");
+  if (!destino) return;
+  if (!row) {
+    destino.innerHTML = `<div class="modal-card"><button class="ghost" onclick="cerrarControlPisoModal()">Cerrar</button><p>Sin detalle para mostrar.</p></div>`;
+    destino.hidden = false;
+    return;
+  }
+  destino.innerHTML = `
+    <div class="modal-card wide">
+      <div class="section-head">
+        <div>
+          <h2>Simulacion LPN ${htmlSeguro(row.lpn)}</h2>
+          <p class="muted-note">${fmt(row.bultos)} bultos | ${fmt(row.productosCount)} productos | objetivo: no dejar nada en piso.</p>
+        </div>
+        <div class="filters">
+          <button onclick="exportarSimulacionCincoDetalle(${argumentoSeguro(row.id)})">Excel detalle</button>
+          <button class="ghost" onclick="cerrarControlPisoModal()">Cerrar</button>
+        </div>
+      </div>
+      ${tablaConId("tablaDetalleSimulacionCinco", ["Codigo", "Descripcion", "Ubicacion piso", "Bultos", "Unidades", "Destino", "Ubicacion destino", "Disponible", "Pedido", "Resumen", "Ver"], row.detalle.map((d, index) => {
+        const detalleId = registrarDetalleDestinoPiso("SIM", row.id, index, d);
+        return `
+          <tr class="${d.estado === "DESAPARECE" ? "ok" : "warn"}">
+            <td><strong>${htmlSeguro(d.codigo)}</strong><br><small>${htmlSeguro(d.codigoAlt)}</small></td>
+            <td>${htmlSeguro(d.descripcion)}</td>
+            <td>${htmlSeguro(d.ubicacion)}</td>
+            <td class="number"><strong>${fmt(d.stock)}</strong></td>
+            <td class="number">${fmt(d.unidades)}</td>
+            <td><strong>${htmlSeguro(d.destino)}</strong></td>
+            <td>${htmlSeguro(d.destinoUbicacion || d.ubicaciones)}</td>
+            <td class="number">${htmlSeguro(d.destinoDisponible || "")}</td>
+            <td class="number">${fmt(d.pedido)}</td>
+            <td>${htmlSeguro(resumenDestinoPiso(d))}</td>
+            <td><button class="compact" onclick="abrirDetalleDestinoPiso(${argumentoSeguro(detalleId)})">Ver</button></td>
+          </tr>
+        `;
+      }), "Sin detalle.")}
+    </div>
+  `;
+  destino.hidden = false;
+}
+
+function renderPlanMultiPiso() {
+  const contenedor = document.getElementById("controlPisoContenido");
+  try {
+    const data = calcularPlanMultiPiso();
+    const simAntiguedadActual = limpiar(document.getElementById("filtroSimCincoAntiguedad")?.value);
+    const simCodigosActual = limpiar(document.getElementById("filtroSimCincoCodigos")?.value);
+    const simEstadoActual = limpiar(document.getElementById("filtroSimCincoEstado")?.value);
+    const simPrioridadActual = limpiar(document.getElementById("filtroSimCincoPrioridad")?.value);
+    const simTamanoInteligenteActual = limpiar(document.getElementById("filtroSimInteligenteTamano")?.value) || "5";
+    const simulacion = calcularSimulacionCincoPallets();
+    const unificacionProductos = calcularUnificacionProductoPiso();
+    const paquetesInteligentes = calcularPaquetesInteligentes(simulacion);
+    const acciones = [...new Set(data.filas.map(r => r.accion))];
+    const qActual = limpiar(document.getElementById("filtroPlanMultiPiso")?.value);
+    const accionActual = limpiar(document.getElementById("filtroAccionPlanMultiPiso")?.value);
+    const prioridadActual = limpiar(document.getElementById("filtroPrioridadPlanMultiPiso")?.value);
+    const estabaEnFiltro = document.activeElement?.id === "filtroPlanMultiPiso";
+    const visible = filtrarPlanMultiPiso(data.filas);
+
+    contenedor.innerHTML = `
+      <section class="kpi-grid compact">
+        ${kpi("Bultos piso", fmt(data.total.bultos), `${fmt(data.total.lpns)} LPNs`)}
+        ${kpi("Productos", fmt(data.total.productos), "agrupado sin duplicidad")}
+        ${kpi("Alta prioridad", fmt(data.total.alta), "pedido, rackeo o acople", data.total.alta ? "warn" : "")}
+        ${kpi("Pedido detectado", fmt(data.total.pedido), "aparece en no asignado", data.total.pedido ? "danger" : "")}
+        ${kpi("Rackear", fmt(data.total.rackear), ">= 50% pallet")}
+        ${kpi("Acoplar", fmt(data.total.acoplar), "reserva incompleta")}
+      </section>
+
+      <section class="card subcard">
+        <div class="section-head">
+          <div>
+            <h2>Sugerencias para limpiar piso</h2>
+          </div>
+          <div class="filters grow">
+            <select class="select-filter" id="filtroSimCincoAntiguedad" onchange="renderPlanMultiPiso()">
+              <option value="">Toda antiguedad</option>
+              <option value="0" ${simAntiguedadActual === "0" ? "selected" : ""}>0 dias</option>
+              <option value="1" ${simAntiguedadActual === "1" ? "selected" : ""}>1 dia</option>
+              <option value="MAS_1" ${simAntiguedadActual === "MAS_1" ? "selected" : ""}>Mayor a 1 dia</option>
+            </select>
+            <select class="select-filter" id="filtroSimCincoCodigos" onchange="renderPlanMultiPiso()">
+              <option value="">Todos los codigos</option>
+              <option value="1" ${simCodigosActual === "1" ? "selected" : ""}>1 codigo</option>
+              <option value="2" ${simCodigosActual === "2" ? "selected" : ""}>2 codigos</option>
+              <option value="3" ${simCodigosActual === "3" ? "selected" : ""}>3+ codigos</option>
+            </select>
+            <select class="select-filter" id="filtroSimCincoEstado" onchange="renderPlanMultiPiso()">
+              <option value="DESAPARECE" ${!simEstadoActual || simEstadoActual === "DESAPARECE" ? "selected" : ""}>Todo el LPN desaparece</option>
+              <option value="TODOS" ${simEstadoActual === "TODOS" ? "selected" : ""}>Todo resultado</option>
+              <option value="VALIDAR" ${simEstadoActual === "VALIDAR" ? "selected" : ""}>Con pendientes</option>
+            </select>
+            <select class="select-filter" id="filtroSimCincoPrioridad" onchange="renderPlanMultiPiso()">
+              <option value="">Toda prioridad</option>
+              ${["ALTA", "MEDIA", "BAJA"].map(p => `<option value="${p}" ${simPrioridadActual === p ? "selected" : ""}>${p}</option>`).join("")}
+            </select>
+            <button onclick="exportarSimulacionCincoPallets()">Excel simulacion</button>
+          </div>
+        </div>
+        <section class="kpi-grid compact">
+          ${kpi("LPNs evaluados", fmt(simulacion.total.pallets), `${fmt(simulacion.total.completos)} desaparecen completos`)}
+          ${kpi("Productos", fmt(simulacion.total.productos), "dentro de LPNs de piso")}
+          ${kpi("Bultos", fmt(simulacion.total.bultos), `${fmt(simulacion.total.unidades)} unidades`)}
+          ${kpi("Pendientes", fmt(simulacion.total.pendientes), "deben validarse", simulacion.total.pendientes ? "warn" : "")}
+        </section>
+        ${bloqueUnificacionProductoPiso(unificacionProductos)}
+        ${bloquePaquetesInteligentes(simulacion, paquetesInteligentes, simTamanoInteligenteActual)}
+        ${bloqueSimulacionCincoPallets(simulacion)}
+      </section>
+
+      <section class="card subcard">
+        <div class="section-head">
+          <div>
+            <h2>Plan multi piso</h2>
+          </div>
+          <div class="filters grow">
+            <input class="search" id="filtroPlanMultiPiso" value="${atributoSeguro(qActual)}" placeholder="Buscar codigo, descripcion, LPN o ubicacion..." oninput="renderPlanMultiPiso()">
+            <select class="select-filter" id="filtroAccionPlanMultiPiso" onchange="renderPlanMultiPiso()">
+              <option value="">Todas las acciones</option>
+              ${acciones.map(a => `<option value="${atributoSeguro(a)}" ${accionActual === a ? "selected" : ""}>${htmlSeguro(a)}</option>`).join("")}
+            </select>
+            <select class="select-filter" id="filtroPrioridadPlanMultiPiso" onchange="renderPlanMultiPiso()">
+              <option value="">Todas las prioridades</option>
+              ${["ALTA", "MEDIA", "BAJA"].map(p => `<option value="${p}" ${prioridadActual === p ? "selected" : ""}>${p}</option>`).join("")}
+            </select>
+            <button onclick="exportarPlanMultiPiso()">Excel plan</button>
+          </div>
+        </div>
+        <p class="muted-note">Regla: prioridad a no asignado, luego formar pallet desde 50% del max aprendido, acoplar reserva, activo disponible y al final menores a 15 sin match.</p>
+        ${tablaPlanMultiPiso("tablaPlanMultiPiso", visible)}
+      </section>
+    `;
+    const filtro = document.getElementById("filtroPlanMultiPiso");
+    if (filtro && estabaEnFiltro) {
+      filtro.focus();
+      filtro.setSelectionRange(filtro.value.length, filtro.value.length);
+    }
+  } catch (error) {
+    console.error("No se pudo renderizar Plan multi piso", error);
+    if (contenedor) {
+      contenedor.innerHTML = `<section class="notice danger">No se pudo construir el Plan multi piso: ${htmlSeguro(error.message || error)}</section>`;
+    }
+  }
+}
+
+function clasePrioridadPlan(prioridad) {
+  if (prioridad === "ALTA") return "bad";
+  if (prioridad === "MEDIA") return "warn";
+  return "";
+}
+
+function tablaPlanMultiPiso(tablaId, data) {
+  return tablaConId(tablaId, ["Prioridad", "Accion", "Codigo", "Descripcion", "Bultos piso", "Unidades", "LPNs", "Antig.", "Max pallet", "% pallet", "Pedido", "Activo", "Reserva", "Motivo", "Ver"], data.map(r => `
+    <tr class="${clasePrioridadPlan(r.prioridad)}">
+      <td><strong>${htmlSeguro(r.prioridad)}</strong></td>
+      <td><strong>${htmlSeguro(r.accion)}</strong></td>
+      <td><strong>${htmlSeguro(r.codigo)}</strong><br><small>${htmlSeguro(r.codigoAlt)}</small></td>
+      <td>${htmlSeguro(r.descripcion)}</td>
+      <td class="number"><strong>${fmt(r.bultos)}</strong></td>
+      <td class="number">${fmt(r.unidades)}</td>
+      <td class="number">${fmt(r.lpnsCount)}</td>
+      <td class="number">${fmt(r.antiguedad)}</td>
+      <td class="number">${r.maximo ? fmt(r.maximo) : "Validar"}</td>
+      <td class="number">${r.maximo ? `${r.pctPallet.toFixed(1)}%` : "-"}</td>
+      <td class="number">${r.pedido ? fmt(r.pedido.bultos) : "0"}</td>
+      <td class="number">${fmt(r.activo.filter(a => a.ingresaTodo).length)} / ${fmt(r.activo.length)}</td>
+      <td class="number">${fmt(r.reserva.length)}</td>
+      <td>${htmlSeguro(r.motivo)}</td>
+      <td><button class="compact" onclick="abrirDetallePlanMultiPiso(${argumentoSeguro(r.id)})">Ver</button></td>
+    </tr>
+  `), "No hay productos de piso para planificar.");
+}
+
+function destinoOperativoPlan(row) {
+  const activoOk = row.activo.find(a => a.ingresaTodo) || row.activo.find(a => a.ingresaAlgo);
+  const reservaOk = row.mejorReserva || row.reserva[0];
+  if (row.accion === "Ingresar a activo" && activoOk) {
+    return {
+      tipo: "ACTIVO",
+      ubicacion: activoOk.ubicacion,
+      lpn: "",
+      stock: activoOk.bultos,
+      disponible: activoOk.capacidadDinamica ? "SIN LIMITE" : fmt(activoOk.disponibleBultos),
+      detalle: `Mover ${fmt(row.bultos)} bultos de piso al activo ${activoOk.ubicacion}.`
+    };
+  }
+  if (row.accion === "Parcial a activo" && activoOk) {
+    return {
+      tipo: "ACTIVO PARCIAL",
+      ubicacion: activoOk.ubicacion,
+      lpn: "",
+      stock: activoOk.bultos,
+      disponible: activoOk.capacidadDinamica ? "SIN LIMITE" : fmt(activoOk.disponibleBultos),
+      detalle: `Activo ${activoOk.ubicacion} recibe parte; validar saldo de ${fmt(activoOk.faltanteBultos)} bultos.`
+    };
+  }
+  if (row.accion === "Acoplar a reserva" && reservaOk) {
+    const faltante = row.maximo > 0 ? Math.max(0, row.maximo - num(reservaOk.stock)) : "";
+    return {
+      tipo: "RESERVA / ACOPLE",
+      ubicacion: reservaOk.ubicacion,
+      lpn: reservaOk.lpn,
+      stock: reservaOk.stock,
+      disponible: faltante === "" ? "VALIDAR" : fmt(faltante),
+      detalle: `Acoplar ${fmt(row.bultos)} bultos de piso con ${reservaOk.lpn} en ${reservaOk.ubicacion}.`
+    };
+  }
+  if (row.accion === "Unificar y rackear") {
+    return {
+      tipo: "RESERVA NUEVA",
+      ubicacion: "Ubicacion libre reserva",
+      lpn: "",
+      stock: 0,
+      disponible: row.maximo ? fmt(row.maximo) : "VALIDAR",
+      detalle: `Unificar LPNs de piso y formar pallet para rackear (${row.maximo ? `${row.pctPallet.toFixed(1)}% del max` : "validar max"}).`
+    };
+  }
+  if (row.accion === "Atacar pedido") {
+    return {
+      tipo: "PEDIDO NO ASIGNADO",
+      ubicacion: row.pedido ? Array.from(row.pedido.fechas).join(", ") : "",
+      lpn: "",
+      stock: row.pedido?.bultos || 0,
+      disponible: "",
+      detalle: `Producto solicitado por no asignado: ${fmt(row.pedido?.bultos || 0)} bultos.`
+    };
+  }
+  return {
+    tipo: row.accion,
+    ubicacion: "",
+    lpn: "",
+    stock: "",
+    disponible: "",
+    detalle: row.resultado || row.motivo
+  };
+}
+
+function abrirDetallePlanMultiPiso(id) {
+  const row = detallePlanMultiPiso.get(id);
+  const destino = document.getElementById("modalControlPiso");
+  if (!destino) return;
+  if (!row) {
+    destino.innerHTML = `<div class="modal-card"><button class="ghost" onclick="cerrarControlPisoModal()">Cerrar</button><p>Sin detalle para mostrar.</p></div>`;
+    destino.hidden = false;
+    return;
+  }
+  destino.innerHTML = `
+    <div class="modal-card wide">
+      <div class="section-head">
+        <div>
+          <h2>${htmlSeguro(row.accion)} | ${htmlSeguro(row.codigo)}</h2>
+          <p class="muted-note">${htmlSeguro(row.descripcion)} | ${fmt(row.bultos)} bultos piso | ${htmlSeguro(row.resultado)}</p>
+        </div>
+        <div class="filters">
+          <button onclick="exportarPlanMultiPisoDetalle(${argumentoSeguro(row.id)})">Excel detalle</button>
+          <button class="ghost" onclick="cerrarControlPisoModal()">Cerrar</button>
+        </div>
+      </div>
+      <section class="kpi-grid compact">
+        ${kpi("Bultos piso", fmt(row.bultos), `${fmt(row.lpnsCount)} LPNs`)}
+        ${kpi("Max pallet", row.maximo ? fmt(row.maximo) : "Validar", row.maximo ? `${row.pctPallet.toFixed(1)}% formado` : "sin aprendizaje")}
+        ${kpi("Pedido", row.pedido ? fmt(row.pedido.bultos) : "0", row.pedido ? Array.from(row.pedido.fechas).join(", ") : "sin no asignado")}
+        ${kpi("Activo", `${fmt(row.activo.filter(a => a.ingresaTodo).length)} / ${fmt(row.activo.length)}`, "ubicaciones")}
+        ${kpi("Reserva", fmt(row.reserva.length), "opciones acople")}
+      </section>
+      <h3>Destino operativo sugerido</h3>
+      ${tablaConId("tablaDestinoPlanMulti", ["Destino", "Ubicacion destino", "LPN destino", "Stock destino", "Disponible destino", "Detalle"], (() => {
+        const d = destinoOperativoPlan(row);
+        return [`
+          <tr class="${row.prioridad === "ALTA" ? "warn" : ""}">
+            <td><strong>${htmlSeguro(d.tipo)}</strong></td>
+            <td>${htmlSeguro(d.ubicacion)}</td>
+            <td>${htmlSeguro(d.lpn)}</td>
+            <td class="number">${d.stock === "" ? "" : fmt(d.stock)}</td>
+            <td class="number">${htmlSeguro(d.disponible)}</td>
+            <td>${htmlSeguro(d.detalle)}</td>
+          </tr>
+        `];
+      })(), "Sin destino sugerido.")}
+      <h3>Detalle de LPNs en piso</h3>
+      ${tablaDetallePlanPiso(row.detalle)}
+      <h3>Activo sugerido</h3>
+      ${tablaControlPisoActivo(row.activo, row)}
+      <h3>Reserva sugerida</h3>
+      ${tablaControlPisoReserva(row.reserva)}
+    </div>
+  `;
+  destino.hidden = false;
+}
+
+function tablaDetallePlanPiso(data) {
+  return tablaConId("tablaDetallePlanPiso", ["Ubicacion", "Grupo", "LPN", "Codigo", "Descripcion", "Bultos", "Unidades", "Antiguedad"], data.map(r => `
+    <tr class="${r.antiguedad > 1 ? "bad" : ""}">
+      <td><strong>${htmlSeguro(r.ubicacion)}</strong></td>
+      <td>${htmlSeguro(r.grupo)}</td>
+      <td><strong>${htmlSeguro(r.lpn)}</strong></td>
+      <td>${htmlSeguro(r.codigo)}</td>
+      <td>${htmlSeguro(r.descripcion)}</td>
+      <td class="number">${fmt(r.stock)}</td>
+      <td class="number">${fmt(r.unidades)}</td>
+      <td class="number">${fmt(r.antiguedad)}</td>
+    </tr>
+  `), "Sin LPNs en piso.");
+}
+
+function filasPlanMultiResumen(base) {
+  return [
+    ["PRIORIDAD", "ACCION", "COD_ALT", "CODIGO", "DESCRIPCION", "BULTOS_PISO", "UNIDADES", "LPNS", "UBICACIONES", "GRUPOS", "ANTIGUEDAD", "MAX_PALLET", "PORC_PALLET", "PEDIDO_NO_ASIGNADO", "DESTINO", "UBICACION_DESTINO", "LPN_DESTINO", "STOCK_DESTINO", "DISPONIBLE_DESTINO", "ACTIVOS", "ACTIVOS_INGRESAN", "RESERVAS", "MOTIVO", "RESULTADO"],
+    ...base.map(r => {
+      const d = destinoOperativoPlan(r);
+      return [
+        r.prioridad,
+        r.accion,
+        r.codigoAlt,
+        r.codigo,
+        r.descripcion,
+        r.bultos,
+        r.unidades,
+        r.lpnsCount,
+        r.ubicacionesTxt,
+        r.gruposTxt,
+        r.antiguedad,
+        r.maximo || "",
+        r.maximo ? r.pctPallet : "",
+        r.pedido?.bultos || 0,
+        d.tipo,
+        d.ubicacion,
+        d.lpn,
+        d.stock,
+        d.disponible,
+        r.activo.length,
+        r.activo.filter(a => a.ingresaTodo).length,
+        r.reserva.length,
+        r.motivo,
+        r.resultado
+      ];
+    })
+  ];
+}
+
+function filasPlanMultiLpns(base) {
+  const filas = [["ACCION", "PRIORIDAD", "CODIGO", "DESCRIPCION", "UBICACION_ORIGEN", "GRUPO", "LPN_ORIGEN", "BULTOS_ORIGEN", "UNIDADES", "ANTIGUEDAD", "DESTINO", "UBICACION_DESTINO", "LPN_DESTINO", "STOCK_DESTINO", "DISPONIBLE_DESTINO", "MOTIVO"]];
+  base.forEach(r => {
+    const destino = destinoOperativoPlan(r);
+    r.detalle.forEach(d => filas.push([
+      r.accion,
+      r.prioridad,
+      r.codigo,
+      r.descripcion,
+      d.ubicacion,
+      d.grupo,
+      d.lpn,
+      d.stock,
+      d.unidades,
+      d.antiguedad,
+      destino.tipo,
+      destino.ubicacion,
+      destino.lpn,
+      destino.stock,
+      destino.disponible,
+      r.motivo
+    ]));
+  });
+  return filas;
+}
+
+function filasPlanMultiActivo(base) {
+  const filas = [["ACCION", "CODIGO", "DESCRIPCION", "BULTOS_PISO", "UNIDADES_PISO", "UBICACION_ACTIVO", "STOCK_UND", "STOCK_BUL", "DISP_UND", "DISP_BUL", "INGRESA_TODO", "FALTA_UND", "FALTA_BUL"]];
+  base.forEach(r => {
+    if (!r.activo.length) {
+      filas.push([r.accion, r.codigo, r.descripcion, r.bultos, r.unidades, "SIN ACTIVO", 0, 0, 0, 0, "NO", r.unidades, r.bultos]);
+      return;
+    }
+    r.activo.forEach(a => filas.push([r.accion, r.codigo, r.descripcion, r.bultos, r.unidades, a.ubicacion, a.unidades, a.bultos, a.capacidadDinamica ? "SIN LIMITE" : a.disponibleUnidades, a.capacidadDinamica ? "SIN LIMITE" : a.disponibleBultos, a.ingresaTodo ? "SI" : "NO", a.faltanteUnidades, a.faltanteBultos]));
+  });
+  return filas;
+}
+
+function filasPlanMultiReserva(base) {
+  const filas = [["ACCION", "CODIGO", "DESCRIPCION", "BULTOS_PISO", "UNIDADES_PISO", "UBICACION_RESERVA", "LPN_RESERVA", "STOCK_RESERVA", "UNIDADES_RESERVA", "ANTIGUEDAD_RESERVA", "MAX_PALLET", "FALTANTE_PALLET", "PORC_PALLET"]];
+  base.forEach(r => {
+    if (!r.reserva.length) {
+      filas.push([r.accion, r.codigo, r.descripcion, r.bultos, r.unidades, "SIN RESERVA", "", 0, 0, "", r.maximo || "", "", ""]);
+      return;
+    }
+    r.reserva.forEach(res => filas.push([r.accion, r.codigo, r.descripcion, r.bultos, r.unidades, res.ubicacion, res.lpn, res.stock, res.unidades, res.antiguedad, r.maximo || "", res.faltantePallet || "", res.pctPallet || ""]));
+  });
+  return filas;
+}
+
+function filasPlanMultiPedido(base) {
+  return [
+    ["CODIGO", "DESCRIPCION", "BULTOS_PISO", "PEDIDO_NO_ASIGNADO", "FECHAS", "ACCION"],
+    ...base.filter(r => r.pedido).map(r => [
+      r.codigo,
+      r.descripcion,
+      r.bultos,
+      r.pedido.bultos,
+      Array.from(r.pedido.fechas).join(", "),
+      r.accion
+    ])
+  ];
+}
+
+function exportarPlanMultiPiso() {
+  const base = filtrarPlanMultiPiso(calcularPlanMultiPiso().filas);
+  if (!base.length) return alert("No hay datos para exportar.");
+  descargarExcelHojas("plan_multi_piso", [
+    { nombre: "Plan operativo", filas: filasPlanMultiResumen(base) },
+    { nombre: "Detalle LPNs", filas: filasPlanMultiLpns(base) },
+    { nombre: "Activo sugerido", filas: filasPlanMultiActivo(base) },
+    { nombre: "Reserva sugerida", filas: filasPlanMultiReserva(base) },
+    { nombre: "No asignado", filas: filasPlanMultiPedido(base) },
+    { nombre: "Validar fisico", filas: filasPlanMultiResumen(base.filter(r => r.accion.includes("Validar"))) },
+    { nombre: "Baja prioridad", filas: filasPlanMultiResumen(base.filter(r => r.prioridad === "BAJA")) }
+  ]);
+}
+
+function exportarPlanMultiPisoDetalle(id) {
+  const row = detallePlanMultiPiso.get(id);
+  if (!row) return alert("No hay detalle para exportar.");
+  const base = [row];
+  descargarExcelHojas(`plan_multi_${row.codigo}`, [
+    { nombre: "Plan", filas: filasPlanMultiResumen(base) },
+    { nombre: "Detalle LPNs", filas: filasPlanMultiLpns(base) },
+    { nombre: "Activo", filas: filasPlanMultiActivo(base) },
+    { nombre: "Reserva", filas: filasPlanMultiReserva(base) },
+    { nombre: "No asignado", filas: filasPlanMultiPedido(base) }
+  ]);
+}
+
+function filasSimulacionCincoResumen(base) {
+  const ordenPorTipo = new Map();
+  return [
+    ["TIPO_LPN", "GRUPO_5", "ORDEN", "LPN", "UBICACION_PISO", "GRUPO", "CODIGOS", "PRODUCTOS", "BULTOS", "UNIDADES", "ANTIGUEDAD", "PRIORIDAD", "DESTINO", "ESTADO", "PENDIENTES"],
+    ...base.map((r, index) => {
+      const ordenTipo = (ordenPorTipo.get(r.tipoLpn) || 0) + 1;
+      ordenPorTipo.set(r.tipoLpn, ordenTipo);
+      return [
+      r.tipoLpn,
+      Math.ceil(ordenTipo / 5),
+      index + 1,
+      r.lpn,
+      r.ubicacionesTxt,
+      r.gruposTxt,
+      r.codigosCount,
+      r.productosCount,
+      r.bultos,
+      r.unidades,
+      r.antiguedad,
+      r.prioridad,
+      r.destinoTxt,
+      r.estado,
+      r.pendientes
+    ];
+    })
+  ];
+}
+
+function filasSimulacionCincoDetalle(base) {
+  const ordenPorTipo = new Map();
+  const grupoPorLpn = new Map();
+  base.forEach(r => {
+    const ordenTipo = (ordenPorTipo.get(r.tipoLpn) || 0) + 1;
+    ordenPorTipo.set(r.tipoLpn, ordenTipo);
+    grupoPorLpn.set(r.id, Math.ceil(ordenTipo / 5));
+  });
+  const filas = [["TIPO_LPN", "GRUPO_5", "LPN", "UBICACION_PISO", "GRUPO", "COD_ALT", "CODIGO", "DESCRIPCION", "BULTOS_ORIGEN", "UNIDADES", "ANTIGUEDAD", "DESTINO", "UBICACION_DESTINO", "LPN_DESTINO", "STOCK_DESTINO", "DISPONIBLE_DESTINO", "PEDIDO_NO_ASIGNADO", "MOTIVO", "ESTADO"]];
+  base.forEach(r => {
+    r.detalle.forEach(d => filas.push([
+      r.tipoLpn,
+      grupoPorLpn.get(r.id),
+      r.lpn,
+      d.ubicacion,
+      d.grupo,
+      d.codigoAlt,
+      d.codigo,
+      d.descripcion,
+      d.stock,
+      d.unidades,
+      d.antiguedad,
+      d.destino,
+      d.destinoUbicacion || d.ubicaciones,
+      d.destinoLpn || "",
+      d.destinoStock ?? "",
+      d.destinoDisponible || "",
+      d.pedido,
+      d.motivo,
+      d.estado
+    ]));
+  });
+  return filas;
+}
+
+function filasPaquetesInteligentes(paquetes) {
+  return [
+    ["GRUPO", "LPNS_OTROS", "COMPLEMENTO_IC962", "CODIGOS_CONECTADOS", "CODIGOS", "PRODUCTOS", "BULTOS_OTROS", "UNIDADES_OTROS", "ANTIGUEDAD", "PALLETS_COMPLETOS", "RACK_VALIDAR", "ACTIVO", "ACOPLE", "PENDIENTES", "DESTINO", "ESTADO", "MOTIVO"],
+    ...paquetes.map(p => [
+      p.id,
+      p.lpnsCount,
+      p.complementosCount,
+      p.codigosComunes,
+      p.codigosCount,
+      p.productosCount,
+      p.bultos,
+      p.unidades,
+      p.antiguedad,
+      p.palletsFormables,
+      p.rackFisico,
+      p.activo,
+      p.acople,
+      p.pendientesDestino,
+      p.destinoTxt,
+      p.estado,
+      p.motivo
+    ])
+  ];
+}
+
+function filasDetallePaquetesInteligentes(paquetes) {
+  const filas = [["GRUPO", "CODIGO", "COD_ALT", "DESCRIPCION", "LPNS", "LPNS_OTROS", "LPNS_IC962", "UBICACIONES", "BULTOS", "UNIDADES", "ANTIGUEDAD", "MAX_PALLET", "PORC_PALLET", "PALLETS_FORMABLES", "SALDO", "DECISION", "DESTINO", "MOTIVO"]];
+  paquetes.forEach(p => {
+    (p.productos || []).forEach(d => filas.push([
+      p.id,
+      d.codigo,
+      d.codigoAlt,
+      d.descripcion,
+      d.lpnsTxt,
+      d.lpnsOtrosCount,
+      d.lpnsIc962Count,
+      d.ubicacionesTxt,
+      d.bultos,
+      d.unidades,
+      d.antiguedad,
+      d.maximo || "VALIDAR",
+      d.maximo ? `${d.pct.toFixed(1)}%` : "",
+      d.pallets,
+      d.saldo,
+      d.decision,
+      d.destino,
+      d.motivo
+    ]));
+  });
+  return filas;
+}
+
+function filasLpnsPaquetesInteligentes(paquetes) {
+  const filas = [["GRUPO", "ROL", "TIPO_LPN", "LPN", "UBICACION_PISO", "GRUPO_ORIGEN", "CODIGOS", "PRODUCTOS", "BULTOS", "UNIDADES", "ANTIGUEDAD", "PRIORIDAD", "ESTADO"]];
+  paquetes.forEach(p => {
+    [...(p.filas || []), ...(p.complementos || [])].forEach(row => filas.push([
+      p.id,
+      row.tipoLpn === "IC962" ? "COMPLEMENTO IC962" : "BASE OTROS",
+      row.tipoLpn,
+      row.lpn,
+      row.ubicacionesTxt,
+      row.gruposTxt,
+      row.codigosCount,
+      row.productosCount,
+      row.bultos,
+      row.unidades,
+      row.antiguedad,
+      row.prioridad,
+      row.estado
+    ]));
+  });
+  return filas;
+}
+
+function filasUnificacionProductoPiso(base) {
+  return [
+    ["PRIORIDAD", "ACCION", "COD_ALT", "CODIGO", "DESCRIPCION", "LPNS_PISO", "BULTOS", "UNIDADES", "MAX_PALLET", "PORC_PALLET", "PEDIDO_NO_ASIGNADO", "UBICACIONES_PISO", "MOTIVO"],
+    ...base.map(r => [
+      r.prioridad,
+      r.accion,
+      r.codigoAlt,
+      r.codigo,
+      r.descripcion,
+      r.lpnsCount,
+      r.bultos,
+      r.unidades,
+      r.maximo || "",
+      r.maximo ? `${r.pctPallet.toFixed(1)}%` : "",
+      r.pedido,
+      r.ubicacionesTxt,
+      r.motivo
+    ])
+  ];
+}
+
+function filasUnificacionProductoDetalle(base) {
+  const filas = [["ACCION_PRODUCTO", "CODIGO", "DESCRIPCION", "LPN_ORIGEN", "UBICACION_PISO", "GRUPO", "BULTOS_ORIGEN", "UNIDADES", "ANTIGUEDAD", "DESTINO_SUGERIDO", "UBICACION_DESTINO", "LPN_DESTINO", "STOCK_DESTINO", "DISPONIBLE_DESTINO", "MOTIVO"]];
+  base.forEach(r => {
+    r.detalle.forEach(d => filas.push([
+      r.accion,
+      r.codigo,
+      r.descripcion,
+      d.lpn,
+      d.ubicacion,
+      d.grupo,
+      d.stock,
+      d.unidades,
+      d.antiguedad,
+      d.destino,
+      d.destinoUbicacion || d.ubicaciones,
+      d.destinoLpn || "",
+      d.destinoStock ?? "",
+      d.destinoDisponible || "",
+      d.motivo
+    ]));
+  });
+  return filas;
+}
+
+function exportarSimulacionCincoPallets() {
+  const simulacion = calcularSimulacionCincoPallets();
+  const base = simulacion.filas;
+  if (!base.length) return alert("No hay simulacion para exportar.");
+  const unificacionProductos = calcularUnificacionProductoPiso();
+  const paquetesInteligentes = calcularPaquetesInteligentes(simulacion);
+  const completos = base.filter(r => r.completo);
+  const completosIc962 = completos.filter(r => r.tipoLpn === "IC962");
+  const completosOtros = completos.filter(r => r.tipoLpn !== "IC962");
+  descargarExcelHojas("simulacion_5_pallets_piso", [
+    { nombre: "Sugerencia producto", filas: filasUnificacionProductoPiso(unificacionProductos) },
+    { nombre: "Detalle sugerencia", filas: filasUnificacionProductoDetalle(unificacionProductos) },
+    { nombre: "Grupos coincidencia", filas: filasPaquetesInteligentes(paquetesInteligentes) },
+    { nombre: "Productos grupos", filas: filasDetallePaquetesInteligentes(paquetesInteligentes) },
+    { nombre: "LPNs grupos", filas: filasLpnsPaquetesInteligentes(paquetesInteligentes) },
+    { nombre: "LPNs completos", filas: filasSimulacionCincoResumen(completos) },
+    { nombre: "Detalle completos", filas: filasSimulacionCincoDetalle(completos) },
+    { nombre: "IC962 completos", filas: filasSimulacionCincoResumen(completosIc962) },
+    { nombre: "IC962 detalle", filas: filasSimulacionCincoDetalle(completosIc962) },
+    { nombre: "OTROS completos", filas: filasSimulacionCincoResumen(completosOtros) },
+    { nombre: "OTROS detalle", filas: filasSimulacionCincoDetalle(completosOtros) },
+    { nombre: "Plan general", filas: filasSimulacionCincoResumen(base) },
+    { nombre: "Detalle general", filas: filasSimulacionCincoDetalle(base) }
+  ]);
+}
+
+function exportarSimulacionCincoDetalle(id) {
+  const row = detalleSimulacionCincoPallets.get(id);
+  if (!row) return alert("No hay detalle para exportar.");
+  descargarExcelHojas(`simulacion_${normalizar(row.lpn)}`, [
+    { nombre: "Resumen LPN", filas: filasSimulacionCincoResumen([row]) },
+    { nombre: "Detalle productos", filas: filasSimulacionCincoDetalle([row]) }
+  ]);
+}
+
+function exportarUnificacionProductoDetalle(id) {
+  const row = detalleUnificacionProductoPiso.get(id);
+  if (!row) return alert("No hay producto para exportar.");
+  descargarExcelHojas(`unificacion_producto_${normalizar(row.codigo)}`, [
+    { nombre: "Resumen producto", filas: filasUnificacionProductoPiso([row]) },
+    { nombre: "Detalle LPNs", filas: filasUnificacionProductoDetalle([row]) }
+  ]);
+}
+
+function exportarPaqueteInteligenteDetalle(id) {
+  const paquete = detallePaquetesInteligentes.get(id);
+  if (!paquete) return alert("No hay paquete para exportar.");
+  descargarExcelHojas(`paquete_inteligente_${normalizar(id)}`, [
+    { nombre: "Resumen paquete", filas: filasPaquetesInteligentes([paquete]) },
+    { nombre: "Productos paquete", filas: filasDetallePaquetesInteligentes([paquete]) },
+    { nombre: "LPNs paquete", filas: filasLpnsPaquetesInteligentes([paquete]) }
   ]);
 }
 

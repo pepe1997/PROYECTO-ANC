@@ -254,6 +254,21 @@ body {
   width: min(1320px, 98vw);
 }
 
+.modal-child {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, .22);
+}
+
+.modal-card.detail-modal {
+  width: min(920px, 94vw);
+  max-height: 82vh;
+}
+
 .filters.grow {
   flex: 1 1 520px;
 }
@@ -1813,6 +1828,29 @@ tr.bad {
 
 .control-wrap {
   max-height: none;
+}
+
+.sim-group-card {
+  margin-top: 12px;
+}
+
+.sim-scroll-table .table-wrap {
+  max-height: 300px;
+  overflow: auto;
+}
+
+.smart-package-wrap {
+  border-left: 5px solid var(--accent);
+}
+
+.smart-package-detail {
+  display: grid;
+  gap: 16px;
+}
+
+.smart-package-detail .table-wrap {
+  max-height: 300px;
+  overflow: auto;
 }
 
 .control-matrix th {

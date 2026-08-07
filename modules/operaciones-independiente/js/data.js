@@ -210,17 +210,21 @@ async function cargarOpcionalDesde(sheetId, nombre) {
 }
 
 async function cargarOpcionalPrincipalDesde(sheetId, etiqueta) {
-  try {
-    return await cargarHojaCsvPrincipalDesde(sheetId);
-  } catch (error) {
-    console.warn(`CSV ${etiqueta}: ${error.message || error}`);
-  }
+  const errores = [];
 
   try {
     return await cargarHojaGvizPrincipalDesde(sheetId);
   } catch (error) {
-    console.warn(`No se pudo cargar ${etiqueta}: ${error.message || error}`);
+    errores.push(`GViz: ${error.message || error}`);
   }
+
+  try {
+    return await cargarHojaCsvPrincipalDesde(sheetId);
+  } catch (error) {
+    errores.push(`CSV: ${error.message || error}`);
+  }
+
+  console.warn(`No se pudo cargar ${etiqueta}: ${errores.join(" | ")}`);
   return [];
 }
 
