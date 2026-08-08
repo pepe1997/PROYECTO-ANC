@@ -10,6 +10,7 @@ let detallePaquetesInteligentes = new Map();
 let detalleUnificacionProductoPiso = new Map();
 let detalleDestinoPiso = new Map();
 let cachePlanMultiPiso = { key: "", data: null };
+let cacheUbicacionesActivas = { key: "", data: null };
 let prediccionPtsVista = { total: { ubicaciones: 0, bultos: 0, tareas: new Set(), lpns: new Set() }, resumen: [], ubicaciones: [] };
 let pasilloPrediccionPtsActivo = "";
 let recepcionUcaVista = { resumen: [], proveedores: [], proveedoresAsn: [], paleteros: [], paleterosAsn: [], total: {}, detalleAsnPasillo: [] };
@@ -17,6 +18,10 @@ let cacheLpnsUbicacion = { key: "", control: [], activo: new Map(), reserva: new
 let cacheProductosPorCodigo = { key: "", mapa: new Map() };
 let timerRenderLpnsUbicacion = null;
 let timerControlPiso = null;
+let timerPlanMultiPiso = null;
+let filtrosPlanMultiPiso = { lpn: "", producto: "" };
+let timerUbicacionesActivas = null;
+let filtrosUbicacionesActivas = { pasillo: "", zona: "", tipo: "", busqueda: "" };
 
 function limpiar(valor) {
   if (valor === null || valor === undefined) return "";
@@ -4740,6 +4745,287 @@ function verControlPiso(tab = "plan") {
   else renderBuscadorControlPiso();
 }
 
+function canonColumnaUbicacion(valor) {
+  return limpiar(valor)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/Ã³/g, "O")
+    .replace(/Ã­/g, "I")
+    .replace(/[^A-Z0-9]/gi, "")
+    .toUpperCase();
+}
+
+function campoUbicacion(row, nombres) {
+  const objetivos = new Set(nombres.map(canonColumnaUbicacion));
+  const key = Object.keys(row || {}).find(k => objetivos.has(canonColumnaUbicacion(k)));
+  return key ? row[key] : "";
+}
+
+function tipoCapacidadUbicacionActiva(row) {
+  const tipo = normalizar(campoUbicacion(row, ["Tipo", "TIPO"]));
+  if (tipo.includes("ACTIVO")) return "ACTIVO";
+  if (tipo.includes("RESERVA")) return "RESERVA";
+  return "";
+}
+
+function tipoUbicacionActivaDetalle(row) {
+  const tipo = limpiar(campoUbicacion(row, [
+    "Tipo Ubicac",
+    "Tipo Ubicacion",
+    "Tipo Ubicación",
+    "Tipo UbicaciÃ³n",
+    "TIPO_UBICACION",
+    "TIPOUBICACION"
+  ]));
+  if (tipo) return tipo;
+  return tipoUbicacion(row);
+}
+
+function columnasUbicacionesControl(row) {
+  const mascara = limpiar(campoUbicacion(row, ["MASCARA", "Mascara", "Mascara ", "UBICACION", "Ubicacion"]));
+  const pasilloRaw = limpiar(campoUbicacion(row, ["Pasi", "PASI", "Pasillo", "PASILLO"])) || pasilloMass(mascara);
+  const pasillo = pasilloRaw ? limpiar(pasilloRaw).padStart(2, "0") : "";
+  return {
+    tipo: tipoCapacidadUbicacionActiva(row),
+    zona: limpiar(campoUbicacion(row, [
+      "Zona Asignac",
+      "ZONA ASIGNAC",
+      "Zona Asignacion",
+      "Zona Asignación",
+      "Zona AsignaciÃ³n",
+      "ZONA_ASIGNAC",
+      "ZonaAsignac"
+    ])) || "SIN ZONA",
+    tipoUbicac: tipoUbicacionActivaDetalle(row),
+    area: limpiar(campoUbicacion(row, ["Area", "AREA"])),
+    pasillo,
+    bahia: limpiar(campoUbicacion(row, ["Bah", "BAH", "Bahia", "BAHIA"])),
+    nivel: limpiar(campoUbicacion(row, ["Niv", "NIV", "Nivel", "NIVEL"])),
+    posicion: limpiar(campoUbicacion(row, ["Posic", "POSIC", "Posicion", "POSICION"])),
+    mascara
+  };
+}
+
+function calcularUbicacionesActivasControl() {
+  const key = `v2|${dataUbicaciones.length}|${dataUbicaciones[0] ? Object.keys(dataUbicaciones[0]).join("|") : ""}`;
+  if (cacheUbicacionesActivas.key === key && cacheUbicacionesActivas.data) return cacheUbicacionesActivas.data;
+
+  const filas = dataUbicaciones
+    .map(columnasUbicacionesControl)
+    .filter(row => row.tipo === "ACTIVO")
+    .filter(row => row.pasillo && row.pasillo !== "10")
+    .sort((a, b) => num(a.pasillo) - num(b.pasillo) || ordenarUbicacion(a.mascara, b.mascara));
+
+  const porPasillo = new Map();
+  filas.forEach(row => {
+    if (!porPasillo.has(row.pasillo)) {
+      porPasillo.set(row.pasillo, {
+        pasillo: row.pasillo,
+        total: 0,
+        zonas: new Map(),
+        tipos: new Map(),
+        bahias: new Set(),
+        niveles: new Set(),
+        posiciones: new Set()
+      });
+    }
+    const grupo = porPasillo.get(row.pasillo);
+    grupo.total += 1;
+    grupo.zonas.set(row.zona, (grupo.zonas.get(row.zona) || 0) + 1);
+    grupo.tipos.set(row.tipoUbicac, (grupo.tipos.get(row.tipoUbicac) || 0) + 1);
+    if (row.bahia) grupo.bahias.add(row.bahia);
+    if (row.nivel) grupo.niveles.add(row.nivel);
+    if (row.posicion) grupo.posiciones.add(row.posicion);
+  });
+
+  const resumen = Array.from(porPasillo.values())
+    .sort((a, b) => num(a.pasillo) - num(b.pasillo))
+    .map(grupo => ({
+      pasillo: grupo.pasillo,
+      total: grupo.total,
+      zonas: Array.from(grupo.zonas.entries()).sort((a, b) => b[1] - a[1]),
+      tipos: Array.from(grupo.tipos.entries()).sort((a, b) => b[1] - a[1]),
+      bahias: grupo.bahias.size,
+      niveles: grupo.niveles.size,
+      posiciones: grupo.posiciones.size
+    }));
+
+  const data = {
+    filas,
+    resumen,
+    total: {
+      ubicaciones: filas.length,
+      pasillos: resumen.length,
+      zonas: new Set(filas.map(row => row.zona)).size,
+      tipos: new Set(filas.map(row => row.tipoUbicac)).size
+    }
+  };
+  cacheUbicacionesActivas = { key, data };
+  return data;
+}
+
+function verUbicacionesControlOperativo() {
+  filtrosUbicacionesActivas = { pasillo: "", zona: "", tipo: "", busqueda: "" };
+  document.getElementById("modulo").innerHTML = `
+    <div class="section-head">
+      <div>
+        <h2>Ubicaciones</h2>
+      </div>
+    </div>
+    <div id="controlPisoContenido"></div>
+  `;
+  renderUbicacionesActivasControl();
+}
+
+function renderUbicacionesActivasControl() {
+  const contenedor = document.getElementById("controlPisoContenido");
+  if (!contenedor) return;
+
+  const data = calcularUbicacionesActivasControl();
+  const filtroPasillo = filtrosUbicacionesActivas.pasillo;
+  const filtroZona = filtrosUbicacionesActivas.zona;
+  const filtroTipo = filtrosUbicacionesActivas.tipo;
+  const busqueda = filtrosUbicacionesActivas.busqueda;
+
+  const pasillos = data.resumen.map(row => row.pasillo);
+  const zonas = Array.from(new Set(data.filas.map(row => row.zona))).sort();
+  const tipos = Array.from(new Set(data.filas.map(row => row.tipoUbicac))).sort();
+
+  const visibles = data.filas.filter(row => {
+    if (filtroPasillo && row.pasillo !== filtroPasillo) return false;
+    if (filtroZona && row.zona !== filtroZona) return false;
+    if (filtroTipo && row.tipoUbicac !== filtroTipo) return false;
+    if (busqueda && ![row.mascara, row.area, row.zona, row.tipoUbicac, row.pasillo, row.bahia, row.nivel, row.posicion].join(" ").toLowerCase().includes(busqueda)) return false;
+    return true;
+  });
+
+  contenedor.innerHTML = `
+    <section class="kpi-grid compact">
+      ${kpi("Ubicaciones activas", fmt(data.total.ubicaciones))}
+      ${kpi("Pasillos", fmt(data.total.pasillos), "sin pasillo 10")}
+      ${kpi("Zonas asignac", fmt(data.total.zonas))}
+      ${kpi("Tipos ubicac", fmt(data.total.tipos))}
+    </section>
+    <section class="card subcard">
+      <div class="section-head">
+        <div>
+          <h2>Ubicaciones activas por pasillo</h2>
+        </div>
+        <div class="filters grow">
+          <select id="filtroUbicacionesActivasPasillo" onchange="actualizarFiltrosUbicacionesActivas()">
+            <option value="">Todos los pasillos</option>
+            ${pasillos.map(p => `<option value="${atributoSeguro(p)}" ${p === filtroPasillo ? "selected" : ""}>Pasillo ${htmlSeguro(p)}</option>`).join("")}
+          </select>
+          <select id="filtroUbicacionesActivasZona" onchange="actualizarFiltrosUbicacionesActivas()">
+            <option value="">Todas las zonas</option>
+            ${zonas.map(z => `<option value="${atributoSeguro(z)}" ${z === filtroZona ? "selected" : ""}>${htmlSeguro(z)}</option>`).join("")}
+          </select>
+          <select id="filtroUbicacionesActivasTipo" onchange="actualizarFiltrosUbicacionesActivas()">
+            <option value="">Todos los tipos</option>
+            ${tipos.map(t => `<option value="${atributoSeguro(t)}" ${t === filtroTipo ? "selected" : ""}>${htmlSeguro(t)}</option>`).join("")}
+          </select>
+          <input class="search" id="filtroUbicacionesActivasTexto" value="${atributoSeguro(busqueda)}" placeholder="Buscar mascara, zona, bahia..." oninput="actualizarFiltrosUbicacionesActivasConPausa()">
+          <button onclick="exportarUbicacionesActivasControl()">Excel</button>
+        </div>
+      </div>
+      ${tablaResumenUbicacionesActivas(data.resumen)}
+    </section>
+    <section class="card subcard">
+      <div class="section-head">
+        <div>
+          <h2>Detalle ubicaciones</h2>
+        </div>
+        <span class="badge">${fmt(visibles.length)} visibles</span>
+      </div>
+      ${tablaDetalleUbicacionesActivas(visibles)}
+    </section>
+  `;
+}
+
+function actualizarFiltrosUbicacionesActivas() {
+  filtrosUbicacionesActivas = {
+    pasillo: limpiar(document.getElementById("filtroUbicacionesActivasPasillo")?.value),
+    zona: limpiar(document.getElementById("filtroUbicacionesActivasZona")?.value),
+    tipo: limpiar(document.getElementById("filtroUbicacionesActivasTipo")?.value),
+    busqueda: limpiar(document.getElementById("filtroUbicacionesActivasTexto")?.value).toLowerCase()
+  };
+  renderUbicacionesActivasControl();
+}
+
+function actualizarFiltrosUbicacionesActivasConPausa() {
+  clearTimeout(timerUbicacionesActivas);
+  filtrosUbicacionesActivas = {
+    pasillo: limpiar(document.getElementById("filtroUbicacionesActivasPasillo")?.value),
+    zona: limpiar(document.getElementById("filtroUbicacionesActivasZona")?.value),
+    tipo: limpiar(document.getElementById("filtroUbicacionesActivasTipo")?.value),
+    busqueda: limpiar(document.getElementById("filtroUbicacionesActivasTexto")?.value).toLowerCase()
+  };
+  timerUbicacionesActivas = setTimeout(renderUbicacionesActivasControl, 180);
+}
+
+function textoConteoUbicaciones(items) {
+  return items.map(([nombre, cantidad]) => `${nombre}: ${fmt(cantidad)}`).join(" | ");
+}
+
+function tablaResumenUbicacionesActivas(resumen) {
+  const rows = resumen.map(row => `
+    <tr>
+      <td><strong>Pasillo ${htmlSeguro(row.pasillo)}</strong></td>
+      <td><strong>${fmt(row.total)}</strong></td>
+      <td>${htmlSeguro(textoConteoUbicaciones(row.zonas))}</td>
+      <td>${htmlSeguro(textoConteoUbicaciones(row.tipos))}</td>
+      <td>${fmt(row.bahias)}</td>
+      <td>${fmt(row.niveles)}</td>
+      <td>${fmt(row.posiciones)}</td>
+    </tr>
+  `);
+  return tablaConId("tablaResumenUbicacionesActivas", ["Pasillo", "Ubicaciones", "Zona Asignac", "Tipo Ubicac", "Bahias", "Niveles", "Posiciones"], rows);
+}
+
+function tablaDetalleUbicacionesActivas(filas) {
+  const rows = filas.map(row => `
+    <tr>
+      <td><strong>${htmlSeguro(row.pasillo)}</strong></td>
+      <td><strong>${htmlSeguro(row.mascara)}</strong></td>
+      <td>${htmlSeguro(row.zona)}</td>
+      <td>${htmlSeguro(row.tipoUbicac)}</td>
+      <td>${htmlSeguro(row.area)}</td>
+      <td>${htmlSeguro(row.bahia)}</td>
+      <td>${htmlSeguro(row.nivel)}</td>
+      <td>${htmlSeguro(row.posicion)}</td>
+    </tr>
+  `);
+  return tablaConId("tablaDetalleUbicacionesActivas", ["Pasillo", "Mascara", "Zona Asignac", "Tipo Ubicac", "Area", "Bah", "Niv", "Posic"], rows);
+}
+
+function exportarUbicacionesActivasControl() {
+  const data = calcularUbicacionesActivasControl();
+  descargarExcelHojas("ubicaciones_activas", [
+    {
+      nombre: "Resumen",
+      filas: [
+        ["Pasillo", "Ubicaciones", "Zona Asignac", "Tipo Ubicac", "Bahias", "Niveles", "Posiciones"],
+        ...data.resumen.map(row => [
+          row.pasillo,
+          row.total,
+          textoConteoUbicaciones(row.zonas),
+          textoConteoUbicaciones(row.tipos),
+          row.bahias,
+          row.niveles,
+          row.posiciones
+        ])
+      ]
+    },
+    {
+      nombre: "Detalle",
+      filas: [
+        ["Pasillo", "Mascara", "Zona Asignac", "Tipo Ubicac", "Area", "Bah", "Niv", "Posic"],
+        ...data.filas.map(row => [row.pasillo, row.mascara, row.zona, row.tipoUbicac, row.area, row.bahia, row.nivel, row.posicion])
+      ]
+    }
+  ]);
+}
+
 function renderBuscadorControlPiso() {
   document.getElementById("controlPisoContenido").innerHTML = `
     <section class="card subcard control-piso-search">
@@ -5298,13 +5584,36 @@ function calcularPlanMultiPiso() {
 
 function filtrarPlanMultiPiso(data) {
   const rows = Array.isArray(data) ? data : (data?.filas || []);
-  const q = limpiar(document.getElementById("filtroPlanMultiPiso")?.value).toLowerCase();
+  const filtroLpn = limpiar(document.getElementById("filtroPlanMultiPisoLpn")?.value || filtrosPlanMultiPiso.lpn).toLowerCase();
+  const filtroProducto = limpiar(document.getElementById("filtroPlanMultiPisoProducto")?.value || filtrosPlanMultiPiso.producto).toLowerCase();
   const accion = limpiar(document.getElementById("filtroAccionPlanMultiPiso")?.value);
   const prioridad = limpiar(document.getElementById("filtroPrioridadPlanMultiPiso")?.value);
   return rows
     .filter(r => !accion || r.accion === accion)
     .filter(r => !prioridad || r.prioridad === prioridad)
-    .filter(r => !q || [r.codigo, r.codigoAlt, r.descripcion, r.ubicacionesTxt, r.gruposTxt, r.accion, r.motivo].join(" ").toLowerCase().includes(q));
+    .filter(r => {
+      if (!filtroLpn) return true;
+      const lpns = r.lpns ? Array.from(r.lpns) : [];
+      const detalleLpns = (r.detalle || []).map(d => d.lpn);
+      return [...lpns, ...detalleLpns].join(" ").toLowerCase().includes(filtroLpn);
+    })
+    .filter(r => {
+      if (!filtroProducto) return true;
+      const detalleProductos = (r.detalle || []).map(d => [d.codigo, d.codigoAlt, d.descripcion].join(" "));
+      return [r.codigo, r.codigoAlt, r.descripcion, r.ubicacionesTxt, r.gruposTxt, r.accion, r.motivo, ...detalleProductos]
+        .join(" ")
+        .toLowerCase()
+        .includes(filtroProducto);
+    });
+}
+
+function filtrarPlanMultiPisoConPausa() {
+  filtrosPlanMultiPiso = {
+    lpn: limpiar(document.getElementById("filtroPlanMultiPisoLpn")?.value),
+    producto: limpiar(document.getElementById("filtroPlanMultiPisoProducto")?.value)
+  };
+  clearTimeout(timerPlanMultiPiso);
+  timerPlanMultiPiso = setTimeout(renderPlanMultiPiso, 180);
 }
 
 function destinoProductoSimulacionCinco(row, contexto) {
@@ -6238,10 +6547,14 @@ function renderPlanMultiPiso() {
     const unificacionProductos = calcularUnificacionProductoPiso();
     const paquetesInteligentes = calcularPaquetesInteligentes(simulacion);
     const acciones = [...new Set(data.filas.map(r => r.accion))];
-    const qActual = limpiar(document.getElementById("filtroPlanMultiPiso")?.value);
+    const lpnActual = limpiar(document.getElementById("filtroPlanMultiPisoLpn")?.value || filtrosPlanMultiPiso.lpn);
+    const productoActual = limpiar(document.getElementById("filtroPlanMultiPisoProducto")?.value || filtrosPlanMultiPiso.producto);
     const accionActual = limpiar(document.getElementById("filtroAccionPlanMultiPiso")?.value);
     const prioridadActual = limpiar(document.getElementById("filtroPrioridadPlanMultiPiso")?.value);
-    const estabaEnFiltro = document.activeElement?.id === "filtroPlanMultiPiso";
+    filtrosPlanMultiPiso = { lpn: lpnActual, producto: productoActual };
+    const filtroActivo = ["filtroPlanMultiPisoLpn", "filtroPlanMultiPisoProducto"].includes(document.activeElement?.id)
+      ? document.activeElement.id
+      : "";
     const visible = filtrarPlanMultiPiso(data.filas);
 
     contenedor.innerHTML = `
@@ -6259,7 +6572,7 @@ function renderPlanMultiPiso() {
           <div>
             <h2>Sugerencias para limpiar piso</h2>
           </div>
-          <div class="filters grow">
+          <div class="filters grow plan-multi-filters">
             <select class="select-filter" id="filtroSimCincoAntiguedad" onchange="renderPlanMultiPiso()">
               <option value="">Toda antiguedad</option>
               <option value="0" ${simAntiguedadActual === "0" ? "selected" : ""}>0 dias</option>
@@ -6301,7 +6614,8 @@ function renderPlanMultiPiso() {
             <h2>Plan multi piso</h2>
           </div>
           <div class="filters grow">
-            <input class="search" id="filtroPlanMultiPiso" value="${atributoSeguro(qActual)}" placeholder="Buscar codigo, descripcion, LPN o ubicacion..." oninput="renderPlanMultiPiso()">
+            <input class="search" id="filtroPlanMultiPisoLpn" value="${atributoSeguro(lpnActual)}" placeholder="Buscar por LPN..." oninput="filtrarPlanMultiPisoConPausa()">
+            <input class="search" id="filtroPlanMultiPisoProducto" value="${atributoSeguro(productoActual)}" placeholder="Buscar codigo o descripcion..." oninput="filtrarPlanMultiPisoConPausa()">
             <select class="select-filter" id="filtroAccionPlanMultiPiso" onchange="renderPlanMultiPiso()">
               <option value="">Todas las acciones</option>
               ${acciones.map(a => `<option value="${atributoSeguro(a)}" ${accionActual === a ? "selected" : ""}>${htmlSeguro(a)}</option>`).join("")}
@@ -6317,8 +6631,8 @@ function renderPlanMultiPiso() {
         ${tablaPlanMultiPiso("tablaPlanMultiPiso", visible)}
       </section>
     `;
-    const filtro = document.getElementById("filtroPlanMultiPiso");
-    if (filtro && estabaEnFiltro) {
+    const filtro = filtroActivo ? document.getElementById(filtroActivo) : null;
+    if (filtro) {
       filtro.focus();
       filtro.setSelectionRange(filtro.value.length, filtro.value.length);
     }

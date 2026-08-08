@@ -277,6 +277,11 @@ body {
   flex: 1 1 360px;
 }
 
+.filters.grow.plan-multi-filters .search {
+  flex: 1 1 240px;
+  min-width: 220px;
+}
+
 .control-piso-search .notice {
   margin-top: 12px;
 }
