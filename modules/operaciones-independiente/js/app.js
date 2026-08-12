@@ -22,6 +22,7 @@ let timerPlanMultiPiso = null;
 let filtrosPlanMultiPiso = { lpn: "", producto: "" };
 let timerUbicacionesActivas = null;
 let filtrosUbicacionesActivas = { pasillo: "", zona: "", tipo: "", busqueda: "" };
+let filtrosShipToY = { asn: "", placa: "" };
 
 function limpiar(valor) {
   if (valor === null || valor === undefined) return "";
@@ -683,8 +684,36 @@ function verRecepcionProyectada() {
       </div>
       <button type="button" onclick="exportarRecepcionUca()">Excel recepcion</button>
     </div>
+    ${navRecepcionInterna("proyeccion")}
 
     ${bloqueRecepcionUca(recepcion, false)}
+  `;
+}
+
+function navRecepcionInterna(activo = "proyeccion") {
+  return `
+    <div class="subtabs recepcion-subtabs">
+      <button type="button" class="${activo === "proyeccion" ? "active" : ""}" onclick="verRecepcionProyectada()">Proyeccion</button>
+      <button type="button" class="${activo === "shipto" ? "active" : ""}" onclick="verRecepcionShipToY()">SHIP TO Y</button>
+    </div>
+  `;
+}
+
+function verRecepcionShipToY() {
+  const capacidad = calcularCapacidadCd();
+  const prediccionPts = prediccionLiberacionPts();
+  const recepcion = calcularRecepcionUca(capacidad, prediccionPts);
+  recepcionUcaVista = recepcion;
+  document.getElementById("modulo").innerHTML = `
+    <div class="section-head">
+      <div>
+        <h2>Recepcion - SHIP TO Y</h2>
+        <p class="muted-note">Validacion de ASN, camion, fecha de creacion, pallets mono/multi y codigos a separar.</p>
+      </div>
+      <button type="button" onclick="exportarValidacionPaleteroRecepcion()">Excel SHIP TO Y</button>
+    </div>
+    ${navRecepcionInterna("shipto")}
+    ${bloqueValidacionPaleteroRecepcion(recepcion, true)}
   `;
 }
 
@@ -885,6 +914,265 @@ function bultosProveedorRecepcion(row) {
   const unidades = numRecepcion(campoRecepcion(row, ["Un Env", "UN ENV"]));
   const caseQty = numRecepcion(campoRecepcion(row, ["Std Case Qty", "STD CASE QTY", "STD_CASE_QTY", "Case Qty", "CASE QTY"]));
   return caseQty > 0 ? unidades / caseQty : unidades;
+}
+
+function parseFechaHoraRecepcion(valor) {
+  const txt = limpiar(valor);
+  if (!txt) return null;
+  const partes = txt.split(/\s+/);
+  const fecha = partes[0] || "";
+  const hora = partes.find(p => p.includes(":")) || "00:00:00";
+  const f = fecha.split(/[\/-]/).map(Number);
+  const h = hora.split(":").map(Number);
+  if (f.length !== 3 || f.some(n => !Number.isFinite(n))) return null;
+  const horaPartes = [h[0] || 0, h[1] || 0, h[2] || 0];
+  const normalizarAnio = anio => anio < 100 ? 2000 + anio : anio;
+  const crearFecha = (anio, mes, dia) => {
+    if (mes < 1 || mes > 12 || dia < 1 || dia > 31) return null;
+    const fechaObj = new Date(normalizarAnio(anio), mes - 1, dia, ...horaPartes);
+    return Number.isNaN(fechaObj.getTime()) ? null : fechaObj;
+  };
+  const candidatos = String(f[0]).length === 4
+    ? [crearFecha(f[0], f[1], f[2])]
+    : [crearFecha(f[2], f[1], f[0]), crearFecha(f[2], f[0], f[1])];
+  const validos = candidatos.filter(Boolean);
+  if (!validos.length) return null;
+  const ahora = new Date();
+  const pasados = validos.filter(fechaObj => fechaObj <= ahora);
+  const base = pasados.length ? pasados : validos;
+  return base.sort((a, b) => Math.abs(ahora - a) - Math.abs(ahora - b))[0];
+}
+
+function estadoCincoDiasRecepcion(fechaTexto) {
+  const fecha = parseFechaHoraRecepcion(fechaTexto);
+  if (!fecha) return { dias: 0, horas: 0, faltanDias: 0, estado: "SIN FECHA", clase: "warn", mensaje: "Sin fecha de creacion para validar." };
+  const ahora = new Date();
+  const horas = Math.max(0, (ahora - fecha) / 36e5);
+  const dias = horas / 24;
+  const faltanHoras = Math.max(0, 120 - horas);
+  if (horas >= 120) {
+    return {
+      dias,
+      horas,
+      faltanDias: 0,
+      estado: "VENCIDO",
+      clase: "danger",
+      mensaje: `Ya pasaron ${dias.toFixed(1)} dias desde la creacion. Supero los 5 dias.`
+    };
+  }
+  return {
+    dias,
+    horas,
+    faltanDias: faltanHoras / 24,
+    estado: horas >= 96 ? "CRITICO" : horas >= 72 ? "ALERTA" : "EN TIEMPO",
+    clase: horas >= 96 ? "danger" : horas >= 72 ? "warn" : "ok",
+    mensaje: `Van ${dias.toFixed(1)} dias. Faltan ${(faltanHoras / 24).toFixed(1)} dias para cumplir 5 dias.`
+  };
+}
+
+function mapaAsnPaleteroRecepcion() {
+  const mapa = new Map();
+  (dataRecepcionPaleterosAsn || []).forEach(row => {
+    const asn = limpiar(campoRecepcion(row, ["ASN Entrada", "ASN", "ASN_ENTRADA"]));
+    if (!asn) return;
+    mapa.set(asn, {
+      asn,
+      camion: limpiar(campoRecepcion(row, ["Nro CamiÃ³n", "Nro CamiÃƒÂ³n", "Nro Camion", "NRO CAMION", "Camion"])),
+      fechaCreacion: limpiar(campoRecepcion(row, ["Fe y Hr Creac", "FE Y HR CREAC", "Fecha Creacion", "Fecha CreaciÃ³n"]))
+    });
+  });
+  return mapa;
+}
+
+function codigosSepararPaleteroRecepcion() {
+  const codigos = new Set();
+  (dataRecepcionPaleterosCodigo || []).forEach(row => {
+    const codigo = normalizar(campoRecepcion(row, ["CODIGO", "Codigo", "Producto", "PRODUCTO"]));
+    if (codigo) codigos.add(codigo);
+  });
+  return codigos;
+}
+
+function valorPorCanonParcial(row, patrones) {
+  const canonPatrones = patrones.map(canonColumnaRecepcion);
+  const key = Object.keys(row || {}).find(nombre => {
+    const canon = canonColumnaRecepcion(nombre);
+    return canonPatrones.some(patron => canon === patron || canon.includes(patron));
+  });
+  return key ? row[key] : "";
+}
+
+function mapaAsnPaleteroRecepcionSeguro() {
+  const mapa = new Map();
+  (dataRecepcionPaleterosAsn || []).forEach(row => {
+    const asn = limpiar(campoRecepcion(row, ["Nro ASN", "NRO ASN", "ASN Entrada", "ASN", "ASN_ENTRADA"]) || valorPorCanonParcial(row, ["Nro ASN", "ASN"]));
+    if (!asn) return;
+    mapa.set(asn, {
+      asn,
+      camion: limpiar(campoRecepcion(row, ["Nro CamiÃ³n", "Nro CamiÃƒÂ³n", "Nro Camion", "NRO CAMION", "Camion"]) || valorPorCanonParcial(row, ["Nro Camion", "Camion"])),
+      fechaCreacion: limpiar(campoRecepcion(row, ["Fe y Hr Creac", "FE Y HR CREAC", "Fecha Creacion"]) || valorPorCanonParcial(row, ["Fe Hr Creac", "Fecha Creacion"]))
+    });
+  });
+  return mapa;
+}
+
+function validacionPaleteroAsnCodigo() {
+  const asnInfo = mapaAsnPaleteroRecepcionSeguro();
+  const codigosValidar = codigosSepararPaleteroRecepcion();
+  const pallets = new Map();
+  const lpns = new Map();
+
+  (dataRecepcionPaleteros || []).forEach(row => {
+    if (!recepcionPendienteAlmacenaje(row)) return;
+    const asn = limpiar(campoRecepcion(row, ["ASN Entrada", "ASN", "ASN_ENTRADA"]));
+    const pallet = limpiar(campoRecepcion(row, ["Nro Pallet", "NRO PALLET", "Pallet", "PALLET"]));
+    const lpn = limpiar(campoRecepcion(row, ["Nro LPN", "LPN", "NRO LPN"]));
+    const codigo = codigoRecepcion(row) || codigoAltRecepcion(row);
+    if (!asn || !pallet) return;
+    const info = asnInfo.get(asn) || {};
+    const key = `${asn}|${pallet}`;
+    if (!pallets.has(key)) {
+      pallets.set(key, {
+        asn,
+        camion: info.camion || "SIN CAMION",
+        fechaCreacion: info.fechaCreacion || "",
+        pallet,
+        lpnsSet: new Set(),
+        codigosSet: new Set(),
+        codigosSepararSet: new Set(),
+        bultos: 0,
+        unidades: 0
+      });
+    }
+    const item = pallets.get(key);
+    if (lpn) item.lpnsSet.add(lpn);
+    if (codigo) {
+      item.codigosSet.add(codigo);
+      if (codigosValidar.has(codigo)) item.codigosSepararSet.add(codigo);
+    }
+    item.bultos += bultosRecepcion(row);
+    item.unidades += numRecepcion(campoRecepcion(row, ["Un Env", "UN ENV", "Un Rcb", "UN RCB"]));
+
+    if (lpn) {
+      const lpnKey = `${asn}|${pallet}|${lpn}`;
+      if (!lpns.has(lpnKey)) {
+        lpns.set(lpnKey, {
+          asn,
+          camion: info.camion || "SIN CAMION",
+          fechaCreacion: info.fechaCreacion || "",
+          pallet,
+          lpn,
+          codigosSet: new Set(),
+          codigosSepararSet: new Set(),
+          bultos: 0,
+          unidades: 0
+        });
+      }
+      const lpnItem = lpns.get(lpnKey);
+      if (codigo) {
+        lpnItem.codigosSet.add(codigo);
+        if (codigosValidar.has(codigo)) lpnItem.codigosSepararSet.add(codigo);
+      }
+      lpnItem.bultos += bultosRecepcion(row);
+      lpnItem.unidades += numRecepcion(campoRecepcion(row, ["Un Env", "UN ENV", "Un Rcb", "UN RCB"]));
+    }
+  });
+
+  const detalle = Array.from(pallets.values()).map(item => {
+    const tiempo = estadoCincoDiasRecepcion(item.fechaCreacion);
+    const codigos = Array.from(item.codigosSet);
+    const codigosSeparar = Array.from(item.codigosSepararSet);
+    return {
+      asn: item.asn,
+      camion: item.camion,
+      fechaCreacion: item.fechaCreacion,
+      pallet: item.pallet,
+      lpns: item.lpnsSet.size,
+      lpnsTxt: Array.from(item.lpnsSet).join(" | "),
+      codigos: codigos.length,
+      codigosTxt: codigos.join(" | "),
+      codigosSeparar: codigosSeparar.length,
+      codigosSepararTxt: codigosSeparar.join(" | "),
+      tipo: codigos.length > 1 ? "MULTI" : "MONO",
+      bultos: item.bultos,
+      unidades: item.unidades,
+      tieneCodigoSeparar: codigosSeparar.length > 0,
+      ...tiempo
+    };
+  }).sort((a, b) => String(a.camion).localeCompare(String(b.camion)) || String(a.asn).localeCompare(String(b.asn)) || String(a.pallet).localeCompare(String(b.pallet)));
+
+  const asn = new Map();
+  detalle.forEach(row => {
+    if (!asn.has(row.asn)) {
+      asn.set(row.asn, {
+        asn: row.asn,
+        camion: row.camion,
+        fechaCreacion: row.fechaCreacion,
+        pallets: 0,
+        mono: 0,
+        multi: 0,
+        palletsSeparar: 0,
+        codigosSepararSet: new Set(),
+        bultos: 0,
+        unidades: 0,
+        tiempo: estadoCincoDiasRecepcion(row.fechaCreacion)
+      });
+    }
+    const item = asn.get(row.asn);
+    item.pallets += 1;
+    item.bultos += row.bultos;
+    item.unidades += row.unidades;
+    if (row.tipo === "MONO") item.mono += 1;
+    if (row.tipo === "MULTI") item.multi += 1;
+    if (row.tieneCodigoSeparar) item.palletsSeparar += 1;
+    row.codigosSepararTxt.split(" | ").map(limpiar).filter(Boolean).forEach(codigo => item.codigosSepararSet.add(codigo));
+  });
+
+  const resumenAsn = Array.from(asn.values()).map(item => ({
+    ...item,
+    codigosSeparar: item.codigosSepararSet.size,
+    codigosSepararTxt: Array.from(item.codigosSepararSet).join(" | ")
+  })).sort((a, b) => b.palletsSeparar - a.palletsSeparar || b.pallets - a.pallets);
+
+  const detalleLpn = Array.from(lpns.values()).map(item => {
+    const codigos = Array.from(item.codigosSet);
+    const codigosSeparar = Array.from(item.codigosSepararSet);
+    const tiempo = estadoCincoDiasRecepcion(item.fechaCreacion);
+    return {
+      asn: item.asn,
+      camion: item.camion,
+      fechaCreacion: item.fechaCreacion,
+      pallet: item.pallet,
+      lpn: item.lpn,
+      codigos: codigos.length,
+      codigosTxt: codigos.join(" | "),
+      codigosSeparar: codigosSeparar.length,
+      codigosSepararTxt: codigosSeparar.join(" | "),
+      tipo: codigos.length > 1 ? "MULTI" : "MONO",
+      observacion: codigosSeparar.length ? "SEPARAR POR CODIGO" : "NO SEPARAR",
+      bultos: item.bultos,
+      unidades: item.unidades,
+      tieneCodigoSeparar: codigosSeparar.length > 0,
+      ...tiempo
+    };
+  }).sort((a, b) => String(a.camion).localeCompare(String(b.camion)) || String(a.asn).localeCompare(String(b.asn)) || String(a.pallet).localeCompare(String(b.pallet)) || String(a.lpn).localeCompare(String(b.lpn)));
+
+  return {
+    resumenAsn,
+    detalle,
+    detalleLpn,
+    total: {
+      asn: resumenAsn.length,
+      camiones: new Set(resumenAsn.map(row => row.camion).filter(Boolean)).size,
+      pallets: detalle.length,
+      mono: detalle.filter(row => row.tipo === "MONO").length,
+      multi: detalle.filter(row => row.tipo === "MULTI").length,
+      palletsSeparar: detalle.filter(row => row.tieneCodigoSeparar).length,
+      codigosBase: codigosValidar.size,
+      vencidos: resumenAsn.filter(row => row.tiempo.estado === "VENCIDO").length,
+      alertas: resumenAsn.filter(row => ["ALERTA", "CRITICO"].includes(row.tiempo.estado)).length
+    }
+  };
 }
 
 function claveProductoRecepcion(codigo, alternativo) {
@@ -1336,8 +1624,9 @@ function calcularRecepcionUca(capacidad, prediccionPts) {
   total.paleterosTotal = total.paleteros + total.paleterosMulti;
 
   const detalleAsnPasillo = detalleRecepcionPorAsnPasillo(proveedores, paleterosMono, resumen);
+  const validacionPaletero = validacionPaleteroAsnCodigo();
 
-  return { total, resumen, proveedores, proveedoresAsn, paleteros, paleterosMono, paleterosMulti, paleterosAsn, detalleAsnPasillo };
+  return { total, resumen, proveedores, proveedoresAsn, paleteros, paleterosMono, paleterosMulti, paleterosAsn, detalleAsnPasillo, validacionPaletero };
 }
 
 function claseEstadoRecepcion(estado) {
@@ -1599,6 +1888,189 @@ function cuadroPasilloAsnRecepcion(rows) {
   `;
 }
 
+function bloqueValidacionPaleteroRecepcion(data, vistaCompleta = false) {
+  const validacion = data.validacionPaletero || {};
+  const resumenBase = validacion.resumenAsn || [];
+  const detalleBase = validacion.detalle || [];
+  const detalleLpnBase = validacion.detalleLpn || [];
+  const resumen = filtrarShipToY(resumenBase);
+  const detalle = filtrarShipToY(detalleBase);
+  const detalleLpn = filtrarShipToY(detalleLpnBase);
+  const detalleSeparar = detalle.filter(row => row.tieneCodigoSeparar);
+  const total = {
+    asn: new Set(resumen.map(row => row.asn)).size,
+    camiones: new Set(resumen.map(row => row.camion).filter(Boolean)).size,
+    pallets: detalle.length,
+    mono: detalle.filter(row => row.tipo === "MONO").length,
+    multi: detalle.filter(row => row.tipo === "MULTI").length,
+    palletsSeparar: detalle.filter(row => row.tieneCodigoSeparar).length,
+    codigosBase: validacion.total?.codigosBase || 0,
+    vencidos: resumen.filter(row => row.tiempo?.estado === "VENCIDO").length,
+    alertas: resumen.filter(row => ["ALERTA", "CRITICO"].includes(row.tiempo?.estado)).length
+  };
+  return `
+    <section class="recepcion-validation-card ${vistaCompleta ? "shipto-view" : ""}">
+      <div class="section-head">
+        <div>
+          <h3>Validacion ASN paletero</h3>
+          <p class="muted-note">Cruza Hoja1 con ASN y CODIGO para separar pallets por camion, fecha de creacion y codigos involucrados.</p>
+        </div>
+        <button type="button" onclick="exportarValidacionPaleteroRecepcion()">Excel validacion</button>
+      </div>
+      ${vistaCompleta ? filtrosShipToYHtml(resumenBase) : ""}
+      <div class="kpi-grid compact recepcion-validation-kpis">
+        ${kpi("ASN", fmt(total.asn || 0), "unidades logisticas")}
+        ${kpi("Camiones", fmt(total.camiones || 0), "segun Nro Camion")}
+        ${kpi("Pallets", fmt(total.pallets || 0), `${fmt(total.mono || 0)} mono | ${fmt(total.multi || 0)} multi`)}
+        ${kpi("Codigos a separar", fmt(total.palletsSeparar || 0), `${fmt(total.codigosBase || 0)} codigos base`)}
+        ${kpi("Alertas 5 dias", fmt((total.alertas || 0) + (total.vencidos || 0)), `${fmt(total.vencidos || 0)} vencidos`)}
+      </div>
+      <div class="dashboard-layout recepcion-validation-layout">
+        <div>
+          <div class="section-head compact-head">
+            <h3>Resumen por ASN / camion</h3>
+            <span class="muted-note">${fmt(resumen.length)} ASN evaluados</span>
+          </div>
+          ${tabla(["ASN", "Camion", "Fe y Hr Creac", "Estado 5 dias", "Pallets", "Mono", "Multi", "Pallets codigo"], resumen.map(row => {
+            const tiempo = row.tiempo || {};
+            return `
+              <tr class="${htmlSeguro(tiempo.clase || "")}">
+                <td><strong>${htmlSeguro(row.asn)}</strong></td>
+                <td>${htmlSeguro(row.camion || "SIN CAMION")}</td>
+                <td>${htmlSeguro(row.fechaCreacion || "SIN FECHA")}</td>
+                <td><strong>${htmlSeguro(tiempo.estado || "SIN FECHA")}</strong><small>${htmlSeguro(tiempo.mensaje || "")}</small></td>
+                <td class="number">${fmt(row.pallets)}</td>
+                <td class="number">${fmt(row.mono)}</td>
+                <td class="number">${fmt(row.multi)}</td>
+                <td class="number"><strong>${fmt(row.palletsSeparar)}</strong></td>
+              </tr>
+            `;
+          }), "Sin ASN para validar")}
+        </div>
+        <div>
+          <div class="section-head compact-head">
+            <h3>Pallets con codigos a separar</h3>
+            <span class="muted-note">${fmt(detalleSeparar.length)} pallets involucrados</span>
+          </div>
+          ${tabla(["ASN", "Camion", "Pallet", "LPNs", "Codigos", "Tipo", "Bultos", "Codigos separar"], detalleSeparar.map(row => `
+            <tr class="${htmlSeguro(row.clase || "")}">
+              <td><strong>${htmlSeguro(row.asn)}</strong></td>
+              <td>${htmlSeguro(row.camion || "SIN CAMION")}</td>
+              <td>${htmlSeguro(row.pallet)}</td>
+              <td class="number">${fmt(row.lpns)}</td>
+              <td class="number">${fmt(row.codigos)}</td>
+              <td><strong>${htmlSeguro(row.tipo)}</strong></td>
+              <td class="number">${fmt(row.bultos)}</td>
+              <td>${htmlSeguro(row.codigosSepararTxt)}</td>
+            </tr>
+          `), "Sin pallets con codigos de la hoja CODIGO")}
+        </div>
+      </div>
+      ${vistaCompleta ? bloqueValidacionLpnShipToY(detalleLpn) + bloqueDetalleShipToY({ detalle }) : ""}
+    </section>
+  `;
+}
+
+function filtrarShipToY(rows) {
+  const asn = limpiar(filtrosShipToY.asn);
+  const placa = limpiar(filtrosShipToY.placa);
+  return (rows || []).filter(row => (!asn || row.asn === asn) && (!placa || row.camion === placa));
+}
+
+function filtrosShipToYHtml(resumen) {
+  const asns = Array.from(new Set((resumen || []).map(row => row.asn).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  const placas = Array.from(new Set((resumen || []).map(row => row.camion).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  return `
+    <div class="filters shipto-filters">
+      <label>
+        ASN
+        <select onchange="actualizarFiltroShipToY('asn', this.value)">
+          <option value="">Todos los ASN</option>
+          ${asns.map(asn => `<option value="${atributoSeguro(asn)}" ${filtrosShipToY.asn === asn ? "selected" : ""}>${htmlSeguro(asn)}</option>`).join("")}
+        </select>
+      </label>
+      <label>
+        Placa / camion
+        <select onchange="actualizarFiltroShipToY('placa', this.value)">
+          <option value="">Todas las placas</option>
+          ${placas.map(placa => `<option value="${atributoSeguro(placa)}" ${filtrosShipToY.placa === placa ? "selected" : ""}>${htmlSeguro(placa)}</option>`).join("")}
+        </select>
+      </label>
+      <button type="button" class="soft" onclick="limpiarFiltrosShipToY()">Limpiar filtros</button>
+    </div>
+  `;
+}
+
+function actualizarFiltroShipToY(campo, valor) {
+  filtrosShipToY[campo] = valor;
+  verRecepcionShipToY();
+}
+
+function limpiarFiltrosShipToY() {
+  filtrosShipToY = { asn: "", placa: "" };
+  verRecepcionShipToY();
+}
+
+function bloqueValidacionLpnShipToY(detalleLpn) {
+  const palletsContados = new Set();
+  const rows = (detalleLpn || []).map(row => {
+    const key = `${row.asn}|${row.pallet}`;
+    const cuentaPallet = palletsContados.has(key) ? 0 : 1;
+    palletsContados.add(key);
+    return { ...row, cuentaPallet };
+  });
+  const totalPallets = palletsContados.size;
+  return `
+    <div class="section-head compact-head subhead">
+      <h3>Validacion por LPN / pallet</h3>
+      <span class="muted-note">${fmt(totalPallets)} pallets en total</span>
+    </div>
+    ${tabla(["ASN", "Placa", "LPN", "Numero pallet", "Valores", "Observacion", "Cuenta pallets", "Tipo"], rows.map(row => `
+      <tr class="${row.tieneCodigoSeparar ? "warn" : ""}">
+        <td><strong>${htmlSeguro(row.asn)}</strong></td>
+        <td>${htmlSeguro(row.camion || "SIN CAMION")}</td>
+        <td>${htmlSeguro(row.lpn)}</td>
+        <td>${htmlSeguro(row.pallet)}</td>
+        <td class="number">${fmt(row.codigos)}</td>
+        <td><strong>${htmlSeguro(row.observacion)}</strong><small>${htmlSeguro(row.codigosSepararTxt || "")}</small></td>
+        <td class="number">${fmt(row.cuentaPallet)}</td>
+        <td><strong>${htmlSeguro(row.tipo)}</strong></td>
+      </tr>
+    `).concat([`
+      <tr class="ok">
+        <td colspan="6"><strong>TOTAL PALLETS</strong></td>
+        <td class="number"><strong>${fmt(totalPallets)}</strong></td>
+        <td></td>
+      </tr>
+    `]), "Sin validacion por LPN")}
+  `;
+}
+
+function bloqueDetalleShipToY(validacion) {
+  const detalle = validacion.detalle || [];
+  return `
+    <div class="section-head compact-head subhead">
+      <h3>Detalle general de pallets por ASN</h3>
+      <span class="muted-note">${fmt(detalle.length)} pallets evaluados</span>
+    </div>
+    ${tabla(["ASN", "Camion", "Fe y Hr Creac", "Pallet", "LPNs", "Codigos", "Tipo", "Bultos", "Unidades", "Codigos separar", "Estado 5 dias"], detalle.map(row => `
+      <tr class="${htmlSeguro(row.clase || "")}">
+        <td><strong>${htmlSeguro(row.asn)}</strong></td>
+        <td>${htmlSeguro(row.camion || "SIN CAMION")}</td>
+        <td>${htmlSeguro(row.fechaCreacion || "SIN FECHA")}</td>
+        <td>${htmlSeguro(row.pallet)}</td>
+        <td class="number">${fmt(row.lpns)}</td>
+        <td class="number">${fmt(row.codigos)}</td>
+        <td><strong>${htmlSeguro(row.tipo)}</strong></td>
+        <td class="number">${fmt(row.bultos)}</td>
+        <td class="number">${fmt(row.unidades)}</td>
+        <td>${htmlSeguro(row.codigosSepararTxt || "-")}</td>
+        <td><strong>${htmlSeguro(row.estado || "SIN FECHA")}</strong><small>${htmlSeguro(row.mensaje || "")}</small></td>
+      </tr>
+    `), "Sin detalle de pallets")}
+  `;
+}
+
 function bloqueRecepcionUca(data, mostrarBotonExcel = true) {
   recepcionUcaVista = data;
   const proveedoresAsn = data.proveedoresAsn || [];
@@ -1727,6 +2199,83 @@ function exportarRecepcionUca() {
       filas: [
         ["ASN", "PALLET", "LPNS", "CODIGOS", "TIPO", "ALMACENA EN RESERVA", "PASILLO", "PALLETS", "BULTOS", "PRODUCTOS", "DESCRIPCION", "METODO PASILLO"],
         ...data.paleteros.map(row => [row.asn, row.lpn, row.lpns, row.productos, row.clasePallet, row.clasePallet === "MONO" ? "SI" : "NO", row.pasillo, row.pallets, row.bultos, row.productosTxt, row.descripcion, row.metodo])
+      ]
+    },
+    {
+      nombre: "Validacion ASN",
+      filas: [
+        ["ASN", "CAMION", "FE Y HR CREAC", "ESTADO 5 DIAS", "DIAS TRANSCURRIDOS", "DIAS FALTANTES", "PALLETS", "MONO", "MULTI", "PALLETS CON CODIGO", "CODIGOS INVOLUCRADOS"],
+        ...((data.validacionPaletero?.resumenAsn || []).map(row => [row.asn, row.camion, row.fechaCreacion, row.tiempo?.estado || "", row.tiempo?.dias || 0, row.tiempo?.faltanDias || 0, row.pallets, row.mono, row.multi, row.palletsSeparar, row.codigosSepararTxt]))
+      ]
+    },
+    {
+      nombre: "Pallets codigos",
+      filas: [
+        ["ASN", "CAMION", "FE Y HR CREAC", "PALLET", "LPNS", "LPN DETALLE", "CODIGOS", "TIPO", "BULTOS", "UNIDADES", "TRAE CODIGO", "CODIGOS A SEPARAR", "ESTADO 5 DIAS", "MENSAJE"],
+        ...((data.validacionPaletero?.detalle || []).map(row => [row.asn, row.camion, row.fechaCreacion, row.pallet, row.lpns, row.lpnsTxt, row.codigos, row.tipo, row.bultos, row.unidades, row.tieneCodigoSeparar ? "SI" : "NO", row.codigosSepararTxt, row.estado, row.mensaje]))
+      ]
+    }
+  ]);
+}
+
+function exportarValidacionPaleteroRecepcion() {
+  const data = recepcionUcaVista?.validacionPaletero;
+  if (!data) return alert("No hay validacion de paleteros para exportar");
+  const resumen = filtrarShipToY(data.resumenAsn || []);
+  const detalle = filtrarShipToY(data.detalle || []);
+  const detalleLpnBase = filtrarShipToY(data.detalleLpn || []);
+  const detalleSeparar = detalle.filter(row => row.tieneCodigoSeparar);
+  const palletsContados = new Set();
+  const detalleLpn = detalleLpnBase.map(row => {
+    const key = `${row.asn}|${row.pallet}`;
+    const cuentaPallet = palletsContados.has(key) ? 0 : 1;
+    palletsContados.add(key);
+    return { ...row, cuentaPallet };
+  });
+  const asns = Array.from(new Set(detalleLpn.map(row => row.asn).filter(Boolean)));
+  const placas = Array.from(new Set(detalleLpn.map(row => row.camion).filter(Boolean)));
+  const fechas = Array.from(new Set(detalleLpn.map(row => row.fechaCreacion).filter(Boolean)));
+  const subtitulo = [
+    "ASN", filtrosShipToY.asn || (asns.length === 1 ? asns[0] : "TODOS"),
+    "PLACA", filtrosShipToY.placa || (placas.length === 1 ? placas[0] : "TODAS"),
+    "FECHA", fechas.length === 1 ? fechas[0] : "VARIAS"
+  ];
+  descargarExcelHojas("recepcion_validacion_asn_paletero", [
+    {
+      nombre: "Validacion LPN",
+      filas: [
+        subtitulo,
+        [],
+        ["ASN", "PLACA", "FECHA", "LPN", "PALLET", "VALORES", "OBSERVACION", "CUENTA PALLETS", "TIPO", "CODIGOS", "CODIGOS A SEPARAR", "BULTOS", "UNIDADES"],
+        ...detalleLpn.map(row => [row.asn, row.camion, row.fechaCreacion, row.lpn, row.pallet, row.codigos, row.observacion, row.cuentaPallet, row.tipo, row.codigosTxt, row.codigosSepararTxt, row.bultos, row.unidades]),
+        ["", "", "", "", "", "", "TOTAL PALLETS", palletsContados.size, "", "", "", "", ""]
+      ]
+    },
+    {
+      nombre: "Resumen ASN",
+      filas: [
+        subtitulo,
+        [],
+        ["ASN", "CAMION", "FE Y HR CREAC", "ESTADO 5 DIAS", "DIAS TRANSCURRIDOS", "DIAS FALTANTES", "PALLETS", "MONO", "MULTI", "PALLETS CON CODIGO", "CODIGOS INVOLUCRADOS", "BULTOS", "UNIDADES"],
+        ...resumen.map(row => [row.asn, row.camion, row.fechaCreacion, row.tiempo?.estado || "", row.tiempo?.dias || 0, row.tiempo?.faltanDias || 0, row.pallets, row.mono, row.multi, row.palletsSeparar, row.codigosSepararTxt, row.bultos, row.unidades])
+      ]
+    },
+    {
+      nombre: "Pallets a separar",
+      filas: [
+        subtitulo,
+        [],
+        ["ASN", "CAMION", "FE Y HR CREAC", "PALLET", "LPNS", "LPN DETALLE", "CODIGOS", "TIPO", "BULTOS", "UNIDADES", "CODIGOS A SEPARAR", "ESTADO 5 DIAS", "MENSAJE"],
+        ...detalleSeparar.map(row => [row.asn, row.camion, row.fechaCreacion, row.pallet, row.lpns, row.lpnsTxt, row.codigos, row.tipo, row.bultos, row.unidades, row.codigosSepararTxt, row.estado, row.mensaje])
+      ]
+    },
+    {
+      nombre: "Detalle pallets",
+      filas: [
+        subtitulo,
+        [],
+        ["ASN", "CAMION", "FE Y HR CREAC", "PALLET", "LPNS", "LPN DETALLE", "CODIGOS", "CODIGOS DETALLE", "TIPO", "BULTOS", "UNIDADES", "TRAE CODIGO", "CODIGOS A SEPARAR", "ESTADO 5 DIAS", "MENSAJE"],
+        ...detalle.map(row => [row.asn, row.camion, row.fechaCreacion, row.pallet, row.lpns, row.lpnsTxt, row.codigos, row.codigosTxt, row.tipo, row.bultos, row.unidades, row.tieneCodigoSeparar ? "SI" : "NO", row.codigosSepararTxt, row.estado, row.mensaje])
       ]
     }
   ]);

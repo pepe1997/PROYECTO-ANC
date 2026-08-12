@@ -12,6 +12,8 @@ let dataBloqueo = [];
 let dataAsignacionTareas = [];
 let dataRecepcionProveedores = [];
 let dataRecepcionPaleteros = [];
+let dataRecepcionPaleterosAsn = [];
+let dataRecepcionPaleterosCodigo = [];
 let datosListos = false;
 let advertenciasCarga = [];
 
@@ -321,7 +323,7 @@ async function cargarDatos() {
   datosListos = false;
   estado("Cargando hojas base...");
 
-  const [lpns, productos, pedido, inventario, ubicaciones, bloqueo, asignacionTareas, recepcionProveedores, recepcionPaleteros] = await Promise.all([
+  const [lpns, productos, pedido, inventario, ubicaciones, bloqueo, asignacionTareas, recepcionProveedores, recepcionPaleteros, recepcionPaleterosAsn, recepcionPaleterosCodigo] = await Promise.all([
     cargarHoja("LPNS"),
     cargarHoja("PRODUCTOS"),
     cargarHoja("PEDIDO"),
@@ -330,7 +332,9 @@ async function cargarDatos() {
     cargarOpcional("BLOQUEO"),
     cargarOpcionalDesde(TAREAS_ASIGNACION_SHEET_ID, "ASIGNACION"),
     cargarOpcionalPrincipalDesde(RECEPCION_PROVEEDORES_SHEET_ID, "recepcion proveedores"),
-    cargarOpcionalPrincipalDesde(RECEPCION_PALETEROS_SHEET_ID, "recepcion paleteros")
+    cargarOpcionalPrincipalDesde(RECEPCION_PALETEROS_SHEET_ID, "recepcion paleteros"),
+    cargarOpcionalDesde(RECEPCION_PALETEROS_SHEET_ID, "ASN"),
+    cargarOpcionalDesde(RECEPCION_PALETEROS_SHEET_ID, "CODIGO")
   ]);
 
   dataLPN = lpns.map(normalizarFilaLpn);
@@ -342,6 +346,8 @@ async function cargarDatos() {
   dataAsignacionTareas = asignacionTareas;
   dataRecepcionProveedores = recepcionProveedores;
   dataRecepcionPaleteros = recepcionPaleteros;
+  dataRecepcionPaleterosAsn = recepcionPaleterosAsn;
+  dataRecepcionPaleterosCodigo = recepcionPaleterosCodigo;
   validarDatosBase();
   datosListos = true;
 
