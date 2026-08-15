@@ -90,7 +90,11 @@
             <div>
               <h1>Panel ejecutivo</h1>
             </div>
-            <button class="soft" onclick="exportarImagen('modulo', 'anc-reporte-operacional')">Imagen</button>
+            <div class="report-actions">
+              <button class="ghost" id="btnVistaReporte" onclick="abrirVistaReporte()">Vista reporte</button>
+              <button class="soft" onclick="exportarPdfReporte()">PDF</button>
+              <button class="soft" onclick="exportarImagen('modulo', 'anc-reporte-operacional')">Imagen</button>
+            </div>
           </div>
 
           <div id="modulo">
@@ -99,6 +103,19 @@
         </section>
       </section>
     </main>
+    <div id="visorReporte" class="report-viewer" hidden>
+      <div class="report-viewer-bar">
+        <div>
+          <strong>Vista reporte</strong>
+          <span>Formato completo para captura o PDF</span>
+        </div>
+        <div class="report-actions">
+          <button class="soft" onclick="exportarPdfReporte()">PDF</button>
+          <button class="ghost" onclick="cerrarVistaReporte()">Cerrar</button>
+        </div>
+      </div>
+      <div id="visorReporteContenido" class="report-viewer-content"></div>
+    </div>
   </section>
 
   <script src="js/data.js"></script>

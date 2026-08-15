@@ -417,6 +417,12 @@ function resumenRecepcion(data) {
   const asnUnicos = new Set(data.map(r => r.asn).filter(Boolean)).size;
   const pallets917 = pallets.filter(p => p.codigoProveedor === "917");
   const data917 = data.filter(r => r.codigoProveedor === "917");
+  const paleterosRecibidos = new Set(
+    data
+      .map(r => r.asn)
+      .filter(asn => asn && normalizar(asn).startsWith("OS917"))
+      .map(asn => normalizar(asn))
+  ).size;
   return {
     pallets,
     totalProgramado,
@@ -428,6 +434,7 @@ function resumenRecepcion(data) {
     mono: pallets.filter(p => p.tipo === "MONOPALLET").length,
     multi: pallets.filter(p => p.tipo === "MULTI").length,
     asn917: new Set(data917.map(r => r.asn).filter(Boolean)).size,
+    paleterosRecibidos,
     pallets917: pallets917.length,
     mono917: pallets917.filter(p => p.tipo === "MONOPALLET").length,
     multi917: pallets917.filter(p => p.tipo === "MULTI").length,
@@ -1097,6 +1104,10 @@ function verPedidoCompacto() {
   const fechas = cache.fechas.map(x => ({ label: x.label.slice(0, 5), valor: x.pedido }));
   const noAsignadoUbi = cache.noAsignadoUbi;
   const fechasTabla = cache.fechas;
+  const fechasConNoAsignado = fechasTabla.filter(f => f.noAsignado > 0);
+  const noAsignadoTotal = resumenGeneral.noAsignado;
+  const pedidoConNoAsignado = fechasConNoAsignado.reduce((a, b) => a + b.pedido, 0);
+  const pctNoAsignadoGlobal = pct(noAsignadoTotal, pedidoConNoAsignado || resumenGeneral.pedido);
 
   document.getElementById("modulo").innerHTML = `
     <section class="visual-sheet pedido-compact">
@@ -1106,29 +1117,29 @@ function verPedidoCompacto() {
           ${visualKpi("PEDIDO", fmt(resumen.pedido))}
           ${visualKpi("ASIGNADO", fmt(resumen.asignado))}
           ${visualKpi("DESPACHO", fmt(resumen.despacho))}
-          ${visualKpi("NO ASIGNADO", fmt(resumen.noAsignado))}
+          ${visualKpi("NO ASIGNADO", fmt(noAsignadoTotal))}
         </div>
       </div>
       <div class="pedido-highlights">
         <div><span>Ordenes</span><strong>${fmt(resumen.ordenes)}</strong></div>
         <div><span>Tiendas</span><strong>${fmt(resumen.tiendas)}</strong></div>
         <div><span>Productos</span><strong>${fmt(resumen.productos)}</strong></div>
-        <div class="alert"><span>No asignado</span><strong>${fmt(resumen.noAsignado)}</strong><small>${pct(resumen.noAsignado, resumen.pedido).toFixed(1)}% del pedido</small></div>
+        <div class="alert"><span>No asignado</span><strong>${fmt(noAsignadoTotal)}</strong><small>${pctNoAsignadoGlobal.toFixed(1)}% del pedido con pendiente</small></div>
       </div>
       <div class="pedido-main-grid">
         ${visualLine("TENDENCIA DEL PEDIDO", fechas, resumen.pedido, "#2563eb", true)}
         <article class="visual-panel pedido-pending-card">
           <span>NO ASIGNADO</span>
-          <strong>${fmt(resumen.noAsignado)}</strong>
+          <strong>${fmt(noAsignadoTotal)}</strong>
           <em>Bultos pendientes</em>
-          <div><b>${pct(resumen.noAsignado, resumen.pedido).toFixed(1)}%</b><small>del pedido seleccionado</small></div>
+          <div><b>${pctNoAsignadoGlobal.toFixed(1)}%</b><small>del pedido con pendiente</small></div>
         </article>
       </div>
       <div class="visual-gauge-row pedido-gauges">
         ${visualGauge("ASIGNACION", resumen.asignado, resumen.pedido, "#22c55e")}
         ${visualGauge("PICKING", resumen.picking, resumen.pedido, "#2563eb")}
         ${visualGauge("DESPACHO", resumen.despacho, resumen.pedido, "#6d28d9")}
-        ${visualGauge("NO ASIG.", resumen.noAsignado, resumen.pedido, "#ef4444")}
+        ${visualGauge("NO ASIG.", noAsignadoTotal, pedidoConNoAsignado || resumenGeneral.pedido, "#ef4444")}
       </div>
       <div class="pedido-bottom-grid">
         <article class="visual-panel main-chart">
@@ -2144,6 +2155,7 @@ function verRecepcionCompacto() {
           ${visualKpi("RECIBIDO", fmt(resumen.totalRecibido))}
           ${visualKpi("PROGRAMADO", fmt(resumen.totalProgramado))}
           ${visualKpi("CUMPLIMIENTO", `${resumen.cumplimiento.toFixed(1)}%`)}
+          ${visualKpi("PALETEROS RECIBIDOS", fmt(resumen.paleterosRecibidos))}
           ${visualKpi("PROVEEDORES", fmt(proveedoresVisibles.length))}
         </div>
       </div>
@@ -2904,6 +2916,46 @@ function renderBase(headersParam) {
   document.getElementById("baseVista").innerHTML = tabla(headers, data.slice(0, 1500).map(r => `
     <tr>${headers.map(h => `<td>${limpiar(r[h])}</td>`).join("")}</tr>
   `));
+}
+
+function prepararContenidoReporte() {
+  const origen = document.getElementById("modulo");
+  const destino = document.getElementById("visorReporteContenido");
+  if (!origen || !destino) return false;
+  destino.innerHTML = origen.innerHTML;
+  destino.querySelectorAll("[id]").forEach((el, index) => {
+    el.id = `visor_${el.id}_${index}`;
+  });
+  return true;
+}
+
+function abrirVistaReporte() {
+  const visor = document.getElementById("visorReporte");
+  if (!visor || !prepararContenidoReporte()) return;
+  visor.hidden = false;
+  document.body.classList.add("report-viewer-open");
+}
+
+function cerrarVistaReporte() {
+  const visor = document.getElementById("visorReporte");
+  const destino = document.getElementById("visorReporteContenido");
+  if (visor) visor.hidden = true;
+  if (destino) destino.innerHTML = "";
+  document.body.classList.remove("report-viewer-open");
+}
+
+function exportarPdfReporte() {
+  const visor = document.getElementById("visorReporte");
+  const estabaAbierto = Boolean(visor && !visor.hidden);
+  if (!estabaAbierto) abrirVistaReporte();
+  document.body.classList.add("report-printing");
+  const restaurar = () => {
+    document.body.classList.remove("report-printing");
+    if (!estabaAbierto) cerrarVistaReporte();
+    window.removeEventListener("afterprint", restaurar);
+  };
+  window.addEventListener("afterprint", restaurar);
+  setTimeout(() => window.print(), 120);
 }
 
 function exportarImagen(id, nombre) {

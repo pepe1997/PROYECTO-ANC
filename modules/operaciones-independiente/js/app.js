@@ -16,12 +16,16 @@ let pasilloPrediccionPtsActivo = "";
 let recepcionUcaVista = { resumen: [], proveedores: [], proveedoresAsn: [], paleteros: [], paleterosAsn: [], total: {}, detalleAsnPasillo: [] };
 let cacheLpnsUbicacion = { key: "", control: [], activo: new Map(), reserva: new Map() };
 let cacheProductosPorCodigo = { key: "", mapa: new Map() };
+let detalleBusquedaShipTo = new Map();
 let timerRenderLpnsUbicacion = null;
 let timerControlPiso = null;
 let timerPlanMultiPiso = null;
 let filtrosPlanMultiPiso = { lpn: "", producto: "" };
 let timerUbicacionesActivas = null;
 let filtrosUbicacionesActivas = { pasillo: "", zona: "", tipo: "", busqueda: "" };
+let filtrosRecepcionProyeccion = { asn: "", placa: "", proveedor: "" };
+let recepcionSubmoduloActivo = "proveedores";
+let filtroRecepcionProveedorNombre = "";
 let filtrosShipToY = { asn: "", placa: "" };
 
 function limpiar(valor) {
@@ -673,33 +677,82 @@ function verCapacidadCd() {
 }
 
 function verRecepcionProyectada() {
+  verRecepcionProveedores();
+}
+
+function verRecepcionProveedores() {
+  if (recepcionSubmoduloActivo !== "proveedores") filtrosRecepcionProyeccion = { asn: "", placa: "", proveedor: "" };
+  recepcionSubmoduloActivo = "proveedores";
   const capacidad = calcularCapacidadCd();
   const prediccionPts = prediccionLiberacionPts();
   const recepcion = calcularRecepcionUca(capacidad, prediccionPts);
   document.getElementById("modulo").innerHTML = `
     <div class="section-head">
       <div>
-        <h2>Recepcion</h2>
-        <p class="muted-note">Proyeccion de pallets por recibir contra capacidad de reserva y liberacion PTS del dia.</p>
+        <h2>Recepcion - Proveedores</h2>
+        <p class="muted-note">Pallets de proveedores y pasillo sugerido. La validacion de espacio queda en Proyeccion.</p>
       </div>
-      <button type="button" onclick="exportarRecepcionUca()">Excel recepcion</button>
+      <button type="button" onclick="exportarRecepcionDetalleProveedores()">Excel proveedores</button>
     </div>
-    ${navRecepcionInterna("proyeccion")}
+    ${navRecepcionInterna("proveedores")}
 
-    ${bloqueRecepcionUca(recepcion, false)}
+    ${bloqueRecepcionProveedores(recepcion)}
   `;
 }
 
-function navRecepcionInterna(activo = "proyeccion") {
+function verRecepcionPaleteros() {
+  if (recepcionSubmoduloActivo !== "paleteros") filtrosRecepcionProyeccion = { asn: "", placa: "", proveedor: "" };
+  recepcionSubmoduloActivo = "paleteros";
+  const capacidad = calcularCapacidadCd();
+  const prediccionPts = prediccionLiberacionPts();
+  const recepcion = calcularRecepcionUca(capacidad, prediccionPts);
+  document.getElementById("modulo").innerHTML = `
+    <div class="section-head">
+      <div>
+        <h2>Recepcion - Paleteros</h2>
+        <p class="muted-note">Pallets de paleteros, placa, tipo mono/multi y pasillo sugerido. La validacion de espacio queda en Proyeccion.</p>
+      </div>
+      <button type="button" onclick="exportarRecepcionDetallePaleteros()">Excel paleteros</button>
+    </div>
+    ${navRecepcionInterna("paleteros")}
+
+    ${bloqueRecepcionPaleteros(recepcion)}
+  `;
+}
+
+function verRecepcionProyeccionEspacio() {
+  if (recepcionSubmoduloActivo !== "proyeccion") filtrosRecepcionProyeccion = { asn: "", placa: "", proveedor: "" };
+  recepcionSubmoduloActivo = "proyeccion";
+  const capacidad = calcularCapacidadCd();
+  const prediccionPts = prediccionLiberacionPts();
+  const recepcion = calcularRecepcionUca(capacidad, prediccionPts);
+  document.getElementById("modulo").innerHTML = `
+    <div class="section-head">
+      <div>
+        <h2>Recepcion - Proyeccion</h2>
+        <p class="muted-note">Validacion de espacio: pallets por recibir contra ubicaciones libres y liberacion PTS.</p>
+      </div>
+      <button type="button" onclick="exportarRecepcionUca()">Excel proyeccion</button>
+    </div>
+    ${navRecepcionInterna("proyeccion")}
+
+    ${bloqueRecepcionUca(recepcion, false, "todos")}
+  `;
+}
+
+function navRecepcionInterna(activo = "proveedores") {
   return `
     <div class="subtabs recepcion-subtabs">
-      <button type="button" class="${activo === "proyeccion" ? "active" : ""}" onclick="verRecepcionProyectada()">Proyeccion</button>
-      <button type="button" class="${activo === "shipto" ? "active" : ""}" onclick="verRecepcionShipToY()">SHIP TO Y</button>
+      <button type="button" class="${activo === "proveedores" ? "active" : ""}" onclick="verRecepcionProveedores()">Proveedores</button>
+      <button type="button" class="${activo === "paleteros" ? "active" : ""}" onclick="verRecepcionPaleteros()">Paleteros</button>
+      <button type="button" class="${activo === "shipto" ? "active" : ""}" onclick="verRecepcionShipToY()">SHIP TO</button>
+      <button type="button" class="${activo === "proyeccion" ? "active" : ""}" onclick="verRecepcionProyeccionEspacio()">Proyeccion</button>
     </div>
   `;
 }
 
 function verRecepcionShipToY() {
+  recepcionSubmoduloActivo = "shipto";
   const capacidad = calcularCapacidadCd();
   const prediccionPts = prediccionLiberacionPts();
   const recepcion = calcularRecepcionUca(capacidad, prediccionPts);
@@ -876,7 +929,7 @@ function codigoRecepcion(row) {
 }
 
 function codigoAltRecepcion(row) {
-  return normalizar(campoRecepcion(row, ["Codigo Alternativo", "CODIGO ALTERNATIVO", "CODIGO_ALT", "Cod Alternat", "Artic Padre"]));
+  return normalizar(campoRecepcion(row, ["Codigo Alternativo", "CODIGO ALTERNATIVO", "CODIGO_ALT", "Cod Alternat", "Artic Padre", "COD ALTERNATIVO"]));
 }
 
 function descripcionRecepcion(row) {
@@ -911,6 +964,8 @@ function numRecepcion(valor) {
 }
 
 function bultosProveedorRecepcion(row) {
+  const bultos = numRecepcion(campoRecepcion(row, ["BULTOS", "Bultos", "Cases", "CS"]));
+  if (bultos > 0) return bultos;
   const unidades = numRecepcion(campoRecepcion(row, ["Un Env", "UN ENV"]));
   const caseQty = numRecepcion(campoRecepcion(row, ["Std Case Qty", "STD CASE QTY", "STD_CASE_QTY", "Case Qty", "CASE QTY"]));
   return caseQty > 0 ? unidades / caseQty : unidades;
@@ -1040,6 +1095,7 @@ function validacionPaleteroAsnCodigo() {
         lpnsSet: new Set(),
         codigosSet: new Set(),
         codigosSepararSet: new Set(),
+        productosShipTo: new Map(),
         bultos: 0,
         unidades: 0
       });
@@ -1052,6 +1108,25 @@ function validacionPaleteroAsnCodigo() {
     }
     item.bultos += bultosRecepcion(row);
     item.unidades += numRecepcion(campoRecepcion(row, ["Un Env", "UN ENV", "Un Rcb", "UN RCB"]));
+    if (codigo && codigosValidar.has(codigo)) {
+      const prodKey = `${lpn}|${codigo}`;
+      if (!item.productosShipTo.has(prodKey)) {
+        item.productosShipTo.set(prodKey, {
+          asn,
+          camion: info.camion || "SIN CAMION",
+          fechaCreacion: info.fechaCreacion || "",
+          pallet,
+          lpn,
+          producto: codigo,
+          descripcion: descripcionRecepcion(row),
+          bultos: 0,
+          unidades: 0
+        });
+      }
+      const prod = item.productosShipTo.get(prodKey);
+      prod.bultos += bultosRecepcion(row);
+      prod.unidades += numRecepcion(campoRecepcion(row, ["Un Env", "UN ENV", "Un Rcb", "UN RCB"]));
+    }
 
     if (lpn) {
       const lpnKey = `${asn}|${pallet}|${lpn}`;
@@ -1097,9 +1172,54 @@ function validacionPaleteroAsnCodigo() {
       bultos: item.bultos,
       unidades: item.unidades,
       tieneCodigoSeparar: codigosSeparar.length > 0,
+      productosShipTo: Array.from(item.productosShipTo.values()),
       ...tiempo
     };
   }).sort((a, b) => String(a.camion).localeCompare(String(b.camion)) || String(a.asn).localeCompare(String(b.asn)) || String(a.pallet).localeCompare(String(b.pallet)));
+
+  const resumenPlaca = new Map();
+  detalle.filter(row => row.tieneCodigoSeparar).forEach(row => {
+    const placa = row.camion || "SIN CAMION";
+    if (!resumenPlaca.has(placa)) {
+      resumenPlaca.set(placa, {
+        placa,
+        asnSet: new Set(),
+        palletSet: new Set(),
+        mono: 0,
+        multi: 0,
+        codigosSepararSet: new Set(),
+        bultos: 0
+      });
+    }
+    const item = resumenPlaca.get(placa);
+    item.asnSet.add(row.asn);
+    item.palletSet.add(`${row.asn}|${row.pallet}`);
+    if (row.tipo === "MONO") item.mono += 1;
+    if (row.tipo === "MULTI") item.multi += 1;
+    item.bultos += row.bultos;
+    row.codigosSepararTxt.split(" | ").map(limpiar).filter(Boolean).forEach(codigo => item.codigosSepararSet.add(codigo));
+  });
+
+  const resumenPlacaShipTo = Array.from(resumenPlaca.values()).map(item => ({
+    placa: item.placa,
+    asns: Array.from(item.asnSet).join(" | "),
+    asnSet: item.asnSet,
+    palletsShipTo: item.palletSet.size,
+    mono: item.mono,
+    multi: item.multi,
+    codigos: item.codigosSepararSet.size,
+    codigosTxt: Array.from(item.codigosSepararSet).join(" | "),
+    bultos: item.bultos
+  })).sort((a, b) => b.palletsShipTo - a.palletsShipTo || a.placa.localeCompare(b.placa));
+
+  const detalleProductoShipTo = detalle
+    .filter(row => row.tieneCodigoSeparar)
+    .flatMap(row => (row.productosShipTo || []).map(prod => ({
+      ...prod,
+      tipo: row.tipo,
+      codigosPallet: row.codigos,
+      codigosSepararTxt: row.codigosSepararTxt
+    })));
 
   const asn = new Map();
   detalle.forEach(row => {
@@ -1159,8 +1279,10 @@ function validacionPaleteroAsnCodigo() {
 
   return {
     resumenAsn,
+    resumenPlacaShipTo,
     detalle,
     detalleLpn,
+    detalleProductoShipTo,
     total: {
       asn: resumenAsn.length,
       camiones: new Set(resumenAsn.map(row => row.camion).filter(Boolean)).size,
@@ -1317,10 +1439,10 @@ function diagnosticoGrupoRecepcion(rows) {
 }
 
 function diagnosticoRecepcionProyectada() {
-  const proveedorConLpn = (dataRecepcionProveedores || []).filter(row => limpiar(campoRecepcion(row, ["Nro LPN", "LPN", "NRO LPN"]))).length;
-  const proveedorSinLpn = (dataRecepcionProveedores || []).length - proveedorConLpn;
+  const proveedorCreado = (dataRecepcionProveedores || []).filter(esDetalleOcCreado).length;
+  const proveedorOc = new Set((dataRecepcionProveedores || []).map(ocProveedorRecepcion).filter(Boolean)).size;
   return {
-    proveedores: { ...diagnosticoGrupoRecepcion(dataRecepcionProveedores), conLpn: proveedorConLpn, sinLpn: proveedorSinLpn },
+    proveedores: { ...diagnosticoGrupoRecepcion(dataRecepcionProveedores), creados: proveedorCreado, oc: proveedorOc, resumenOc: dataRecepcionProveedoresResumen.length },
     paleteros: diagnosticoGrupoRecepcion(dataRecepcionPaleteros)
   };
 }
@@ -1332,15 +1454,15 @@ function bloqueDatosTomadosRecepcion(diagnostico) {
     <section class="dashboard-layout recepcion-reglas">
       <div class="card">
         <h3>Datos tomados de proveedores</h3>
-        <p class="muted-note">No es la misma logica que paleteros: aca cada LPN declarado se toma como 1 pallet del ASN.</p>
+        <p class="muted-note">No es la misma logica que paleteros: aca se usa DETALLE_OC por Orden Compra y cada producto arma pallets mono producto.</p>
         ${tabla(["Dato", "Columna usada", "Ejemplo"], [
-          filaDatoRecepcion("ASN", "ASN Entrada", campoRecepcion(proveedorEjemplo, ["ASN Entrada", "ASN"])),
-          filaDatoRecepcion("Producto", "Codigo / Codigo Alternativo", codigoRecepcion(proveedorEjemplo) || codigoAltRecepcion(proveedorEjemplo)),
+          filaDatoRecepcion("OC", "Orden Compra", ocProveedorRecepcion(proveedorEjemplo)),
+          filaDatoRecepcion("Estado", "Estado = CREADO", campoRecepcion(proveedorEjemplo, ["Estado", "ESTADO"])),
+          filaDatoRecepcion("Producto", "Producto / Codigo Alternativo", codigoRecepcion(proveedorEjemplo) || codigoAltRecepcion(proveedorEjemplo)),
           filaDatoRecepcion("Descripcion", "Descrip Artic", descripcionRecepcion(proveedorEjemplo)),
-          filaDatoRecepcion("Pallet", "Nro LPN", campoRecepcion(proveedorEjemplo, ["Nro LPN", "LPN"])),
-          filaDatoRecepcion("Cantidad", "Un Env / Std Case Qty", fmt(bultosProveedorRecepcion(proveedorEjemplo))),
-          filaDatoRecepcion("Agrupacion", "ASN Entrada + Nro LPN", `${diagnostico.proveedores.conLpn} filas con LPN / ${diagnostico.proveedores.sinLpn} sin LPN`),
-          filaDatoRecepcion("Filtro", "Estado de LPN + Ubicacion", `${diagnostico.proveedores.pendientes} pendientes / ${diagnostico.proveedores.ubicadosMass} ya ubicados Mass`)
+          filaDatoRecepcion("Cantidad", "BULTOS", fmt(bultosProveedorRecepcion(proveedorEjemplo))),
+          filaDatoRecepcion("Cruce resumen", "Nro OC", `${diagnostico.proveedores.oc} OC detalle / ${diagnostico.proveedores.resumenOc} filas resumen`),
+          filaDatoRecepcion("Filtro", "Estado", `${diagnostico.proveedores.creados} filas creadas`)
         ])}
       </div>
       <div class="card">
@@ -1370,59 +1492,156 @@ function filaDatoRecepcion(dato, columna, ejemplo) {
   `;
 }
 
+function ocProveedorRecepcion(row) {
+  return limpiar(campoRecepcion(row, ["Orden Compra", "ORDEN COMPRA", "Orden de Compra", "OC", "Nro OC", "NRO OC", "NRO_OC"]));
+}
+
+function estadoDetalleOcProveedor(row) {
+  return normalizar(campoRecepcion(row, ["Estado", "ESTADO"]));
+}
+
+function esDetalleOcCreado(row) {
+  return estadoDetalleOcProveedor(row) === "CREADO";
+}
+
+function resumenProveedorPorOc() {
+  const mapa = new Map();
+  (dataRecepcionProveedoresResumen || []).forEach(row => {
+    const oc = ocProveedorRecepcion(row);
+    if (!oc) return;
+    const unEnv = numRecepcion(campoRecepcion(row, ["Un Env", "UN ENV"]));
+    mapa.set(oc, {
+      oc,
+      proveedor: limpiar(campoRecepcion(row, ["Nombre Proveedor", "NOMBRE PROVEEDOR", "Proveedor", "PROVEEDOR"])),
+      tipoOc: limpiar(campoRecepcion(row, ["Tipo OC", "TIPO OC", "Tipo", "TIPO"])),
+      unEnv,
+      packingList: unEnv > 0,
+      row
+    });
+  });
+  return mapa;
+}
+
+function cuentaPackingListProveedor(infoOc) {
+  return Boolean(infoOc?.packingList) || num(infoOc?.unEnv) > 0;
+}
+
+function validacionesPalletProveedor() {
+  try {
+    return JSON.parse(localStorage.getItem("operaciones_validacion_pallet_proveedor") || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function guardarValidacionPalletProveedor() {
+  const codigo = normalizar(document.getElementById("validacionProveedorCodigo")?.value);
+  const maxPallet = num(document.getElementById("validacionProveedorMax")?.value);
+  const observacion = limpiar(document.getElementById("validacionProveedorObs")?.value);
+  if (!codigo) return alert("Ingresa el codigo del producto.");
+  if (maxPallet <= 0) return alert("Ingresa cuantos bultos trae el pallet fisico.");
+
+  const validaciones = validacionesPalletProveedor();
+  validaciones[codigo] = { maxPallet, observacion, actualizado: new Date().toISOString() };
+  localStorage.setItem("operaciones_validacion_pallet_proveedor", JSON.stringify(validaciones));
+  verRecepcionProyectada();
+}
+
+function prepararValidacionPalletProveedor(codigo, descripcion = "") {
+  const inputCodigo = document.getElementById("validacionProveedorCodigo");
+  const inputObs = document.getElementById("validacionProveedorObs");
+  if (inputCodigo) inputCodigo.value = normalizar(codigo);
+  if (inputObs && descripcion) inputObs.value = descripcion;
+  document.getElementById("validacionProveedorMax")?.focus();
+}
+
+function calcularPalletsProveedor(bultos, maxPallet) {
+  const maximo = num(maxPallet);
+  const cantidad = num(bultos);
+  if (maximo <= 0 || cantidad <= 0) return { pallets: 0, completos: 0, saldo: cantidad, cuentaSaldo: false };
+  const completos = Math.floor(cantidad / maximo);
+  const saldo = cantidad - completos * maximo;
+  const cuentaSaldo = saldo >= maximo / 2;
+  const pallets = completos + (cuentaSaldo ? 1 : 0);
+  return { pallets, completos, saldo, cuentaSaldo };
+}
+
+function maxPalletReferenciaProveedor(ctx, producto) {
+  const validaciones = validacionesPalletProveedor();
+  const codigos = [producto.codigo, producto.alternativo].map(normalizar).filter(Boolean);
+  const codigoValidado = codigos.find(codigo => validaciones[codigo]?.maxPallet > 0);
+  if (codigoValidado) {
+    const validacion = validaciones[codigoValidado];
+    return { maxPallet: num(validacion.maxPallet), metodo: `VALIDADO FISICO ${fmt(validacion.maxPallet)} BUL`, origen: "VALIDADO", observacion: validacion.observacion || "" };
+  }
+
+  const maxProducto = ctx.maxPalletPorProducto.get(claveProductoRecepcion(producto.codigo, producto.alternativo)) || 0;
+  if (maxProducto > 0) return { maxPallet: maxProducto, metodo: `MAX APRENDIDO ${fmt(maxProducto)} BUL`, origen: "APRENDIDO" };
+
+  const aprendidos = Array.from(ctx.maxPalletPorProducto.values()).map(num).filter(v => v > 0);
+  if (aprendidos.length) {
+    const promedio = aprendidos.reduce((a, b) => a + b, 0) / aprendidos.length;
+    return { maxPallet: promedio, metodo: `PROMEDIO APRENDIDO ${fmt(promedio)} BUL`, origen: "PROMEDIO" };
+  }
+
+  return { maxPallet: 60, metodo: "APROX 60 BUL SIN REFERENCIA", origen: "APROXIMADO" };
+}
+
 function gruposProveedorRecepcion(ctx) {
-  const conLpn = new Map();
-  const sinLpnProducto = new Map();
+  const porOc = resumenProveedorPorOc();
+  const porProducto = new Map();
 
   (dataRecepcionProveedores || []).forEach(row => {
-    if (!recepcionPendienteAlmacenaje(row)) return;
-    const asn = limpiar(campoRecepcion(row, ["ASN Entrada", "ASN", "ASN_ENTRADA"]));
-    const lpn = limpiar(campoRecepcion(row, ["Nro LPN", "LPN", "NRO LPN"]));
+    if (!esDetalleOcCreado(row)) return;
+    const oc = ocProveedorRecepcion(row);
+    if (!oc) return;
+    const infoOc = porOc.get(oc) || { oc, proveedor: "", tipoOc: "", unEnv: 0, packingList: false };
     const producto = detalleProductoRecepcion(ctx, row);
-    const unidades = numRecepcion(campoRecepcion(row, ["Un Env", "UN ENV"]));
-    const caseQty = numRecepcion(campoRecepcion(row, ["Std Case Qty", "STD CASE QTY", "STD_CASE_QTY", "Case Qty", "CASE QTY"]));
     const bultos = bultosProveedorRecepcion(row);
     if (!producto.codigo && !producto.alternativo && bultos <= 0) return;
-
-    if (lpn) {
-      const key = `${asn}|${lpn}`;
-      if (!conLpn.has(key)) {
-        conLpn.set(key, { tipo: "PROVEEDOR", asn, lpn, productos: new Map(), bultos: 0, unidades: 0, pallets: 1, metodoPallet: "ASN + LPN" });
-      }
-      const item = conLpn.get(key);
-      const keyProducto = claveProductoRecepcion(producto.codigo, producto.alternativo);
-      if (!item.productos.has(keyProducto)) item.productos.set(keyProducto, { ...producto, bultos: 0, unidades: 0, caseQty, row });
-      item.productos.get(keyProducto).bultos += bultos;
-      item.productos.get(keyProducto).unidades += unidades;
-      item.bultos += bultos;
-      item.unidades += unidades;
-      return;
-    }
-
     const keyProducto = claveProductoRecepcion(producto.codigo, producto.alternativo);
-    const key = `${asn}|${keyProducto}`;
-    if (!sinLpnProducto.has(key)) {
-      sinLpnProducto.set(key, { tipo: "PROVEEDOR", asn, lpn: "", productos: new Map(), bultos: 0, unidades: 0, pallets: 0, metodoPallet: "SIN LPN: ESTIMADO POR MAX PALLET" });
+    const key = `${oc}|${keyProducto}`;
+    if (!porProducto.has(key)) {
+      porProducto.set(key, {
+        tipo: "PROVEEDOR",
+        asn: oc,
+        oc,
+        proveedor: infoOc.proveedor || "SIN PROVEEDOR",
+        tipoOc: infoOc.tipoOc || "SIN TIPO OC",
+        packingList: cuentaPackingListProveedor(infoOc),
+        lpn: "",
+        productos: new Map(),
+        bultos: 0,
+        unidades: 0,
+        pallets: 0,
+        metodoPallet: "OC + PRODUCTO MONO PALLET"
+      });
     }
-    const item = sinLpnProducto.get(key);
-    if (!item.productos.has(keyProducto)) item.productos.set(keyProducto, { ...producto, bultos: 0, unidades: 0, caseQty, row });
+    const item = porProducto.get(key);
+    if (!item.productos.has(keyProducto)) item.productos.set(keyProducto, { ...producto, bultos: 0, unidades: 0, row });
     item.productos.get(keyProducto).bultos += bultos;
-    item.productos.get(keyProducto).unidades += unidades;
+    item.productos.get(keyProducto).unidades += bultos;
     item.bultos += bultos;
-    item.unidades += unidades;
+    item.unidades += bultos;
   });
 
-  sinLpnProducto.forEach(item => {
+  porProducto.forEach(item => {
     const prod = Array.from(item.productos.values())[0] || {};
-    const maxPallet = ctx.maxPalletPorProducto.get(claveProductoRecepcion(prod.codigo, prod.alternativo)) || 0;
+    const ref = maxPalletReferenciaProveedor(ctx, prod);
+    const maxPallet = ref.maxPallet;
+    const calculo = calcularPalletsProveedor(item.bultos, maxPallet);
     item.maxPallet = maxPallet;
-    item.pallets = maxPallet > 0 ? Math.ceil(item.bultos / maxPallet) : 1;
-    item.metodoPallet = maxPallet > 0
-      ? `SIN LPN: ${fmt(item.bultos)} / ${fmt(maxPallet)} max pallet`
-      : "SIN LPN: VALIDAR MAX PALLET";
+    item.palletsCompletos = calculo.completos;
+    item.saldoBultos = calculo.saldo;
+    item.saldoCuentaPallet = calculo.cuentaSaldo;
+    item.pallets = calculo.pallets;
+    item.referenciaPallet = ref.origen;
+    item.codigoValidacion = prod.codigo || prod.alternativo || "";
+    item.descripcionValidacion = prod.descripcion || "";
+    item.metodoPallet = `${ref.metodo} | ${fmt(calculo.completos)} completos + ${fmt(calculo.saldo)} saldo ${calculo.cuentaSaldo ? "CUENTA" : "NO CUENTA"} | MONO PRODUCTO`;
   });
 
-  return [...conLpn.values(), ...sinLpnProducto.values()];
+  return Array.from(porProducto.values());
 }
 
 function gruposPaleteroRecepcion(ctx) {
@@ -1485,7 +1704,11 @@ function resumenAsnProveedores(proveedores) {
     if (!mapa.has(asn)) {
       mapa.set(asn, {
         asn,
+        proveedor: row.proveedor || "SIN PROVEEDOR",
+        tipoOc: row.tipoOc || "SIN TIPO OC",
+        packingList: row.packingList,
         pallets: 0,
+        ocSet: new Set(),
         lpnsSet: new Set(),
         productosSet: new Set(),
         bultos: 0,
@@ -1494,6 +1717,7 @@ function resumenAsnProveedores(proveedores) {
       });
     }
     const item = mapa.get(asn);
+    if (row.oc) item.ocSet.add(row.oc);
     item.pallets += Number(row.pallets) || 0;
     item.bultos += Number(row.bultos) || 0;
     item.unidades += Number(row.unidades) || 0;
@@ -1503,6 +1727,10 @@ function resumenAsnProveedores(proveedores) {
   });
   return Array.from(mapa.values()).map(item => ({
     asn: item.asn,
+    proveedor: item.proveedor,
+    tipoOc: item.tipoOc,
+    packingList: item.packingList,
+    ocCount: item.ocSet.size || 1,
     pallets: item.pallets,
     lpns: item.lpnsSet.size,
     productos: item.productosSet.size,
@@ -1510,6 +1738,49 @@ function resumenAsnProveedores(proveedores) {
     unidades: item.unidades,
     pasillos: Array.from(item.pasillosSet).sort((a, b) => a.localeCompare(b)).join(" | ")
   })).sort((a, b) => b.pallets - a.pallets || String(a.asn).localeCompare(String(b.asn)));
+}
+
+function resumenProveedorTipoPacking(proveedores) {
+  const mapa = new Map();
+  (proveedores || []).forEach(row => {
+    const proveedor = row.proveedor || "SIN PROVEEDOR";
+    const tipoOc = row.tipoOc || "SIN TIPO OC";
+    const key = `${tipoOc}|${proveedor}`;
+    if (!mapa.has(key)) {
+      mapa.set(key, {
+        tipoOc,
+        proveedor,
+        ocSet: new Set(),
+        ocPackingSet: new Set(),
+        productosSet: new Set(),
+        bultos: 0,
+        pallets: 0
+      });
+    }
+    const item = mapa.get(key);
+    const oc = row.oc || row.asn;
+    if (oc) {
+      item.ocSet.add(oc);
+      if (row.packingList) item.ocPackingSet.add(oc);
+    }
+    item.bultos += Number(row.bultos) || 0;
+    item.pallets += Number(row.pallets) || 0;
+    String(row.productosTxt || "").split(" | ").map(limpiar).filter(Boolean).forEach(codigo => item.productosSet.add(codigo));
+  });
+  return Array.from(mapa.values()).map(item => ({
+    ...item,
+    ocCount: item.ocSet.size,
+    packingOc: item.ocPackingSet.size,
+    sinPackingOc: Math.max(0, item.ocSet.size - item.ocPackingSet.size),
+    packingCompleto: item.ocSet.size > 0 && item.ocPackingSet.size === item.ocSet.size,
+    packingParcial: item.ocPackingSet.size > 0 && item.ocPackingSet.size < item.ocSet.size,
+    packingList: item.ocSet.size && item.ocPackingSet.size === item.ocSet.size
+      ? "CON PACKING LIST"
+      : item.ocPackingSet.size
+        ? `${fmt(item.ocPackingSet.size)}/${fmt(item.ocSet.size)} CON PACKING LIST`
+        : "SIN PACKING LIST",
+    productos: item.productosSet.size
+  })).sort((a, b) => a.tipoOc.localeCompare(b.tipoOc) || a.proveedor.localeCompare(b.proveedor));
 }
 
 function resumenAsnPaleteros(paleteros) {
@@ -1525,10 +1796,12 @@ function resumenAsnPaleteros(paleteros) {
         mono: 0,
         multi: 0,
         bultos: 0,
+        camion: row.camion || "",
         pasillosSet: new Set()
       });
     }
     const item = mapa.get(asn);
+    if (!item.camion && row.camion) item.camion = row.camion;
     item.pallets += Number(row.pallets) || 0;
     item.lpns += Number(row.lpns) || 0;
     item.bultos += Number(row.bultos) || 0;
@@ -1539,6 +1812,7 @@ function resumenAsnPaleteros(paleteros) {
   });
   return Array.from(mapa.values()).map(item => ({
     asn: item.asn,
+    camion: item.camion || "",
     pallets: item.pallets,
     lpns: item.lpns,
     productos: item.productosSet.size,
@@ -1547,6 +1821,15 @@ function resumenAsnPaleteros(paleteros) {
     bultos: item.bultos,
     pasillos: Array.from(item.pasillosSet).sort((a, b) => a.localeCompare(b)).join(" | ")
   })).sort((a, b) => b.pallets - a.pallets || String(a.asn).localeCompare(String(b.asn)));
+}
+
+function totalPaleterosRecibidos(paleterosAsn) {
+  const asns = new Set();
+  (paleterosAsn || []).forEach(row => {
+    const asn = limpiar(row.asn);
+    if (asn && normalizar(asn).startsWith("OS917")) asns.add(normalizar(asn));
+  });
+  return asns.size;
 }
 
 function detalleRecepcionPorAsnPasillo(proveedores, paleterosAlmacenables, resumenPasillo) {
@@ -1585,7 +1868,13 @@ function calcularRecepcionUca(capacidad, prediccionPts) {
   const ctx = construirContextoRecepcionUca();
   const proveedores = gruposProveedorRecepcion(ctx).map(g => completarGrupoRecepcion(ctx, g));
   const proveedoresAsn = resumenAsnProveedores(proveedores);
-  const paleteros = gruposPaleteroRecepcion(ctx).map(g => completarGrupoRecepcion(ctx, g));
+  const proveedoresResumen = resumenProveedorTipoPacking(proveedores);
+  const infoAsnPaletero = mapaAsnPaleteroRecepcionSeguro();
+  const paleteros = gruposPaleteroRecepcion(ctx).map(g => {
+    const row = completarGrupoRecepcion(ctx, g);
+    const infoAsn = infoAsnPaletero.get(row.asn) || {};
+    return { ...row, camion: infoAsn.camion || "", fechaCreacion: infoAsn.fechaCreacion || "" };
+  });
   const paleterosMono = paleteros.filter(row => row.clasePallet === "MONO");
   const paleterosMulti = paleteros.filter(row => row.clasePallet === "MULTI");
   const paleterosAsn = resumenAsnPaleteros(paleteros);
@@ -1626,7 +1915,7 @@ function calcularRecepcionUca(capacidad, prediccionPts) {
   const detalleAsnPasillo = detalleRecepcionPorAsnPasillo(proveedores, paleterosMono, resumen);
   const validacionPaletero = validacionPaleteroAsnCodigo();
 
-  return { total, resumen, proveedores, proveedoresAsn, paleteros, paleterosMono, paleterosMulti, paleterosAsn, detalleAsnPasillo, validacionPaletero };
+  return { total, resumen, proveedores, proveedoresAsn, proveedoresResumen, paleteros, paleterosMono, paleterosMulti, paleterosAsn, detalleAsnPasillo, validacionPaletero };
 }
 
 function claseEstadoRecepcion(estado) {
@@ -1813,6 +2102,8 @@ function tarjetasAsnRecepcion(titulo, rows, tipo) {
               <b>${fmt(row.bultos)}</b><small>Bultos</small>
             </div>
             ${tipo === "paletero" ? `<p>Mono ${fmt(row.mono)} almacenan | Multi ${fmt(row.multi)} no reserva</p>` : `<p>Un Env ${fmt(row.unidades)}</p>`}
+            ${tipo === "proveedor" ? `<small>${htmlSeguro(row.tipoOc || "SIN TIPO OC")} | ${htmlSeguro(row.proveedor || "SIN PROVEEDOR")}</small>` : ""}
+            ${tipo === "paletero" ? `<small>${htmlSeguro(row.camion || "SIN PLACA")}</small>` : ""}
             <em>${htmlSeguro(row.pasillos || "SIN CLASIFICAR")}</em>
           </article>
         `).join("") || `<p class="muted-note">Sin ASN cargados.</p>`}
@@ -1891,9 +2182,11 @@ function cuadroPasilloAsnRecepcion(rows) {
 function bloqueValidacionPaleteroRecepcion(data, vistaCompleta = false) {
   const validacion = data.validacionPaletero || {};
   const resumenBase = validacion.resumenAsn || [];
+  const resumenPlacaBase = validacion.resumenPlacaShipTo || [];
   const detalleBase = validacion.detalle || [];
   const detalleLpnBase = validacion.detalleLpn || [];
   const resumen = filtrarShipToY(resumenBase);
+  const resumenPlaca = filtrarResumenPlacaShipToY(resumenPlacaBase);
   const detalle = filtrarShipToY(detalleBase);
   const detalleLpn = filtrarShipToY(detalleLpnBase);
   const detalleSeparar = detalle.filter(row => row.tieneCodigoSeparar);
@@ -1925,48 +2218,64 @@ function bloqueValidacionPaleteroRecepcion(data, vistaCompleta = false) {
         ${kpi("Codigos a separar", fmt(total.palletsSeparar || 0), `${fmt(total.codigosBase || 0)} codigos base`)}
         ${kpi("Alertas 5 dias", fmt((total.alertas || 0) + (total.vencidos || 0)), `${fmt(total.vencidos || 0)} vencidos`)}
       </div>
-      <div class="dashboard-layout recepcion-validation-layout">
-        <div>
-          <div class="section-head compact-head">
-            <h3>Resumen por ASN / camion</h3>
-            <span class="muted-note">${fmt(resumen.length)} ASN evaluados</span>
-          </div>
-          ${tabla(["ASN", "Camion", "Fe y Hr Creac", "Estado 5 dias", "Pallets", "Mono", "Multi", "Pallets codigo"], resumen.map(row => {
-            const tiempo = row.tiempo || {};
-            return `
-              <tr class="${htmlSeguro(tiempo.clase || "")}">
+      <div class="section-head compact-head">
+        <h3>Resumen placas con SHIP TO</h3>
+        <span class="muted-note">${fmt(resumenPlaca.length)} placas | Corte actual ${htmlSeguro(horaCorteRecepcion())}</span>
+      </div>
+      ${tabla(["Placa", "ASN", "Pallets SHIP TO", "Mono pallets", "Multi pallets", "Codigos", "Bultos", "Ver"], resumenPlaca.map(row => `
+        <tr>
+          <td><strong>${htmlSeguro(row.placa || "SIN CAMION")}</strong></td>
+          <td>${htmlSeguro(row.asns || "")}</td>
+          <td class="number"><strong>${fmt(row.palletsShipTo)}</strong></td>
+          <td class="number">${fmt(row.mono)}</td>
+          <td class="number">${fmt(row.multi)}</td>
+          <td><strong>${fmt(row.codigos)}</strong><small>${htmlSeguro(row.codigosTxt || "")}</small></td>
+          <td class="number">${fmt(row.bultos)}</td>
+          <td><button type="button" class="compact" onclick="abrirDetallePlacaShipToY(${argumentoSeguro(row.placa)})">Ver</button></td>
+        </tr>
+      `), "Sin placas con SHIP TO")}
+      <div class="section-head compact-head subhead">
+        <h3>Resumen por ASN / camion</h3>
+        <span class="muted-note">${fmt(resumen.length)} ASN evaluados</span>
+      </div>
+      ${tabla(["ASN", "Camion", "Fe y Hr Creac", "Estado 5 dias", "Pallets", "Mono", "Multi", "Pallets codigo", "Ver"], resumen.map(row => {
+        const tiempo = row.tiempo || {};
+        return `
+          <tr class="${htmlSeguro(tiempo.clase || "")}">
+            <td><strong>${htmlSeguro(row.asn)}</strong></td>
+            <td>${htmlSeguro(row.camion || "SIN CAMION")}</td>
+            <td>${htmlSeguro(row.fechaCreacion || "SIN FECHA")}</td>
+            <td><strong>${htmlSeguro(tiempo.estado || "SIN FECHA")}</strong><small>${htmlSeguro(tiempo.mensaje || "")}</small></td>
+            <td class="number">${fmt(row.pallets)}</td>
+            <td class="number">${fmt(row.mono)}</td>
+            <td class="number">${fmt(row.multi)}</td>
+            <td class="number"><strong>${fmt(row.palletsSeparar)}</strong></td>
+            <td><button type="button" class="compact" onclick="abrirDetalleAsnShipToY(${argumentoSeguro(row.asn)})">Ver</button></td>
+          </tr>
+        `;
+      }), "Sin ASN para validar")}
+      ${!vistaCompleta ? `
+        <div class="dashboard-layout recepcion-validation-layout">
+          <div>
+            <div class="section-head compact-head">
+              <h3>Pallets con codigos a separar</h3>
+              <span class="muted-note">${fmt(detalleSeparar.length)} pallets involucrados</span>
+            </div>
+            ${tabla(["ASN", "Camion", "Pallet", "LPNs", "Codigos", "Tipo", "Bultos", "Codigos separar"], detalleSeparar.map(row => `
+              <tr class="${htmlSeguro(row.clase || "")}">
                 <td><strong>${htmlSeguro(row.asn)}</strong></td>
                 <td>${htmlSeguro(row.camion || "SIN CAMION")}</td>
-                <td>${htmlSeguro(row.fechaCreacion || "SIN FECHA")}</td>
-                <td><strong>${htmlSeguro(tiempo.estado || "SIN FECHA")}</strong><small>${htmlSeguro(tiempo.mensaje || "")}</small></td>
-                <td class="number">${fmt(row.pallets)}</td>
-                <td class="number">${fmt(row.mono)}</td>
-                <td class="number">${fmt(row.multi)}</td>
-                <td class="number"><strong>${fmt(row.palletsSeparar)}</strong></td>
+                <td>${htmlSeguro(row.pallet)}</td>
+                <td class="number">${fmt(row.lpns)}</td>
+                <td class="number">${fmt(row.codigos)}</td>
+                <td><strong>${htmlSeguro(row.tipo)}</strong></td>
+                <td class="number">${fmt(row.bultos)}</td>
+                <td>${htmlSeguro(row.codigosSepararTxt)}</td>
               </tr>
-            `;
-          }), "Sin ASN para validar")}
-        </div>
-        <div>
-          <div class="section-head compact-head">
-            <h3>Pallets con codigos a separar</h3>
-            <span class="muted-note">${fmt(detalleSeparar.length)} pallets involucrados</span>
+            `), "Sin pallets con codigos de la hoja CODIGO")}
           </div>
-          ${tabla(["ASN", "Camion", "Pallet", "LPNs", "Codigos", "Tipo", "Bultos", "Codigos separar"], detalleSeparar.map(row => `
-            <tr class="${htmlSeguro(row.clase || "")}">
-              <td><strong>${htmlSeguro(row.asn)}</strong></td>
-              <td>${htmlSeguro(row.camion || "SIN CAMION")}</td>
-              <td>${htmlSeguro(row.pallet)}</td>
-              <td class="number">${fmt(row.lpns)}</td>
-              <td class="number">${fmt(row.codigos)}</td>
-              <td><strong>${htmlSeguro(row.tipo)}</strong></td>
-              <td class="number">${fmt(row.bultos)}</td>
-              <td>${htmlSeguro(row.codigosSepararTxt)}</td>
-            </tr>
-          `), "Sin pallets con codigos de la hoja CODIGO")}
         </div>
-      </div>
-      ${vistaCompleta ? bloqueValidacionLpnShipToY(detalleLpn) + bloqueDetalleShipToY({ detalle }) : ""}
+      ` : `<div id="modalShipToAsn" class="modal-backdrop" hidden></div>`}
     </section>
   `;
 }
@@ -1977,6 +2286,154 @@ function filtrarShipToY(rows) {
   return (rows || []).filter(row => (!asn || row.asn === asn) && (!placa || row.camion === placa));
 }
 
+function filtrarResumenPlacaShipToY(rows) {
+  const asn = limpiar(filtrosShipToY.asn);
+  const placa = limpiar(filtrosShipToY.placa);
+  return (rows || []).filter(row => {
+    const asns = row.asnSet instanceof Set ? row.asnSet : new Set(String(row.asns || "").split(" | ").map(limpiar).filter(Boolean));
+    return (!placa || row.placa === placa) && (!asn || asns.has(asn));
+  });
+}
+
+function horaCorteRecepcion() {
+  return new Date().toLocaleString("es-PE", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function detalleShipToPorAsn(asn) {
+  const validacion = recepcionUcaVista?.validacionPaletero || {};
+  const key = normalizar(asn);
+  return {
+    resumen: (validacion.resumenAsn || []).find(row => normalizar(row.asn) === key) || {},
+    detalle: (validacion.detalle || []).filter(row => normalizar(row.asn) === key),
+    detalleLpn: (validacion.detalleLpn || []).filter(row => normalizar(row.asn) === key)
+  };
+}
+
+function detalleShipToPorPlaca(placa) {
+  const validacion = recepcionUcaVista?.validacionPaletero || {};
+  return (validacion.detalleProductoShipTo || []).filter(row => row.camion === placa);
+}
+
+function htmlDetallePlacaShipToY(placa) {
+  const rows = detalleShipToPorPlaca(placa);
+  const pallets = new Set(rows.map(row => `${row.asn}|${row.pallet}`));
+  const lpns = new Set(rows.map(row => row.lpn).filter(Boolean));
+  const codigos = new Set(rows.map(row => row.producto).filter(Boolean));
+  const bultos = rows.reduce((a, b) => a + num(b.bultos), 0);
+  return `
+    <div class="section-head">
+      <div>
+        <h2>${htmlSeguro(placa || "SIN CAMION")}</h2>
+        <p class="muted-note">${fmt(pallets.size)} pallets SHIP TO | ${fmt(lpns.size)} LPNs | ${fmt(codigos.size)} codigos</p>
+      </div>
+      <div class="filters">
+        <button class="ghost" onclick="cerrarDetallePlacaShipToY()">Cerrar</button>
+      </div>
+    </div>
+    <section class="kpi-grid compact">
+      ${kpi("Pallets SHIP TO", fmt(pallets.size))}
+      ${kpi("LPNs", fmt(lpns.size))}
+      ${kpi("Codigos", fmt(codigos.size))}
+      ${kpi("Bultos", fmt(bultos))}
+    </section>
+    ${tabla(["ASN", "Pallet", "LPN", "Producto", "Descripcion", "Bultos", "Tipo"], rows.map(row => `
+      <tr class="${row.tipo === "MULTI" ? "warn" : ""}">
+        <td>${htmlSeguro(row.asn)}</td>
+        <td><strong>${htmlSeguro(row.pallet)}</strong></td>
+        <td>${htmlSeguro(row.lpn || "")}</td>
+        <td><strong>${htmlSeguro(row.producto)}</strong></td>
+        <td>${htmlSeguro(row.descripcion || "")}</td>
+        <td class="number">${fmt(row.bultos)}</td>
+        <td><strong>${htmlSeguro(row.tipo || "")}</strong></td>
+      </tr>
+    `), "Sin detalle de pallets SHIP TO.")}
+  `;
+}
+
+function abrirDetallePlacaShipToY(placa) {
+  const modal = document.getElementById("modalShipToAsn");
+  if (!modal) return;
+  modal.innerHTML = `<div class="modal-card wide">${htmlDetallePlacaShipToY(placa)}</div>`;
+  modal.hidden = false;
+}
+
+function cerrarDetallePlacaShipToY() {
+  const modal = document.getElementById("modalShipToAsn");
+  if (!modal) return;
+  modal.hidden = true;
+  modal.innerHTML = "";
+}
+
+function htmlDetalleAsnShipToY(asn) {
+  const data = detalleShipToPorAsn(asn);
+  const resumen = data.resumen || {};
+  const detalle = data.detalle || [];
+  const detalleLpn = data.detalleLpn || [];
+  const tiempo = resumen.tiempo || estadoCincoDiasRecepcion(resumen.fechaCreacion);
+  const totalBultos = detalle.reduce((a, b) => a + num(b.bultos), 0);
+  const totalUnidades = detalle.reduce((a, b) => a + num(b.unidades), 0);
+  return `
+    <div class="section-head">
+      <div>
+        <h2>${htmlSeguro(asn)}</h2>
+        <p class="muted-note">${htmlSeguro(resumen.camion || "SIN CAMION")} | Corte actual ${htmlSeguro(horaCorteRecepcion())}</p>
+      </div>
+      <div class="filters">
+        <button class="ghost" onclick="cerrarDetalleAsnShipToY()">Cerrar</button>
+      </div>
+    </div>
+    <section class="kpi-grid compact">
+      ${kpi("Estado tiempo", tiempo.estado || "SIN FECHA", tiempo.mensaje || "")}
+      ${kpi("Pallets", fmt(resumen.pallets || detalle.length), `${fmt(resumen.mono || 0)} mono | ${fmt(resumen.multi || 0)} multi`)}
+      ${kpi("Codigos separar", fmt(resumen.palletsSeparar || 0), htmlSeguro(resumen.codigosSepararTxt || "Sin codigos"))}
+      ${kpi("Bultos", fmt(totalBultos), `${fmt(totalUnidades)} unidades`)}
+    </section>
+    <section class="recepcion-provider-modal-grid">
+      <div class="detail-box">
+        <h3>Tiempo del ASN</h3>
+        ${tabla(["Fecha creacion", "Dias", "Horas", "Faltan dias", "Estado"], [`
+          <tr class="${htmlSeguro(tiempo.clase || "")}">
+            <td>${htmlSeguro(resumen.fechaCreacion || "SIN FECHA")}</td>
+            <td class="number">${fmt(tiempo.dias || 0)}</td>
+            <td class="number">${fmt(tiempo.horas || 0)}</td>
+            <td class="number">${fmt(tiempo.faltanDias || 0)}</td>
+            <td><strong>${htmlSeguro(tiempo.estado || "SIN FECHA")}</strong><small>${htmlSeguro(tiempo.mensaje || "")}</small></td>
+          </tr>
+        `], "Sin fecha.")}
+      </div>
+      <div class="detail-box">
+        <h3>Mono / Multi</h3>
+        ${tabla(["Tipo", "Pallets", "Criterio"], [
+          `<tr><td><strong>MONO</strong></td><td class="number">${fmt(resumen.mono || 0)}</td><td>Un codigo en el pallet</td></tr>`,
+          `<tr class="${resumen.multi ? "warn" : ""}"><td><strong>MULTI</strong></td><td class="number">${fmt(resumen.multi || 0)}</td><td>Mas de un codigo en el pallet</td></tr>`
+        ], "Sin resumen.")}
+      </div>
+    </section>
+    ${bloqueValidacionLpnShipToY(detalleLpn)}
+    ${bloqueDetalleShipToY({ detalle })}
+  `;
+}
+
+function abrirDetalleAsnShipToY(asn) {
+  const modal = document.getElementById("modalShipToAsn");
+  if (!modal) return;
+  modal.innerHTML = `<div class="modal-card wide">${htmlDetalleAsnShipToY(asn)}</div>`;
+  modal.hidden = false;
+}
+
+function cerrarDetalleAsnShipToY() {
+  const modal = document.getElementById("modalShipToAsn");
+  if (!modal) return;
+  modal.hidden = true;
+  modal.innerHTML = "";
+}
+
 function filtrosShipToYHtml(resumen) {
   const asns = Array.from(new Set((resumen || []).map(row => row.asn).filter(Boolean))).sort((a, b) => a.localeCompare(b));
   const placas = Array.from(new Set((resumen || []).map(row => row.camion).filter(Boolean))).sort((a, b) => a.localeCompare(b));
@@ -1984,14 +2441,14 @@ function filtrosShipToYHtml(resumen) {
     <div class="filters shipto-filters">
       <label>
         ASN
-        <select onchange="actualizarFiltroShipToY('asn', this.value)">
+        <select class="select-filter" onchange="actualizarFiltroShipToY('asn', this.value)">
           <option value="">Todos los ASN</option>
           ${asns.map(asn => `<option value="${atributoSeguro(asn)}" ${filtrosShipToY.asn === asn ? "selected" : ""}>${htmlSeguro(asn)}</option>`).join("")}
         </select>
       </label>
       <label>
         Placa / camion
-        <select onchange="actualizarFiltroShipToY('placa', this.value)">
+        <select class="select-filter" onchange="actualizarFiltroShipToY('placa', this.value)">
           <option value="">Todas las placas</option>
           ${placas.map(placa => `<option value="${atributoSeguro(placa)}" ${filtrosShipToY.placa === placa ? "selected" : ""}>${htmlSeguro(placa)}</option>`).join("")}
         </select>
@@ -2071,13 +2528,737 @@ function bloqueDetalleShipToY(validacion) {
   `;
 }
 
-function bloqueRecepcionUca(data, mostrarBotonExcel = true) {
-  recepcionUcaVista = data;
-  const proveedoresAsn = data.proveedoresAsn || [];
-  const paleterosAsn = data.paleterosAsn || [];
-  const detalleAsnPasillo = data.detalleAsnPasillo || [];
+function filtrarRecepcionProyeccionRows(rows, tipo, modo = "todos") {
+  const asn = limpiar(filtrosRecepcionProyeccion.asn);
+  const placa = limpiar(filtrosRecepcionProyeccion.placa);
+  const proveedor = limpiar(filtrosRecepcionProyeccion.proveedor);
+  return (rows || []).filter(row => {
+    if (modo === "proveedores" && tipo !== "proveedor") return false;
+    if (modo === "paleteros" && tipo !== "paletero") return false;
+    if (asn && row.asn !== asn) return false;
+    if (placa && tipo === "paletero" && row.camion !== placa) return false;
+    if (placa && tipo === "proveedor") return false;
+    if (proveedor && tipo === "proveedor" && row.proveedor !== proveedor) return false;
+    if (proveedor && tipo === "paletero") return false;
+    return true;
+  });
+}
+
+function recalcularRecepcionProyeccion(data, modo = "todos") {
+  const proveedores = filtrarRecepcionProyeccionRows(data.proveedores || [], "proveedor", modo);
+  const paleteros = filtrarRecepcionProyeccionRows(data.paleteros || [], "paletero", modo);
+  const paleterosMono = paleteros.filter(row => row.clasePallet === "MONO");
+  const paleterosMulti = paleteros.filter(row => row.clasePallet === "MULTI");
+  const proveedoresAsn = resumenAsnProveedores(proveedores);
+  const proveedoresResumen = resumenProveedorTipoPacking(proveedores);
+  const paleterosAsn = resumenAsnPaleteros(paleteros);
+  const capacidadPorPasillo = new Map((data.resumen || []).map(row => [row.pasillo, row]));
   const ordenPasillos = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "11", "12"];
-  const resumenOrdenado = data.resumen.slice().sort((a, b) => ordenPasillos.indexOf(a.pasillo) - ordenPasillos.indexOf(b.pasillo));
+  const resumen = ordenPasillos.map(pasillo => {
+    const base = capacidadPorPasillo.get(pasillo) || {};
+    const libres = base.libres || 0;
+    const pts = base.pts || 0;
+    const prov = proveedores.filter(row => row.pasillo === pasillo).reduce((a, b) => a + b.pallets, 0);
+    const pal = paleterosMono.filter(row => row.pasillo === pasillo).reduce((a, b) => a + b.pallets, 0);
+    const palMulti = paleterosMulti.filter(row => row.pasillo === pasillo).reduce((a, b) => a + b.pallets, 0);
+    const llegada = prov + pal;
+    const capacidadProyectada = libres + pts;
+    const diferencia = capacidadProyectada - llegada;
+    const diferenciaActual = libres - llegada;
+    const estadoActual = llegada <= libres ? "ALCANZA" : "LIBERAR ESPACIO";
+    const estado = llegada <= libres ? "ALCANZA" : llegada <= capacidadProyectada ? "DEPENDE PTS" : "FALTA ESPACIO";
+    return { ...base, pasillo, libres, pts, capacidadActual: libres, capacidadProyectada, proveedores: prov, paleteros: pal, paleterosMulti: palMulti, llegada, diferencia, diferenciaActual, estadoActual, estado };
+  });
+  const todosAlmacenables = [...proveedores, ...paleterosMono];
+  const sinClasificar = todosAlmacenables.filter(row => row.pasillo === "SIN CLASIFICAR").reduce((a, b) => a + b.pallets, 0);
+  const total = resumen.reduce((acc, row) => {
+    acc.libres += row.libres;
+    acc.pts += row.pts;
+    acc.capacidadProyectada += row.capacidadProyectada;
+    acc.proveedores += row.proveedores;
+    acc.paleteros += row.paleteros;
+    acc.paleterosMulti += row.paleterosMulti;
+    acc.llegada += row.llegada;
+    acc.deficitActual += Math.max(0, -row.diferenciaActual);
+    acc.deficit += Math.max(0, -row.diferencia);
+    return acc;
+  }, { libres: 0, pts: 0, capacidadProyectada: 0, proveedores: 0, paleteros: 0, paleterosMulti: 0, llegada: 0, deficitActual: 0, deficit: 0, sinClasificar });
+  total.paleterosMulti = paleterosMulti.reduce((acc, row) => acc + (Number(row.pallets) || 0), 0);
+  total.paleterosTotal = total.paleteros + total.paleterosMulti;
+
+  return {
+    ...data,
+    total,
+    resumen,
+    proveedores,
+    proveedoresAsn,
+    proveedoresResumen,
+    paleteros,
+    paleterosMono,
+    paleterosMulti,
+    paleterosAsn,
+    detalleAsnPasillo: detalleRecepcionPorAsnPasillo(proveedores, paleterosMono, resumen),
+    sinFiltro: data
+  };
+}
+
+function filtrosRecepcionProyeccionHtml(data, modo = "todos") {
+  const asnsBase = modo === "proveedores"
+    ? (data.proveedoresAsn || []).map(row => row.asn)
+    : modo === "paleteros"
+      ? (data.paleterosAsn || []).map(row => row.asn)
+      : [...(data.proveedoresAsn || []).map(row => row.asn), ...(data.paleterosAsn || []).map(row => row.asn)];
+  const asns = Array.from(new Set(asnsBase.filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  const placas = Array.from(new Set((data.paleteros || []).map(row => row.camion).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  const proveedores = Array.from(new Set((data.proveedores || []).map(row => row.proveedor).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  return `
+    <div class="filters shipto-filters">
+      ${modo === "todos" ? `
+        <label>
+          Proveedor
+          <select class="select-filter" onchange="actualizarFiltroRecepcionProyeccion('proveedor', this.value)">
+            <option value="">Todos los proveedores</option>
+            ${proveedores.map(proveedor => `<option value="${atributoSeguro(proveedor)}" ${filtrosRecepcionProyeccion.proveedor === proveedor ? "selected" : ""}>${htmlSeguro(proveedor)}</option>`).join("")}
+          </select>
+        </label>
+        <label>
+          Placa / camion
+          <select class="select-filter" onchange="actualizarFiltroRecepcionProyeccion('placa', this.value)">
+            <option value="">Todas las placas</option>
+            ${placas.map(placa => `<option value="${atributoSeguro(placa)}" ${filtrosRecepcionProyeccion.placa === placa ? "selected" : ""}>${htmlSeguro(placa)}</option>`).join("")}
+          </select>
+        </label>
+      ` : ""}
+      <label>
+        ${modo === "proveedores" ? "OC" : "ASN"}
+        <select class="select-filter" onchange="actualizarFiltroRecepcionProyeccion('asn', this.value)">
+          <option value="">${modo === "proveedores" ? "Todas las OC" : "Todos los ASN"}</option>
+          ${asns.map(asn => `<option value="${atributoSeguro(asn)}" ${filtrosRecepcionProyeccion.asn === asn ? "selected" : ""}>${htmlSeguro(asn)}</option>`).join("")}
+        </select>
+      </label>
+      ${modo === "paleteros" ? `
+        <label>
+          Placa / camion
+          <select class="select-filter" onchange="actualizarFiltroRecepcionProyeccion('placa', this.value)">
+            <option value="">Todas las placas</option>
+            ${placas.map(placa => `<option value="${atributoSeguro(placa)}" ${filtrosRecepcionProyeccion.placa === placa ? "selected" : ""}>${htmlSeguro(placa)}</option>`).join("")}
+          </select>
+        </label>
+      ` : ""}
+      <button type="button" class="soft" onclick="limpiarFiltrosRecepcionProyeccion()">Limpiar filtros</button>
+    </div>
+  `;
+}
+
+function actualizarFiltroRecepcionProyeccion(campo, valor) {
+  filtrosRecepcionProyeccion[campo] = valor;
+  if (recepcionSubmoduloActivo === "shipto") return verRecepcionShipToY();
+  if (recepcionSubmoduloActivo === "proyeccion") return verRecepcionProyeccionEspacio();
+  if (recepcionSubmoduloActivo === "paleteros") verRecepcionPaleteros();
+  else verRecepcionProveedores();
+}
+
+function limpiarFiltrosRecepcionProyeccion() {
+  filtrosRecepcionProyeccion = { asn: "", placa: "", proveedor: "" };
+  if (recepcionSubmoduloActivo === "shipto") return verRecepcionShipToY();
+  if (recepcionSubmoduloActivo === "proyeccion") return verRecepcionProyeccionEspacio();
+  if (recepcionSubmoduloActivo === "paleteros") verRecepcionPaleteros();
+  else verRecepcionProveedores();
+}
+
+function bloqueValidacionPalletProveedor(rows) {
+  const pendientes = (rows || []).filter(row => ["PROMEDIO", "APROXIMADO"].includes(row.referenciaPallet));
+  const validaciones = validacionesPalletProveedor();
+  const guardadas = Object.entries(validaciones).map(([codigo, item]) => ({ codigo, ...item }));
+  return `
+    <div class="card subcard">
+      <div class="section-head compact-head">
+        <div>
+          <h3>Validacion fisica pallet proveedor</h3>
+          <p class="muted-note">Si el producto no tiene referencia aprendida en reserva, ingresa cuantos bultos trae su pallet fisico y se recalcula la proyeccion.</p>
+        </div>
+      </div>
+      <div class="filters">
+        <label>Codigo producto<input id="validacionProveedorCodigo" class="search small" placeholder="Codigo"></label>
+        <label>Bultos por pallet<input id="validacionProveedorMax" class="search small" type="number" min="1" step="1" placeholder="80"></label>
+        <label>Observacion<input id="validacionProveedorObs" class="search" placeholder="Validado en recepcion / proveedor"></label>
+        <button type="button" onclick="guardarValidacionPalletProveedor()">Guardar y recalcular</button>
+      </div>
+      ${pendientes.length ? `
+        <div class="detail-box">
+          <h3>Productos por validar</h3>
+          ${tabla(["Codigo", "Descripcion", "Bultos", "Referencia actual", "Max usado", "Pallets", "Validar"], pendientes.slice(0, 20).map(row => `
+            <tr class="warn">
+              <td><strong>${htmlSeguro(row.codigoValidacion)}</strong></td>
+              <td>${htmlSeguro(row.descripcionValidacion)}</td>
+              <td class="number">${fmt(row.bultos)}</td>
+              <td>${htmlSeguro(row.referenciaPallet)}</td>
+              <td class="number">${fmt(row.maxPallet)}</td>
+              <td class="number">${fmt(row.pallets)}</td>
+              <td><button class="compact" onclick="prepararValidacionPalletProveedor(${argumentoSeguro(row.codigoValidacion)}, ${argumentoSeguro(row.descripcionValidacion)})">Usar</button></td>
+            </tr>
+          `), "Todos los productos tienen max pallet aprendido o validado.")}
+        </div>
+      ` : ""}
+      ${guardadas.length ? `
+        <div class="detail-box">
+          <h3>Validaciones guardadas</h3>
+          ${tabla(["Codigo", "Bultos por pallet", "Observacion", "Actualizado"], guardadas.map(row => `
+            <tr>
+              <td><strong>${htmlSeguro(row.codigo)}</strong></td>
+              <td class="number">${fmt(row.maxPallet)}</td>
+              <td>${htmlSeguro(row.observacion || "")}</td>
+              <td>${htmlSeguro(row.actualizado || "")}</td>
+            </tr>
+          `), "Sin validaciones manuales.")}
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
+function actualizarFiltroRecepcionProveedor(valor) {
+  filtroRecepcionProveedorNombre = limpiar(valor);
+  filtrarProveedorRecepcionVista(valor);
+}
+
+function filtrarProveedorRecepcionVista(valor) {
+  const q = normalizar(valor);
+  document.querySelectorAll("[data-proveedor-recepcion]").forEach(el => {
+    el.style.display = !q || normalizar(el.dataset.proveedorRecepcion).includes(q) ? "" : "none";
+  });
+}
+
+function topProveedoresRecepcion(rows) {
+  return resumenProveedorTipoPacking(rows)
+    .slice()
+    .sort((a, b) => b.pallets - a.pallets || b.bultos - a.bultos)
+    .slice(0, 8);
+}
+
+function bloqueKpisProveedoresVisual(rows) {
+  const resumen = resumenProveedorTipoPacking(rows);
+  const totalProveedores = new Set((rows || []).map(row => row.proveedor).filter(Boolean)).size;
+  const totalOc = new Set((rows || []).map(row => row.oc || row.asn).filter(Boolean)).size;
+  const totalPallets = (rows || []).reduce((a, b) => a + num(b.pallets), 0);
+  const totalBultos = (rows || []).reduce((a, b) => a + num(b.bultos), 0);
+  const conPacking = resumen.reduce((a, b) => a + num(b.packingOc), 0);
+  const sinPacking = resumen.reduce((a, b) => a + num(b.sinPackingOc), 0);
+  const top = resumen.slice().sort((a, b) => b.pallets - a.pallets)[0];
+  return `
+    <section class="recepcion-bi-kpis">
+      <article>
+        <span>Proveedores</span>
+        <strong>${fmt(totalProveedores)}</strong>
+        <small>${fmt(totalOc)} OC activas</small>
+      </article>
+      <article>
+        <span>Pallets</span>
+        <strong>${fmt(totalPallets)}</strong>
+        <small>${fmt(totalBultos)} bultos</small>
+      </article>
+      <article class="${sinPacking ? "warn" : "ok"}">
+        <span>Packing list</span>
+        <strong>${fmt(conPacking)}/${fmt(totalOc)}</strong>
+        <small>${fmt(sinPacking)} OC pendientes</small>
+      </article>
+      <article>
+        <span>Mayor volumen</span>
+        <strong>${htmlSeguro(top ? fmt(top.pallets) : "0")}</strong>
+        <small>${htmlSeguro(top?.proveedor || "Sin proveedor")}</small>
+      </article>
+    </section>
+  `;
+}
+
+function bloqueReporteProveedoresVisual(rows) {
+  const top = topProveedoresRecepcion(rows);
+  const maxPallets = Math.max(...top.map(row => row.pallets), 1);
+  return `
+    <section class="recepcion-bi-panel">
+      <div class="section-head compact-head">
+        <h3>Ranking proveedores</h3>
+        <span class="muted-note">Top por pallets estimados</span>
+      </div>
+      <div class="recepcion-provider-ranking">
+        ${top.map((row, index) => `
+          <button type="button" class="recepcion-provider-rank" data-proveedor-recepcion="${atributoSeguro(row.proveedor)}" onclick="abrirDetalleProveedorRecepcion(${argumentoSeguro(row.proveedor)})">
+            <span>${index + 1}</span>
+            <div>
+              <strong>${htmlSeguro(row.proveedor)}</strong>
+              <small>${htmlSeguro(row.tipoOc)} | ${fmt(row.ocCount)} OC | ${htmlSeguro(row.packingList)}</small>
+              <i><b style="width:${Math.min(100, pct(row.pallets, maxPallets))}%"></b></i>
+            </div>
+            <em>${fmt(row.pallets)}</em>
+          </button>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function filasResumenProveedoresRecepcion(rows) {
+  const maxPallets = Math.max(...(rows || []).map(row => row.pallets), 1);
+  return (rows || []).map(row => `
+    <tr class="${row.sinPackingOc ? "warn" : ""}" data-proveedor-recepcion="${atributoSeguro(row.proveedor)}">
+      <td><strong>${htmlSeguro(row.tipoOc)}</strong></td>
+      <td>
+        <strong>${htmlSeguro(row.proveedor)}</strong>
+        <div class="table-mini-track"><i style="width:${Math.min(100, pct(row.pallets, maxPallets))}%"></i></div>
+      </td>
+      <td><strong>${htmlSeguro(row.packingList)}</strong></td>
+      <td class="number">${fmt(row.ocCount)}</td>
+      <td class="number">${fmt(row.packingOc)}</td>
+      <td class="number">${fmt(row.sinPackingOc)}</td>
+      <td class="number">${fmt(row.productos)}</td>
+      <td class="number">${fmt(row.bultos)}</td>
+      <td class="number"><strong>${fmt(row.pallets)}</strong></td>
+      <td><button class="compact" onclick="abrirAjusteProveedorRecepcion(${argumentoSeguro(row.proveedor)})">Ajustar</button></td>
+    </tr>
+  `);
+}
+
+function bloquePaleterosVisual(vista) {
+  const rows = vista.paleterosAsn || [];
+  const totalPallets = (vista.paleteros || []).reduce((a, b) => a + num(b.pallets), 0);
+  const totalBultos = (vista.paleteros || []).reduce((a, b) => a + num(b.bultos), 0);
+  const mono = (vista.paleterosMono || []).reduce((a, b) => a + num(b.pallets), 0);
+  const multi = (vista.paleterosMulti || []).reduce((a, b) => a + num(b.pallets), 0);
+  const pctMono = pct(mono, Math.max(1, mono + multi));
+  const placas = new Set((vista.paleteros || []).map(row => row.camion).filter(Boolean)).size;
+  const maxPallets = Math.max(...rows.map(row => row.pallets), 1);
+  const paleterosRecibidos = totalPaleterosRecibidos(rows);
+  return `
+    <section class="recepcion-bi-kpis paleteros-kpis">
+      <article class="ok received-kpi">
+        <span>Paleteros recibidos</span>
+        <strong>${fmt(paleterosRecibidos)}</strong>
+        <small>ASN OS917 unicos</small>
+      </article>
+      <article>
+        <span>ASN</span>
+        <strong>${fmt(rows.length)}</strong>
+        <small>${fmt(placas)} placas</small>
+      </article>
+      <article>
+        <span>Pallets</span>
+        <strong>${fmt(totalPallets)}</strong>
+        <small>${fmt(totalBultos)} bultos</small>
+      </article>
+      <article class="${vista.paleterosMulti?.length ? "warn" : "ok"}">
+        <span>Multi</span>
+        <strong>${fmt(vista.paleterosMulti?.length || 0)}</strong>
+        <small>no reserva</small>
+      </article>
+      <article>
+        <span>Mono</span>
+        <strong>${fmt(vista.paleterosMono?.length || 0)}</strong>
+        <small>almacenables</small>
+      </article>
+    </section>
+    <section class="recepcion-bi-panel">
+      <div class="recepcion-paletero-report">
+        <div>
+          <div class="section-head compact-head">
+            <h3>Ranking ASN / placa</h3>
+            <span class="muted-note">Top por pallets</span>
+          </div>
+          <div class="recepcion-provider-ranking compact">
+            ${rows.slice().sort((a, b) => b.pallets - a.pallets).slice(0, 6).map((row, index) => `
+              <button type="button" class="recepcion-provider-rank" onclick="abrirDetallePaleteroRecepcion(${argumentoSeguro(row.asn)})">
+                <span>${index + 1}</span>
+                <div>
+                  <strong>${htmlSeguro(row.asn)}</strong>
+                  <small>${htmlSeguro(row.camion || "SIN PLACA")} | Mono ${fmt(row.mono)} | Multi ${fmt(row.multi)}</small>
+                  <i><b style="width:${Math.min(100, pct(row.pallets, maxPallets))}%"></b></i>
+                </div>
+                <em>${fmt(row.pallets)}</em>
+              </button>
+            `).join("")}
+          </div>
+        </div>
+        <aside class="recepcion-donut-card">
+          <div class="section-head compact-head">
+            <h3>Tipo de pallet</h3>
+            <span class="muted-note">${fmt(mono + multi)} pallets</span>
+          </div>
+          <div class="recepcion-donut-wrap">
+            <div class="recepcion-donut" style="--mono:${pctMono}">
+              <strong>${fmt(Math.round(pctMono))}%</strong>
+              <small>mono</small>
+            </div>
+            <div class="recepcion-donut-legend">
+              <div><i class="mono"></i><span>Mono pallet</span><strong>${fmt(mono)}</strong></div>
+              <div><i class="multi"></i><span>Multi</span><strong>${fmt(multi)}</strong></div>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+  `;
+}
+
+function bloqueRecepcionProveedores(data) {
+  const proveedores = data.proveedores || [];
+  const proveedoresResumen = resumenProveedorTipoPacking(proveedores);
+  const proveedoresAsn = resumenAsnProveedores(proveedores);
+  const totalPallets = proveedores.reduce((a, b) => a + num(b.pallets), 0);
+  const totalBultos = proveedores.reduce((a, b) => a + num(b.bultos), 0);
+  const totalOc = new Set(proveedores.map(row => row.oc || row.asn).filter(Boolean)).size;
+  recepcionUcaVista = { ...data, proveedores, proveedoresAsn, proveedoresResumen, paleteros: [], paleterosAsn: [], paleterosMono: [], paleterosMulti: [] };
+  return `
+    ${bloqueKpisProveedoresVisual(proveedores)}
+    <section class="card subcard">
+      <div class="section-head">
+        <div>
+          <h2>Proveedores</h2>
+          <p class="muted-note">Filtro por nombre de proveedor. Puede incluir una o mas OC.</p>
+        </div>
+        <div class="filters">
+          <input class="search" id="filtroRecepcionProveedorNombre" value="${atributoSeguro(filtroRecepcionProveedorNombre)}" placeholder="Buscar proveedor..." oninput="filtrarProveedorRecepcionVista(this.value)">
+          <button type="button" onclick="exportarRecepcionDetalleProveedores()">Excel</button>
+        </div>
+      </div>
+      ${bloqueReporteProveedoresVisual(proveedores)}
+      ${tablaConId("tablaResumenProveedoresOc", ["Tipo OC", "Proveedor", "Packing list", "OC", "OC PL", "OC pend.", "Codigos", "Bultos", "Pallets", "Acciones"], filasResumenProveedoresRecepcion(proveedoresResumen), "Sin proveedores para mostrar.")}
+    </section>
+    <div id="modalProveedorRecepcion" class="modal-backdrop" hidden></div>
+  `;
+}
+
+function filasProveedorRecepcion(proveedor) {
+  const key = normalizar(proveedor);
+  return (recepcionUcaVista?.proveedores || []).filter(row => normalizar(row.proveedor) === key);
+}
+
+function resumenPasillosProveedorRecepcion(rows) {
+  const mapa = new Map();
+  (rows || []).forEach(row => {
+    const pasillo = row.pasillo || "SIN CLASIFICAR";
+    if (!mapa.has(pasillo)) mapa.set(pasillo, { pasillo, pallets: 0, bultos: 0, productos: new Set() });
+    const item = mapa.get(pasillo);
+    item.pallets += num(row.pallets);
+    item.bultos += num(row.bultos);
+    String(row.productosTxt || "").split(" | ").map(limpiar).filter(Boolean).forEach(codigo => item.productos.add(codigo));
+  });
+  return Array.from(mapa.values()).map(row => ({ ...row, productosCount: row.productos.size })).sort((a, b) => b.pallets - a.pallets);
+}
+
+function htmlDetalleProveedorRecepcion(proveedor, modo = "ver") {
+  const rows = filasProveedorRecepcion(proveedor);
+  const resumen = resumenProveedorTipoPacking(rows);
+  const pasillos = resumenPasillosProveedorRecepcion(rows);
+  const totalPallets = rows.reduce((a, b) => a + num(b.pallets), 0);
+  const totalBultos = rows.reduce((a, b) => a + num(b.bultos), 0);
+  const totalOc = new Set(rows.map(row => row.oc || row.asn).filter(Boolean)).size;
+  const pendientes = rows.filter(row => ["PROMEDIO", "APROXIMADO"].includes(row.referenciaPallet));
+  return `
+    <div class="section-head">
+      <div>
+        <h2>${htmlSeguro(proveedor)}</h2>
+        <p class="muted-note">${fmt(totalOc)} OC | ${fmt(rows.length)} productos | ${fmt(totalPallets)} pallets | ${fmt(totalBultos)} bultos</p>
+      </div>
+      <div class="filters">
+        <button onclick="exportarTablaVisible('tablaDetalleProveedorRecepcion', 'detalle_proveedor_recepcion')">Excel detalle</button>
+        <button class="ghost" onclick="cerrarModalProveedorRecepcion()">Cerrar</button>
+      </div>
+    </div>
+    <section class="kpi-grid compact">
+      ${kpi("OC", fmt(totalOc))}
+      ${kpi("Productos", fmt(rows.length))}
+      ${kpi("Pallets", fmt(totalPallets))}
+      ${kpi("Bultos", fmt(totalBultos))}
+    </section>
+    <section class="recepcion-provider-modal-grid">
+      <div class="detail-box">
+        <h3>Pasillos sugeridos</h3>
+        ${tabla(["Pasillo", "Pallets", "Bultos", "Codigos"], pasillos.map(row => `
+          <tr>
+            <td><strong>${htmlSeguro(row.pasillo)}</strong></td>
+            <td class="number">${fmt(row.pallets)}</td>
+            <td class="number">${fmt(row.bultos)}</td>
+            <td class="number">${fmt(row.productosCount)}</td>
+          </tr>
+        `), "Sin pasillos sugeridos.")}
+      </div>
+      <div class="detail-box">
+        <h3>Resumen OC</h3>
+        ${tabla(["Tipo OC", "Packing", "OC", "OC PL", "OC pend.", "Pallets"], resumen.map(row => `
+          <tr>
+            <td>${htmlSeguro(row.tipoOc)}</td>
+            <td><strong>${htmlSeguro(row.packingList)}</strong></td>
+            <td class="number">${fmt(row.ocCount)}</td>
+            <td class="number">${fmt(row.packingOc)}</td>
+            <td class="number">${fmt(row.sinPackingOc)}</td>
+            <td class="number">${fmt(row.pallets)}</td>
+          </tr>
+        `), "Sin resumen.")}
+      </div>
+    </section>
+    ${modo === "ajustar" ? `
+      <div class="detail-box">
+        <h3>Ajustar pallet fisico</h3>
+        <div class="filters">
+          <label>Codigo producto<input id="validacionProveedorCodigo" class="search small" placeholder="Codigo"></label>
+          <label>Bultos por pallet<input id="validacionProveedorMax" class="search small" type="number" min="1" step="1" placeholder="80"></label>
+          <label>Observacion<input id="validacionProveedorObs" class="search" placeholder="Validado en recepcion / proveedor"></label>
+          <button type="button" onclick="guardarValidacionPalletProveedor()">Guardar y recalcular</button>
+        </div>
+        ${tabla(["Codigo", "Descripcion", "Bultos", "Referencia", "Max usado", "Usar"], (pendientes.length ? pendientes : rows).slice(0, 20).map(row => `
+          <tr class="${["PROMEDIO", "APROXIMADO"].includes(row.referenciaPallet) ? "warn" : ""}">
+            <td><strong>${htmlSeguro(row.codigoValidacion)}</strong></td>
+            <td>${htmlSeguro(row.descripcionValidacion)}</td>
+            <td class="number">${fmt(row.bultos)}</td>
+            <td>${htmlSeguro(row.referenciaPallet)}</td>
+            <td class="number">${fmt(row.maxPallet)}</td>
+            <td><button class="compact" onclick="prepararValidacionPalletProveedor(${argumentoSeguro(row.codigoValidacion)}, ${argumentoSeguro(row.descripcionValidacion)})">Usar</button></td>
+          </tr>
+        `), "Sin productos para ajustar.")}
+      </div>
+    ` : ""}
+    ${tablaConId("tablaDetalleProveedorRecepcion", ["OC", "Tipo OC", "Producto", "Descripcion", "Pasillo", "Pallets", "Bultos", "Max pallet", "Pucho", "Referencia"], rows.map(row => `
+      <tr>
+        <td>${htmlSeguro(row.asn)}</td>
+        <td>${htmlSeguro(row.tipoOc)}</td>
+        <td><strong>${htmlSeguro(row.productosTxt)}</strong></td>
+        <td>${htmlSeguro(row.descripcion)}</td>
+        <td><strong>${htmlSeguro(row.pasillo)}</strong></td>
+        <td class="number">${fmt(row.pallets)}</td>
+        <td class="number">${fmt(row.bultos)}</td>
+        <td class="number">${fmt(row.maxPallet)}</td>
+        <td class="number">${fmt(row.saldoBultos)}</td>
+        <td>${htmlSeguro(row.referenciaPallet)}</td>
+      </tr>
+    `), "Sin detalle del proveedor.")}
+  `;
+}
+
+function abrirDetalleProveedorRecepcion(proveedor) {
+  const modal = document.getElementById("modalProveedorRecepcion");
+  if (!modal) return;
+  modal.innerHTML = `<div class="modal-card wide">${htmlDetalleProveedorRecepcion(proveedor, "ver")}</div>`;
+  modal.hidden = false;
+}
+
+function abrirAjusteProveedorRecepcion(proveedor) {
+  const modal = document.getElementById("modalProveedorRecepcion");
+  if (!modal) return;
+  modal.innerHTML = `<div class="modal-card wide">${htmlDetalleProveedorRecepcion(proveedor, "ajustar")}</div>`;
+  modal.hidden = false;
+}
+
+function cerrarModalProveedorRecepcion() {
+  const modal = document.getElementById("modalProveedorRecepcion");
+  if (!modal) return;
+  modal.hidden = true;
+  modal.innerHTML = "";
+}
+
+function filasPaleteroRecepcion(asn) {
+  const key = normalizar(asn);
+  return (recepcionUcaVista?.paleteros || []).filter(row => normalizar(row.asn) === key);
+}
+
+function resumenPasillosPaleteroRecepcion(rows) {
+  const mapa = new Map();
+  (rows || []).forEach(row => {
+    const pasillo = row.pasillo || "SIN CLASIFICAR";
+    if (!mapa.has(pasillo)) mapa.set(pasillo, { pasillo, pallets: 0, bultos: 0, mono: 0, multi: 0, productos: new Set() });
+    const item = mapa.get(pasillo);
+    item.pallets += num(row.pallets);
+    item.bultos += num(row.bultos);
+    if (row.clasePallet === "MULTI") item.multi += num(row.pallets);
+    else item.mono += num(row.pallets);
+    String(row.productosTxt || "").split(" | ").map(limpiar).filter(Boolean).forEach(codigo => item.productos.add(codigo));
+  });
+  return Array.from(mapa.values()).map(row => ({ ...row, productosCount: row.productos.size })).sort((a, b) => b.pallets - a.pallets);
+}
+
+function productosDetallePalletPaletero(row) {
+  if (row?.productosDetalle?.length) return row.productosDetalle;
+  const codigos = String(row?.productosTxt || "").split(" | ").map(limpiar).filter(Boolean);
+  const descripciones = String(row?.descripcion || "").split(" | ").map(limpiar);
+  if (!codigos.length) return [];
+  return codigos.map((codigo, index) => ({
+    codigo,
+    alternativo: "",
+    descripcion: descripciones[index] || descripciones[0] || "",
+    bultos: "",
+    unidades: ""
+  }));
+}
+
+function htmlDetallePalletMultiPaletero(asn, pallet) {
+  const row = filasPaleteroRecepcion(asn).find(item => normalizar(item.lpn) === normalizar(pallet)) || {};
+  const productos = productosDetallePalletPaletero(row);
+  return `
+    <div class="modal-card">
+      <div class="section-head">
+        <div>
+          <h2>${htmlSeguro(pallet)}</h2>
+          <p class="muted-note">${htmlSeguro(asn)} | ${htmlSeguro(row.camion || "SIN PLACA")} | ${fmt(row.bultos)} bultos</p>
+        </div>
+        <button class="ghost" onclick="cerrarDetallePalletMultiPaletero()">Cerrar</button>
+      </div>
+      ${tabla(["Codigo", "Cod alterno", "Descripcion", "Bultos", "Unidades"], productos.map(prod => `
+        <tr>
+          <td><strong>${htmlSeguro(prod.codigo)}</strong></td>
+          <td>${htmlSeguro(prod.alternativo || "")}</td>
+          <td>${htmlSeguro(prod.descripcion || "")}</td>
+          <td class="number">${prod.bultos === "" ? "" : fmt(prod.bultos)}</td>
+          <td class="number">${prod.unidades === "" ? "" : fmt(prod.unidades)}</td>
+        </tr>
+      `), "Sin detalle de productos.")}
+    </div>
+  `;
+}
+
+function abrirDetallePalletMultiPaletero(asn, pallet) {
+  const modal = document.getElementById("modalPalletMultiRecepcion");
+  if (!modal) return;
+  modal.innerHTML = htmlDetallePalletMultiPaletero(asn, pallet);
+  modal.hidden = false;
+}
+
+function cerrarDetallePalletMultiPaletero() {
+  const modal = document.getElementById("modalPalletMultiRecepcion");
+  if (!modal) return;
+  modal.hidden = true;
+  modal.innerHTML = "";
+}
+
+function celdaDetallePalletPaletero(row) {
+  if (row.clasePallet === "MULTI") {
+    return `<button type="button" class="compact" onclick="abrirDetallePalletMultiPaletero(${argumentoSeguro(row.asn)}, ${argumentoSeguro(row.lpn)})">Ver</button>`;
+  }
+  return `<strong>${htmlSeguro(row.productosTxt)}</strong>${row.descripcion ? `<small>${htmlSeguro(row.descripcion)}</small>` : ""}`;
+}
+
+function htmlDetallePaleteroRecepcion(asn) {
+  const rows = filasPaleteroRecepcion(asn);
+  const pasillos = resumenPasillosPaleteroRecepcion(rows);
+  const resumen = (recepcionUcaVista?.paleterosAsn || []).find(row => normalizar(row.asn) === normalizar(asn)) || {};
+  const totalPallets = rows.reduce((a, b) => a + num(b.pallets), 0);
+  const totalBultos = rows.reduce((a, b) => a + num(b.bultos), 0);
+  const totalLpns = rows.reduce((a, b) => a + num(b.lpns), 0);
+  const totalProductos = rows.reduce((acc, row) => {
+    String(row.productosTxt || "").split(" | ").map(limpiar).filter(Boolean).forEach(codigo => acc.add(codigo));
+    return acc;
+  }, new Set()).size;
+  return `
+    <div class="section-head">
+      <div>
+        <h2>${htmlSeguro(asn)}</h2>
+        <p class="muted-note">${htmlSeguro(resumen.camion || "SIN PLACA")} | ${fmt(rows.length)} pallets/grupos | ${fmt(totalBultos)} bultos</p>
+      </div>
+      <div class="filters">
+        <button onclick="exportarTablaVisible('tablaDetallePaleteroRecepcion', 'detalle_paletero_recepcion')">Excel detalle</button>
+        <button class="ghost" onclick="cerrarModalPaleteroRecepcion()">Cerrar</button>
+      </div>
+    </div>
+    <section class="kpi-grid compact">
+      ${kpi("Pallets", fmt(totalPallets))}
+      ${kpi("LPNs", fmt(totalLpns))}
+      ${kpi("Codigos", fmt(totalProductos))}
+      ${kpi("Bultos", fmt(totalBultos))}
+    </section>
+    <section class="recepcion-provider-modal-grid">
+      <div class="detail-box">
+        <h3>Pasillos sugeridos</h3>
+        ${tabla(["Pasillo", "Pallets", "Mono", "Multi", "Bultos", "Codigos"], pasillos.map(row => `
+          <tr class="${row.multi ? "warn" : ""}">
+            <td><strong>${htmlSeguro(row.pasillo)}</strong></td>
+            <td class="number"><strong>${fmt(row.pallets)}</strong></td>
+            <td class="number">${fmt(row.mono)}</td>
+            <td class="number">${fmt(row.multi)}</td>
+            <td class="number">${fmt(row.bultos)}</td>
+            <td class="number">${fmt(row.productosCount)}</td>
+          </tr>
+        `), "Sin pasillos sugeridos.")}
+      </div>
+      <div class="detail-box">
+        <h3>Resumen pallet</h3>
+        ${tabla(["Tipo", "Pallets", "Detalle"], [
+          `<tr><td><strong>MONO</strong></td><td class="number">${fmt(resumen.mono || rows.filter(row => row.clasePallet === "MONO").length)}</td><td>Almacenable en reserva</td></tr>`,
+          `<tr class="${resumen.multi ? "warn" : ""}"><td><strong>MULTI</strong></td><td class="number">${fmt(resumen.multi || rows.filter(row => row.clasePallet === "MULTI").length)}</td><td>No suma a reserva</td></tr>`
+        ], "Sin resumen.")}
+      </div>
+    </section>
+    ${tablaConId("tablaDetallePaleteroRecepcion", ["ASN", "Placa", "Pallet", "LPNs", "Codigos", "Tipo", "Pasillo", "Bultos", "Detalle", "Metodo"], rows.map(row => `
+      <tr class="${row.clasePallet === "MULTI" ? "warn" : ""}">
+        <td>${htmlSeguro(row.asn)}</td>
+        <td>${htmlSeguro(row.camion || "SIN PLACA")}</td>
+        <td><strong>${htmlSeguro(row.lpn)}</strong></td>
+        <td class="number">${fmt(row.lpns)}</td>
+        <td class="number">${fmt(row.productos)}</td>
+        <td><strong>${htmlSeguro(row.clasePallet)}</strong></td>
+        <td><strong>${htmlSeguro(row.pasillo)}</strong></td>
+        <td class="number">${fmt(row.bultos)}</td>
+        <td>${celdaDetallePalletPaletero(row)}</td>
+        <td>${htmlSeguro(row.metodo)}</td>
+      </tr>
+    `), "Sin detalle del ASN.")}
+    <div id="modalPalletMultiRecepcion" class="modal-backdrop modal-child" hidden></div>
+  `;
+}
+
+function abrirDetallePaleteroRecepcion(asn) {
+  const modal = document.getElementById("modalPaleteroRecepcion");
+  if (!modal) return;
+  modal.innerHTML = `<div class="modal-card wide">${htmlDetallePaleteroRecepcion(asn)}</div>`;
+  modal.hidden = false;
+}
+
+function cerrarModalPaleteroRecepcion() {
+  const modal = document.getElementById("modalPaleteroRecepcion");
+  if (!modal) return;
+  modal.hidden = true;
+  modal.innerHTML = "";
+}
+
+function bloqueRecepcionPaleteros(data) {
+  const vista = recalcularRecepcionProyeccion(data, "paleteros");
+  const paleteros = vista.paleteros || [];
+  const paleterosAsn = vista.paleterosAsn || [];
+  recepcionUcaVista = vista;
+  return `
+    ${filtrosRecepcionProyeccionHtml(data, "paleteros")}
+    ${bloquePaleterosVisual(vista)}
+    <section class="card subcard">
+      <div class="section-head">
+        <div>
+          <h2>Paleteros</h2>
+          <p class="muted-note">Pallets que traen y pasillo sugerido segun historico de producto o jerarquia.</p>
+        </div>
+        <button type="button" onclick="exportarRecepcionDetallePaleteros()">Excel paletero</button>
+      </div>
+      ${tablaConId("tablaRecepcionPaleterosResumen", ["ASN", "Placa", "Pallets", "LPNs", "Codigos", "Mono", "Multi", "Bultos", "Pasillos"], paleterosAsn.map(row => `
+        <tr>
+          <td><strong>${htmlSeguro(row.asn)}</strong></td>
+          <td>${htmlSeguro(row.camion || "SIN PLACA")}</td>
+          <td class="number">${fmt(row.pallets)}</td>
+          <td class="number">${fmt(row.lpns)}</td>
+          <td class="number">${fmt(row.productos)}</td>
+          <td class="number">${fmt(row.mono)}</td>
+          <td class="number">${fmt(row.multi)}</td>
+          <td class="number">${fmt(row.bultos)}</td>
+          <td>${htmlSeguro(row.pasillos || "SIN CLASIFICAR")}</td>
+        </tr>
+      `), "Sin paleteros para mostrar.")}
+    </section>
+    <div id="modalPaleteroRecepcion" class="modal-backdrop" hidden></div>
+  `;
+}
+
+function bloqueRecepcionUca(data, mostrarBotonExcel = true, modo = "todos") {
+  const dataCompleta = data.sinFiltro || data;
+  const vista = recalcularRecepcionProyeccion(dataCompleta, modo);
+  recepcionUcaVista = vista;
+  const proveedoresAsn = vista.proveedoresAsn || [];
+  const paleterosAsn = vista.paleterosAsn || [];
+  const detalleAsnPasillo = vista.detalleAsnPasillo || [];
+  const ordenPasillos = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "11", "12"];
+  const resumenOrdenado = vista.resumen.slice().sort((a, b) => ordenPasillos.indexOf(a.pasillo) - ordenPasillos.indexOf(b.pasillo));
   return `
     <section class="card uca-recepcion-card">
       <div class="section-head">
@@ -2087,64 +3268,21 @@ function bloqueRecepcionUca(data, mostrarBotonExcel = true) {
         </div>
         ${mostrarBotonExcel ? `<button type="button" onclick="exportarRecepcionUca()">Excel recepcion</button>` : ""}
       </div>
-      ${resumenVisualRecepcion(data, proveedoresAsn, paleterosAsn)}
+      ${filtrosRecepcionProyeccionHtml(dataCompleta, modo)}
+      ${resumenVisualRecepcion(vista, proveedoresAsn, paleterosAsn)}
       <div class="recepcion-summary-card">
         <div class="section-head compact-head">
           <h3>Capacidad vs llegada por pasillo</h3>
           <span class="muted-note">Comparativo para decidir si ingresa o falta liberar espacio</span>
         </div>
         ${graficoBarrasPasilloRecepcion(resumenOrdenado)}
-        ${alertaPtsRecepcion(data)}
-        ${data.total.sinClasificar ? `<p class="muted-note">Pallets sin clasificar por pasillo: <strong>${fmt(data.total.sinClasificar)}</strong>. Requieren validar jerarquia o historico.</p>` : ""}
+        ${alertaPtsRecepcion(vista)}
+        ${vista.total.sinClasificar ? `<p class="muted-note">Pallets sin clasificar por pasillo: <strong>${fmt(vista.total.sinClasificar)}</strong>. Requieren validar jerarquia o historico.</p>` : ""}
       </div>
-      ${data.total.paleterosMulti ? `<div class="notice">Paleteros MULTI detectados: <strong>${fmt(data.total.paleterosMulti)}</strong> pallets. Se muestran en el detalle, pero no se suman a la llegada de reserva porque no se almacenan.</div>` : ""}
+      ${modo === "paleteros" && vista.total.paleterosMulti ? `<div class="notice">Paleteros MULTI detectados: <strong>${fmt(vista.total.paleterosMulti)}</strong> pallets. Se muestran en el detalle, pero no se suman a la llegada de reserva porque no se almacenan.</div>` : ""}
       <div class="recepcion-asn-layout">
-        ${tarjetasAsnRecepcion("Proveedores por ASN", proveedoresAsn, "proveedor")}
-        ${tarjetasAsnRecepcion("Paleteros por ASN", paleterosAsn, "paletero")}
-      </div>
-      <div class="dashboard-layout recepcion-detalles">
-        <div>
-          <div class="section-head compact-head">
-            <h3>Detalle proveedor</h3>
-            <div class="filters">
-              <span class="muted-note">${fmt(data.proveedores.length)} grupos ASN/LPN</span>
-              <button type="button" onclick="exportarRecepcionDetalleProveedores()">Excel proveedor</button>
-            </div>
-          </div>
-          ${tabla(["ASN", "LPN / Grupo", "Pasillo", "Pallets", "Un Env", "Bultos", "Metodo"], data.proveedores.slice(0, 80).map(row => `
-            <tr>
-              <td>${htmlSeguro(row.asn)}</td>
-              <td>${htmlSeguro(row.lpn || row.productosTxt)}</td>
-              <td><strong>${htmlSeguro(row.pasillo)}</strong></td>
-              <td class="number">${fmt(row.pallets)}</td>
-              <td class="number">${fmt(row.unidades)}</td>
-              <td class="number">${fmt(row.bultos)}</td>
-              <td>${htmlSeguro(row.metodoPallet)} / ${htmlSeguro(row.metodo)}</td>
-            </tr>
-          `), "Sin detalle de proveedores cargado")}
-        </div>
-        <div>
-          <div class="section-head compact-head">
-            <h3>Detalle paletero</h3>
-            <div class="filters">
-              <span class="muted-note">${fmt(data.paleterosMono?.length || 0)} mono almacenables / ${fmt(data.paleterosMulti?.length || 0)} multi no reserva</span>
-              <button type="button" onclick="exportarRecepcionDetallePaleteros()">Excel paletero</button>
-              <button type="button" onclick="exportarRecepcionPaleterosMulti()">Excel multi</button>
-            </div>
-          </div>
-          ${tabla(["ASN", "Pallet", "LPNs", "Codigos", "Tipo", "Pasillo", "Bultos", "Metodo"], data.paleteros.slice(0, 80).map(row => `
-            <tr>
-              <td>${htmlSeguro(row.asn)}</td>
-              <td>${htmlSeguro(row.lpn)}</td>
-              <td class="number">${fmt(row.lpns)}</td>
-              <td class="number">${fmt(row.productos)}</td>
-              <td><strong>${htmlSeguro(row.clasePallet)}</strong><small>${row.clasePallet === "MULTI" ? "No va a reserva" : "Almacenable"}</small></td>
-              <td><strong>${htmlSeguro(row.pasillo)}</strong></td>
-              <td class="number">${fmt(row.bultos)}</td>
-              <td>${htmlSeguro(row.metodo)}</td>
-            </tr>
-          `), "Sin paleteros cargados")}
-        </div>
+        ${modo !== "paleteros" ? tarjetasAsnRecepcion("Proveedores por OC", proveedoresAsn, "proveedor") : ""}
+        ${modo !== "proveedores" ? tarjetasAsnRecepcion("Paleteros por ASN", paleterosAsn, "paletero") : ""}
       </div>
       <div class="section-head compact-head subhead">
         <h3>Resumen por pasillo y ASN</h3>
@@ -2169,22 +3307,29 @@ function exportarRecepcionUca() {
     {
       nombre: "Proveedores ASN",
       filas: [
-        ["ASN", "PALLETS", "LPNS", "PRODUCTOS", "UN ENV", "BULTOS", "PASILLOS"],
-        ...(data.proveedoresAsn || []).map(row => [row.asn, row.pallets, row.lpns, row.productos, row.unidades || 0, row.bultos, row.pasillos])
+        ["OC", "TIPO OC", "PROVEEDOR", "PACKING LIST", "PALLETS", "PRODUCTOS", "BULTOS", "PASILLOS"],
+        ...(data.proveedoresAsn || []).map(row => [row.asn, row.tipoOc, row.proveedor, row.packingList ? "SI" : "NO", row.pallets, row.productos, row.bultos, row.pasillos])
+      ]
+    },
+    {
+      nombre: "Resumen proveedores",
+      filas: [
+        ["TIPO OC", "PROVEEDOR", "PACKING LIST", "OC", "OC CON PACKING", "OC SIN PACKING", "CODIGOS", "BULTOS", "PALLETS APROX"],
+        ...(data.proveedoresResumen || []).map(row => [row.tipoOc, row.proveedor, row.packingList, row.ocCount, row.packingOc, row.sinPackingOc, row.productos, row.bultos, row.pallets])
       ]
     },
     {
       nombre: "Detalle proveedores",
       filas: [
-        ["ASN", "LPN O GRUPO", "PASILLO", "PALLETS", "UN ENV", "BULTOS", "PRODUCTOS", "DESCRIPCION", "METODO PALLET", "METODO PASILLO"],
-        ...data.proveedores.map(row => [row.asn, row.lpn || row.productosTxt, row.pasillo, row.pallets, row.unidades || 0, row.bultos, row.productosTxt, row.descripcion, row.metodoPallet, row.metodo])
+        ["OC", "TIPO OC", "PROVEEDOR", "PACKING LIST", "PASILLO", "MAX PALLET", "PALLETS COMPLETOS", "PUCHO BULTOS", "PUCHO CUENTA", "PALLETS", "BULTOS", "PRODUCTOS", "DESCRIPCION", "REFERENCIA", "METODO PALLET", "METODO PASILLO"],
+        ...data.proveedores.map(row => [row.asn, row.tipoOc, row.proveedor, row.packingList ? "SI" : "NO", row.pasillo, row.maxPallet, row.palletsCompletos, row.saldoBultos, row.saldoCuentaPallet ? "SI" : "NO", row.pallets, row.bultos, row.productosTxt, row.descripcion, row.referenciaPallet, row.metodoPallet, row.metodo])
       ]
     },
     {
       nombre: "Paleteros ASN",
       filas: [
-        ["ASN", "PALLETS", "LPNS", "CODIGOS", "MONO", "MULTI", "BULTOS", "PASILLOS"],
-        ...(data.paleterosAsn || []).map(row => [row.asn, row.pallets, row.lpns, row.productos, row.mono, row.multi, row.bultos, row.pasillos])
+        ["ASN", "PLACA", "PALLETS", "LPNS", "CODIGOS", "MONO", "MULTI", "BULTOS", "PASILLOS"],
+        ...(data.paleterosAsn || []).map(row => [row.asn, row.camion || "", row.pallets, row.lpns, row.productos, row.mono, row.multi, row.bultos, row.pasillos])
       ]
     },
     {
@@ -2197,8 +3342,8 @@ function exportarRecepcionUca() {
     {
       nombre: "Paleteros",
       filas: [
-        ["ASN", "PALLET", "LPNS", "CODIGOS", "TIPO", "ALMACENA EN RESERVA", "PASILLO", "PALLETS", "BULTOS", "PRODUCTOS", "DESCRIPCION", "METODO PASILLO"],
-        ...data.paleteros.map(row => [row.asn, row.lpn, row.lpns, row.productos, row.clasePallet, row.clasePallet === "MONO" ? "SI" : "NO", row.pasillo, row.pallets, row.bultos, row.productosTxt, row.descripcion, row.metodo])
+        ["ASN", "PLACA", "PALLET", "LPNS", "CODIGOS", "TIPO", "ALMACENA EN RESERVA", "PASILLO", "PALLETS", "BULTOS", "PRODUCTOS", "DESCRIPCION", "METODO PASILLO"],
+        ...data.paleteros.map(row => [row.asn, row.camion || "", row.lpn, row.lpns, row.productos, row.clasePallet, row.clasePallet === "MONO" ? "SI" : "NO", row.pasillo, row.pallets, row.bultos, row.productosTxt, row.descripcion, row.metodo])
       ]
     },
     {
@@ -2314,10 +3459,17 @@ function exportarRecepcionDetalleProveedores() {
   if (!data?.proveedores) return alert("No hay detalle de proveedores para exportar");
   descargarExcelHojas("recepcion_detalle_proveedores", [
     {
+      nombre: "Resumen proveedores",
+      filas: [
+        ["TIPO OC", "PROVEEDOR", "PACKING LIST", "OC", "OC CON PACKING", "OC SIN PACKING", "CODIGOS", "BULTOS", "PALLETS APROX"],
+        ...(data.proveedoresResumen || []).map(row => [row.tipoOc, row.proveedor, row.packingList, row.ocCount, row.packingOc, row.sinPackingOc, row.productos, row.bultos, row.pallets])
+      ]
+    },
+    {
       nombre: "Detalle proveedores",
       filas: [
-        ["ASN", "LPN O GRUPO", "PASILLO", "PALLETS", "UN ENV", "BULTOS", "PRODUCTOS", "DESCRIPCION", "METODO PALLET", "METODO PASILLO"],
-        ...data.proveedores.map(row => [row.asn, row.lpn || row.productosTxt, row.pasillo, row.pallets, row.unidades || 0, row.bultos, row.productosTxt, row.descripcion, row.metodoPallet, row.metodo])
+        ["OC", "TIPO OC", "PROVEEDOR", "PACKING LIST", "PASILLO", "MAX PALLET", "PALLETS COMPLETOS", "PUCHO BULTOS", "PUCHO CUENTA", "PALLETS", "BULTOS", "PRODUCTOS", "DESCRIPCION", "REFERENCIA", "METODO PALLET", "METODO PASILLO"],
+        ...data.proveedores.map(row => [row.asn, row.tipoOc, row.proveedor, row.packingList ? "SI" : "NO", row.pasillo, row.maxPallet, row.palletsCompletos, row.saldoBultos, row.saldoCuentaPallet ? "SI" : "NO", row.pallets, row.bultos, row.productosTxt, row.descripcion, row.referenciaPallet, row.metodoPallet, row.metodo])
       ]
     }
   ]);
@@ -3421,6 +4573,408 @@ function renderBusquedaProducto() {
     <section class="card subcard"><div class="section-head"><h2>Pendiente parcial en LPNs</h2><span class="muted-note">LPN con asignacion parcial y saldo disponible.</span></div>${tablaBusquedaProductoLpns(datos.pendienteLpn, "tablaPendienteLpnProducto", false, true)}</section>
     <section class="card subcard"><div class="section-head"><h2>No encontrados</h2></div>${tablaConId("tablaNoEncontradosProducto", ["Codigo buscado", "Observacion"], datos.noEncontrados.map(c => `<tr class="bad"><td><strong>${htmlSeguro(c)}</strong></td><td>No encontrado</td></tr>`), "Todos los codigos fueron encontrados.")}</section>
   `;
+}
+
+function codigosBaseShipTo() {
+  const mapa = new Map();
+  (dataRecepcionPaleterosCodigo || []).forEach(row => {
+    const codigo = codigoBusqueda(campoRecepcion(row, ["CODIGO", "Codigo", "Producto", "PRODUCTO"]));
+    const codigoAlt = codigoBusqueda(campoRecepcion(row, ["CODIGO_ALT", "COD_ALT", "CODIGO ALTERNATIVO", "Codigo Alternativo", "Cod Alternat", "Artic Padre"]));
+    const clave = codigo || codigoAlt;
+    if (!clave || mapa.has(clave)) return;
+    mapa.set(clave, {
+      codigo,
+      codigoAlt,
+      descripcion: descripcionRecepcion(row) || limpiar(campoRecepcion(row, ["Descripcion", "DESCRIPCION", "Descrip Artic"]))
+    });
+  });
+  return Array.from(mapa.values());
+}
+
+function codigosBusquedaShipTo() {
+  const base = codigosBaseShipTo();
+  const pegados = parseCodigosPegados(document.getElementById("codigosExtraShipTo")?.value || "");
+  const mapa = new Map(base.map(row => [row.codigo || row.codigoAlt, row]));
+  pegados.forEach(codigo => {
+    if (!mapa.has(codigo)) mapa.set(codigo, { codigo, codigoAlt: "", descripcion: "" });
+  });
+  return Array.from(mapa.values());
+}
+
+function indicesProductoMaestroCompletos() {
+  const mapa = maestroProductoPorCodigo();
+  dataProductos.forEach(prod => {
+    codigosProducto(prod).forEach(cod => {
+      const key = codigoBusqueda(cod);
+      if (key && !mapa.has(key)) mapa.set(key, prod);
+    });
+  });
+  return mapa;
+}
+
+function expandirCodigosShipTo(base) {
+  const maestro = indicesProductoMaestroCompletos();
+  const keys = new Set();
+  const porKeyBase = new Map();
+  base.forEach(item => {
+    const codigos = [item.codigo, item.codigoAlt].map(codigoBusqueda).filter(Boolean);
+    const prod = codigos.map(c => maestro.get(c)).find(Boolean);
+    const expandidos = new Set(codigos);
+    if (prod) codigosProducto(prod).map(codigoBusqueda).filter(Boolean).forEach(c => expandidos.add(c));
+    expandidos.forEach(key => {
+      keys.add(key);
+      if (!porKeyBase.has(key)) porKeyBase.set(key, item);
+    });
+  });
+  return { keys, porKeyBase, maestro };
+}
+
+function productoCoincideShipTo(row, keys, gruposCampos) {
+  return gruposCampos.some(nombres => keys.has(codigoBusqueda(campo(row, nombres))));
+}
+
+function pedidoShipToPorProducto(keys, porKeyBase, maestro) {
+  const mapa = new Map();
+  (dataPedido || []).forEach(row => {
+    if (!productoCoincideShipTo(row, keys, [["PRODUCTO", "Producto", "CODIGO", "Codigo"], ["COD_ALT", "CODIGO_ALT", "COD ALTERNATIVO", "CODIGO ALTERNATIVO", "Cod Alternat"]])) return;
+    const key = clavesProducto(row).find(k => keys.has(k)) || codigoBusqueda(campo(row, ["PRODUCTO", "Producto", "CODIGO", "Codigo"]));
+    const base = porKeyBase.get(key) || {};
+    const prod = maestro.get(key) || productoPorCodigo(key) || {};
+    const codigo = normalizar(campo(row, ["PRODUCTO", "Producto", "CODIGO", "Codigo"])) || normalizar(base.codigo) || normalizar(campo(prod, ["CODIGO", "PRODUCTO"]));
+    const codigoAlt = limpiar(campo(row, ["COD_ALT", "CODIGO_ALT", "COD ALTERNATIVO", "CODIGO ALTERNATIVO", "Cod Alternat"])) || limpiar(base.codigoAlt) || codigoAlternativoProducto(codigo, row);
+    const descripcion = limpiar(campo(row, ["DESCRIPCION", "Descripcion", "Descripcion Producto"])) || limpiar(base.descripcion) || descripcionProducto(codigo, row);
+    const uxb = uxbProducto(row, prod) || 1;
+    const unidades = num(campo(row, ["UNIDADES", "Unidades", "UN_PEDIDO", "UN PEDIDO", "UN SOLICITADAS", "Un Solicitadas", "CANTIDAD", "Cantidad"]));
+    const bultosAsignable = num(campo(row, ["BULTOS_ASIGNABLE", "BULTOS_ASIGNABLES", "BULTO_ASIGNABLE", "ASIGNABLE", "BULTOS ASIGNABLE", "BULTOS ASIGNABLES"]));
+    const bultosNoAsignado = num(campo(row, ["BULTOS_NO_ASIGNADO", "BULTOS_NO_ASIGNADOS", "BULTO_NO_ASIGNADO", "BULTO_NO_ASIGANDO", "BULTOS_NO_ASIGANDO", "NO_ASIGNADO", "NO ASIGNADO"]));
+    const bultos = bultosAsignable + bultosNoAsignado || (uxb ? unidades / uxb : unidades);
+    const item = {
+      origen: "PEDIDO",
+      resumenCodigo: normalizar(base.codigo) || normalizar(base.codigoAlt) || codigo || key,
+      codigo,
+      codigoAlt,
+      descripcion,
+      unidades,
+      bultos,
+      bultosAsignable,
+      bultosNoAsignado,
+      ubicacion: limpiar(campo(row, ["UBICACION", "Ubicacion", "DESTINO", "Destino"])),
+      estadoLpn: "",
+      lpn: "",
+      observacion: bultosNoAsignado > 0 ? "NO ASIGNADO: separar si o si" : bultosAsignable > 0 ? "ASIGNABLE" : "PEDIDO"
+    };
+    const resumenKey = codigo || codigoAlt || key;
+    if (!mapa.has(resumenKey)) mapa.set(resumenKey, []);
+    mapa.get(resumenKey).push(item);
+  });
+  return Array.from(mapa.values()).flat();
+}
+
+function filasInventarioShipTo(keys, porKeyBase, maestro) {
+  return (dataInventario || [])
+    .filter(row => productoCoincideShipTo(row, keys, [["PRODUCTO", "Producto", "CODIGO", "Codigo"], ["COD_ALT", "CODIGO_ALT", "COD ALTERNATIVO", "CODIGO ALTERNATIVO", "Cod Alternat"]]))
+    .map(row => {
+      const key = clavesProducto(row).find(k => keys.has(k)) || codigoBusqueda(campo(row, ["PRODUCTO", "Codigo", "CODIGO"]));
+      const base = porKeyBase.get(key) || {};
+      const prod = maestro.get(key) || {};
+      const codigo = normalizar(campo(row, ["PRODUCTO", "Producto", "CODIGO", "Codigo"])) || normalizar(base.codigo) || normalizar(campo(prod, ["CODIGO", "PRODUCTO"]));
+      const uxb = uxbProducto(row, prod) || 1;
+      const unidades = num(campo(row, ["UNACT", "UnAct", "UN ACT", "UNIDADES", "Unidades"]));
+      const asignado = num(campo(row, ["UNI_ASIG", "Un Asig", "UN ASIG", "UNIDADES ASIGNADAS"]));
+      return {
+        origen: "INV_ACTIVO",
+        resumenCodigo: normalizar(base.codigo) || normalizar(base.codigoAlt) || codigo || key,
+        codigo,
+        codigoAlt: limpiar(campo(row, ["COD_ALT", "CODIGO_ALT", "COD ALTERNATIVO", "CODIGO ALTERNATIVO", "Cod Alternat"])) || limpiar(base.codigoAlt) || codigoAlternativoProducto(codigo, row),
+        descripcion: limpiar(campo(row, ["DESCRIPCION", "Descripcion"])) || limpiar(base.descripcion) || descripcionProducto(codigo, row),
+        unidades,
+        bultos: uxb ? unidades / uxb : unidades,
+        bultosAsignable: uxb ? Math.max(0, unidades - asignado) / uxb : Math.max(0, unidades - asignado),
+        bultosNoAsignado: 0,
+        ubicacion: limpiar(campo(row, ["UBICACION", "Ubicacion"])),
+        estadoLpn: "",
+        lpn: "",
+        observacion: asignado > 0 ? "Stock activo parcialmente asignado" : "Stock activo"
+      };
+    });
+}
+
+function filasLpnShipTo(keys, porKeyBase, maestro) {
+  return (dataLPN || [])
+    .filter(row => productoCoincideShipTo(row, keys, [["CODIGO", "Producto", "PRODUCTO"], ["COD_ALT", "CODIGO_ALT", "COD ALTERNATIVO", "CODIGO ALTERNATIVO", "Cod Alternat"]]))
+    .map(row => {
+      const key = clavesProducto(row).find(k => keys.has(k)) || codigoBusqueda(campo(row, ["CODIGO", "PRODUCTO"]));
+      const base = porKeyBase.get(key) || {};
+      const prod = maestro.get(key) || {};
+      const codigo = normalizar(campo(row, ["CODIGO", "PRODUCTO"])) || normalizar(base.codigo) || normalizar(campo(prod, ["CODIGO", "PRODUCTO"]));
+      const unidades = unidadesLpn(row);
+      const bultos = num(campo(row, ["BULTOS", "Bultos"]));
+      const asignado = num(campo(row, ["UN_ASIG", "Un Asig", "UN ASIG", "UNI_ASIG"]));
+      return {
+        origen: "LPNS",
+        resumenCodigo: normalizar(base.codigo) || normalizar(base.codigoAlt) || codigo || key,
+        codigo,
+        codigoAlt: limpiar(campo(row, ["COD_ALT", "CODIGO_ALT", "COD ALTERNATIVO", "CODIGO ALTERNATIVO", "Cod Alternat"])) || limpiar(base.codigoAlt) || codigoAlternativoProducto(codigo, row),
+        descripcion: limpiar(campo(row, ["DESCRIPCION", "Descripcion"])) || limpiar(base.descripcion) || descripcionProducto(codigo, row),
+        unidades,
+        bultos,
+        bultosAsignable: bultos,
+        bultosNoAsignado: 0,
+        ubicacion: limpiar(campo(row, ["UBICACION", "Ubicacion"])) || "SIN UBICACION",
+        estadoLpn: limpiar(campo(row, ["ESTADO", "Estado"])),
+        lpn: limpiar(campo(row, ["LPN", "NRO LPN", "NRO_LPN"])),
+        observacion: "LPN encontrado"
+      };
+    });
+}
+
+function datosBusquedaShipTo() {
+  const base = codigosBusquedaShipTo();
+  const { keys, porKeyBase, maestro } = expandirCodigosShipTo(base);
+  const detalle = [
+    ...pedidoShipToPorProducto(keys, porKeyBase, maestro),
+    ...filasInventarioShipTo(keys, porKeyBase, maestro),
+    ...filasLpnShipTo(keys, porKeyBase, maestro)
+  ];
+
+  const resumen = new Map();
+  base.forEach(item => {
+    const codigo = normalizar(item.codigo) || normalizar(item.codigoAlt);
+    if (!codigo) return;
+    resumen.set(codigo, {
+      codigo,
+      codigoAlt: limpiar(item.codigoAlt),
+      descripcion: limpiar(item.descripcion),
+      pedidoAsignable: 0,
+      pedidoNoAsignado: 0,
+      inventarioBultos: 0,
+      lpnBultos: 0,
+      ubicaciones: new Set(),
+      estados: new Set(),
+      fuentes: new Set(),
+      detalle: []
+    });
+  });
+
+  detalle.forEach(row => {
+    const codigo = normalizar(row.resumenCodigo) || normalizar(row.codigo) || normalizar(row.codigoAlt);
+    if (!codigo) return;
+    if (!resumen.has(codigo)) {
+      resumen.set(codigo, {
+        codigo,
+        codigoAlt: row.codigoAlt,
+        descripcion: row.descripcion,
+        pedidoAsignable: 0,
+        pedidoNoAsignado: 0,
+        inventarioBultos: 0,
+        lpnBultos: 0,
+        ubicaciones: new Set(),
+        estados: new Set(),
+        fuentes: new Set(),
+        detalle: []
+      });
+    }
+    const item = resumen.get(codigo);
+    if (!item.codigoAlt && row.codigoAlt) item.codigoAlt = row.codigoAlt;
+    if (!item.descripcion && row.descripcion) item.descripcion = row.descripcion;
+    if (row.origen === "PEDIDO") {
+      item.pedidoAsignable += row.bultosAsignable;
+      item.pedidoNoAsignado += row.bultosNoAsignado;
+    }
+    if (row.origen === "INV_ACTIVO") item.inventarioBultos += row.bultos;
+    if (row.origen === "LPNS") {
+      item.lpnBultos += row.bultos;
+      if (row.estadoLpn) item.estados.add(row.estadoLpn);
+    }
+    if (row.ubicacion) item.ubicaciones.add(row.ubicacion);
+    item.fuentes.add(row.origen);
+    item.detalle.push(row);
+  });
+
+  const resumenRows = Array.from(resumen.values())
+    .map(item => ({
+      ...item,
+      totalSeparar: item.pedidoNoAsignado + item.lpnBultos,
+      ubicacionesTxt: Array.from(item.ubicaciones).filter(Boolean).slice(0, 8).join(" | "),
+      estadosTxt: Array.from(item.estados).filter(Boolean).join(" | "),
+      fuentesTxt: Array.from(item.fuentes).sort().join(" | ")
+    }))
+    .sort((a, b) => b.totalSeparar - a.totalSeparar || b.pedidoNoAsignado - a.pedidoNoAsignado || a.codigo.localeCompare(b.codigo));
+
+  detalleBusquedaShipTo = new Map();
+  resumenRows.forEach(row => detalleBusquedaShipTo.set(row.codigo, row));
+  const noEncontrados = base.filter(item => {
+    const codigo = normalizar(item.codigo) || normalizar(item.codigoAlt);
+    const row = resumen.get(codigo);
+    return !row || !row.detalle.length;
+  });
+  return { base, detalle, resumen: resumenRows, noEncontrados };
+}
+
+function verBusquedaShipTo() {
+  document.getElementById("modulo").innerHTML = `
+    <div class="section-head">
+      <div>
+        <h2>Busqueda ship to</h2>
+        <p class="muted-note">Base automatica: hoja CODIGO de paleteros. Cruza PEDIDO, INV_ACTIVO y LPNS para separar mercaderia critica.</p>
+      </div>
+      <div class="filters">
+        <button onclick="renderBusquedaShipTo()">Actualizar cruce</button>
+        <button onclick="exportarBusquedaShipTo()">Excel completo</button>
+      </div>
+    </div>
+    <section class="card product-search-panel">
+      <textarea id="codigosExtraShipTo" class="product-search-input" placeholder="Opcional: pega codigos extra para sumar a la hoja CODIGO"></textarea>
+    </section>
+    <div id="resultadoBusquedaShipTo"></div>
+    <div id="modalBusquedaShipTo" class="modal-backdrop" hidden></div>
+  `;
+  renderBusquedaShipTo();
+}
+
+function renderBusquedaShipTo() {
+  const destino = document.getElementById("resultadoBusquedaShipTo");
+  if (!destino) return;
+  const datos = datosBusquedaShipTo();
+  const totalNoAsignado = datos.resumen.reduce((a, b) => a + b.pedidoNoAsignado, 0);
+  const totalLpns = datos.resumen.reduce((a, b) => a + b.lpnBultos, 0);
+  destino.innerHTML = `
+    <section class="kpi-grid compact">
+      ${kpi("Codigos CODIGO", fmt(codigosBaseShipTo().length))}
+      ${kpi("Productos encontrados", fmt(datos.resumen.filter(r => r.detalle.length).length))}
+      ${kpi("Pedido no asignado", fmt(totalNoAsignado), "bultos", totalNoAsignado ? "danger" : "")}
+      ${kpi("LPNs ubicados", fmt(totalLpns), "bultos")}
+      ${kpi("No encontrados", fmt(datos.noEncontrados.length), "", datos.noEncontrados.length ? "danger" : "")}
+    </section>
+    <section class="card subcard">
+      <div class="section-head">
+        <div><h2>Tabla general</h2><p class="muted-note">Prioriza pedido no asignado y LPNs encontrados para separar.</p></div>
+        <div class="filters">
+          <input class="search" id="filtroShipToGeneral" placeholder="Buscar codigo, descripcion, ubicacion..." oninput="filtrarTabla('tablaShipToGeneral', this.value)">
+          <button onclick="exportarTablaVisible('tablaShipToGeneral', 'busqueda_ship_to_general')">Excel general</button>
+        </div>
+      </div>
+      ${tablaConId("tablaShipToGeneral", ["Codigo", "Codigo alt", "Descripcion", "Bultos asignable", "Bultos no asignado", "Bultos inventario", "Bultos LPN", "Ubicaciones", "Estado LPN", "Fuentes", "Accion", "Ver"], datos.resumen.map(r => `
+        <tr class="${r.pedidoNoAsignado > 0 || r.lpnBultos > 0 ? "bad" : r.detalle.length ? "warn" : ""}">
+          <td><strong>${htmlSeguro(r.codigo)}</strong></td>
+          <td>${htmlSeguro(r.codigoAlt)}</td>
+          <td>${htmlSeguro(r.descripcion)}</td>
+          <td class="number">${fmt(r.pedidoAsignable)}</td>
+          <td class="number"><strong>${fmt(r.pedidoNoAsignado)}</strong></td>
+          <td class="number">${fmt(r.inventarioBultos)}</td>
+          <td class="number">${fmt(r.lpnBultos)}</td>
+          <td>${htmlSeguro(r.ubicacionesTxt)}</td>
+          <td>${htmlSeguro(r.estadosTxt)}</td>
+          <td>${htmlSeguro(r.fuentesTxt || "SIN DATA")}</td>
+          <td><strong>${htmlSeguro(r.pedidoNoAsignado > 0 || r.lpnBultos > 0 ? "SEPARAR SI O SI" : r.detalle.length ? "VALIDAR" : "NO ENCONTRADO")}</strong></td>
+          <td><button class="compact" onclick="abrirDetalleBusquedaShipTo(${argumentoSeguro(r.codigo)})">Ver</button></td>
+        </tr>
+      `), "Sin productos para mostrar.")}
+    </section>
+    <section class="card subcard">
+      <div class="section-head">
+        <div><h2>Tabla especifica</h2><p class="muted-note">Detalle por cada data: PEDIDO, INV_ACTIVO y LPNS.</p></div>
+        <div class="filters">
+          <input class="search" id="filtroShipToDetalle" placeholder="Filtrar detalle..." oninput="filtrarTabla('tablaShipToDetalle', this.value)">
+          <button onclick="exportarTablaVisible('tablaShipToDetalle', 'busqueda_ship_to_especifica')">Excel especifica</button>
+        </div>
+      </div>
+      ${tablaShipToDetalle("tablaShipToDetalle", datos.detalle)}
+    </section>
+    <section class="card subcard">
+      <div class="section-head"><h2>No encontrados</h2></div>
+      ${tablaConId("tablaShipToNoEncontrados", ["Codigo", "Codigo alt", "Descripcion", "Observacion"], datos.noEncontrados.map(r => `
+        <tr class="bad"><td><strong>${htmlSeguro(r.codigo)}</strong></td><td>${htmlSeguro(r.codigoAlt)}</td><td>${htmlSeguro(r.descripcion)}</td><td>No aparece en PEDIDO, INV_ACTIVO ni LPNS</td></tr>
+      `), "Todos los codigos tienen cruce.")}
+    </section>
+  `;
+}
+
+function tablaShipToDetalle(id, rows) {
+  return tablaConId(id, ["Data", "Codigo", "Cod alterno", "Descripcion", "Unidades", "Bultos", "Bultos asignable", "Bultos no asignado", "Ubicacion", "LPN", "Estado LPN", "Observacion"], rows.map(r => `
+    <tr class="${r.bultosNoAsignado > 0 ? "bad" : r.origen === "LPNS" ? "warn" : ""}">
+      <td><strong>${htmlSeguro(r.origen)}</strong></td>
+      <td>${htmlSeguro(r.codigo)}</td>
+      <td>${htmlSeguro(r.codigoAlt)}</td>
+      <td>${htmlSeguro(r.descripcion)}</td>
+      <td class="number">${fmt(r.unidades)}</td>
+      <td class="number">${fmt(r.bultos)}</td>
+      <td class="number">${fmt(r.bultosAsignable)}</td>
+      <td class="number"><strong>${fmt(r.bultosNoAsignado)}</strong></td>
+      <td>${htmlSeguro(r.ubicacion)}</td>
+      <td>${htmlSeguro(r.lpn)}</td>
+      <td>${htmlSeguro(r.estadoLpn)}</td>
+      <td>${htmlSeguro(r.observacion)}</td>
+    </tr>
+  `), "Sin detalle para mostrar.");
+}
+
+function abrirDetalleBusquedaShipTo(codigo) {
+  const row = detalleBusquedaShipTo.get(String(codigo));
+  const destino = document.getElementById("modalBusquedaShipTo");
+  if (!destino) return;
+  if (!row) {
+    destino.innerHTML = `<div class="modal-card"><button class="ghost" onclick="cerrarDetalleBusquedaShipTo()">Cerrar</button><p>Sin detalle.</p></div>`;
+  } else {
+    destino.innerHTML = `
+      <div class="modal-card wide">
+        <div class="section-head">
+          <div>
+            <h2>${htmlSeguro(row.codigo)} | ${htmlSeguro(row.descripcion)}</h2>
+            <p class="muted-note">${fmt(row.pedidoNoAsignado)} bultos no asignados | ${fmt(row.lpnBultos)} bultos LPN | ${fmt(row.inventarioBultos)} bultos inventario</p>
+          </div>
+          <div class="filters">
+            <button onclick="exportarTablaVisible('tablaDetalleBusquedaShipTo', 'detalle_ship_to_${normalizar(row.codigo)}')">Excel detalle</button>
+            <button class="ghost" onclick="cerrarDetalleBusquedaShipTo()">Cerrar</button>
+          </div>
+        </div>
+        ${tablaShipToDetalle("tablaDetalleBusquedaShipTo", row.detalle)}
+      </div>
+    `;
+  }
+  destino.hidden = false;
+}
+
+function cerrarDetalleBusquedaShipTo() {
+  const destino = document.getElementById("modalBusquedaShipTo");
+  if (!destino) return;
+  destino.hidden = true;
+  destino.innerHTML = "";
+}
+
+function filasExcelShipToResumen(rows) {
+  return [
+    ["CODIGO", "COD ALTERNO", "DESCRIPCION", "BULTOS ASIGNABLE", "BULTOS NO ASIGNADO", "BULTOS INVENTARIO", "BULTOS LPN", "UBICACIONES", "ESTADO LPN", "FUENTES", "ACCION"],
+    ...rows.map(r => [
+      r.codigo,
+      r.codigoAlt,
+      r.descripcion,
+      r.pedidoAsignable,
+      r.pedidoNoAsignado,
+      r.inventarioBultos,
+      r.lpnBultos,
+      r.ubicacionesTxt,
+      r.estadosTxt,
+      r.fuentesTxt || "SIN DATA",
+      r.pedidoNoAsignado > 0 || r.lpnBultos > 0 ? "SEPARAR SI O SI" : r.detalle.length ? "VALIDAR" : "NO ENCONTRADO"
+    ])
+  ];
+}
+
+function filasExcelShipToDetalle(rows) {
+  return [
+    ["DATA", "CODIGO", "COD ALTERNO", "DESCRIPCION", "UNIDADES", "BULTOS", "BULTOS ASIGNABLE", "BULTOS NO ASIGNADO", "UBICACION", "LPN", "ESTADO LPN", "OBSERVACION"],
+    ...rows.map(r => [r.origen, r.codigo, r.codigoAlt, r.descripcion, r.unidades, r.bultos, r.bultosAsignable, r.bultosNoAsignado, r.ubicacion, r.lpn, r.estadoLpn, r.observacion])
+  ];
+}
+
+function exportarBusquedaShipTo() {
+  const datos = datosBusquedaShipTo();
+  descargarExcelHojas("busqueda_ship_to", [
+    { nombre: "General", filas: filasExcelShipToResumen(datos.resumen) },
+    { nombre: "Especifica", filas: filasExcelShipToDetalle(datos.detalle) },
+    { nombre: "No encontrados", filas: [["CODIGO", "COD ALTERNO", "DESCRIPCION"], ...datos.noEncontrados.map(r => [r.codigo, r.codigoAlt, r.descripcion])] }
+  ]);
 }
 
 function barra(label, value, total) {

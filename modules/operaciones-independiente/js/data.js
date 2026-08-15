@@ -11,6 +11,7 @@ let dataUbicaciones = [];
 let dataBloqueo = [];
 let dataAsignacionTareas = [];
 let dataRecepcionProveedores = [];
+let dataRecepcionProveedoresResumen = [];
 let dataRecepcionPaleteros = [];
 let dataRecepcionPaleterosAsn = [];
 let dataRecepcionPaleterosCodigo = [];
@@ -317,13 +318,15 @@ function validarDatosBase() {
   validarColumnas("PRODUCTOS", dataProductos, ["CODIGO", ["CODIGO_ALT", "COD_ALT", "CODIGO ALTERNATIVO", "Cod Alternat"]]);
   validarColumnas("PEDIDO", dataPedido, ["PRODUCTO"]);
   validarColumnas("INV_ACTIVO", dataInventario, ["PRODUCTO", "UBICACION", "UNACT"]);
+  validarColumnas("PROVEEDORES DETALLE_OC", dataRecepcionProveedores, ["Orden Compra", "Estado", "Producto", "Codigo Alternativo", ["Descrip Artic", "Descrip ArtÃ­c"], "BULTOS"]);
+  validarColumnas("PROVEEDORES RESUMEN", dataRecepcionProveedoresResumen, ["Nro OC", "Nombre Proveedor", "Tipo OC", "Un Env"]);
 }
 
 async function cargarDatos() {
   datosListos = false;
   estado("Cargando hojas base...");
 
-  const [lpns, productos, pedido, inventario, ubicaciones, bloqueo, asignacionTareas, recepcionProveedores, recepcionPaleteros, recepcionPaleterosAsn, recepcionPaleterosCodigo] = await Promise.all([
+  const [lpns, productos, pedido, inventario, ubicaciones, bloqueo, asignacionTareas, recepcionProveedores, recepcionProveedoresResumen, recepcionPaleteros, recepcionPaleterosAsn, recepcionPaleterosCodigo] = await Promise.all([
     cargarHoja("LPNS"),
     cargarHoja("PRODUCTOS"),
     cargarHoja("PEDIDO"),
@@ -331,7 +334,8 @@ async function cargarDatos() {
     cargarOpcional("UBICACION"),
     cargarOpcional("BLOQUEO"),
     cargarOpcionalDesde(TAREAS_ASIGNACION_SHEET_ID, "ASIGNACION"),
-    cargarOpcionalPrincipalDesde(RECEPCION_PROVEEDORES_SHEET_ID, "recepcion proveedores"),
+    cargarOpcionalDesde(RECEPCION_PROVEEDORES_SHEET_ID, "DETALLE_OC"),
+    cargarOpcionalDesde(RECEPCION_PROVEEDORES_SHEET_ID, "RESUMEN"),
     cargarOpcionalPrincipalDesde(RECEPCION_PALETEROS_SHEET_ID, "recepcion paleteros"),
     cargarOpcionalDesde(RECEPCION_PALETEROS_SHEET_ID, "ASN"),
     cargarOpcionalDesde(RECEPCION_PALETEROS_SHEET_ID, "CODIGO")
@@ -345,13 +349,14 @@ async function cargarDatos() {
   dataBloqueo = bloqueo;
   dataAsignacionTareas = asignacionTareas;
   dataRecepcionProveedores = recepcionProveedores;
+  dataRecepcionProveedoresResumen = recepcionProveedoresResumen;
   dataRecepcionPaleteros = recepcionPaleteros;
   dataRecepcionPaleterosAsn = recepcionPaleterosAsn;
   dataRecepcionPaleterosCodigo = recepcionPaleterosCodigo;
   validarDatosBase();
   datosListos = true;
 
-  estado(`LPNS ${lpns.length} | Productos ${productos.length} | Pedido ${pedido.length} | INV ${inventario.length} | Recepcion ${recepcionProveedores.length + recepcionPaleteros.length}${advertenciasCarga.length ? " | Revisar columnas" : ""}`);
+  estado(`LPNS ${lpns.length} | Productos ${productos.length} | Pedido ${pedido.length} | INV ${inventario.length} | Recepcion ${recepcionProveedores.length + recepcionProveedoresResumen.length + recepcionPaleteros.length}${advertenciasCarga.length ? " | Revisar columnas" : ""}`);
 }
 
 async function iniciarAplicacion() {
