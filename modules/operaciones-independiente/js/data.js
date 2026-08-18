@@ -353,6 +353,7 @@ async function cargarDatos() {
   dataRecepcionPaleteros = recepcionPaleteros;
   dataRecepcionPaleterosAsn = recepcionPaleterosAsn;
   dataRecepcionPaleterosCodigo = recepcionPaleterosCodigo;
+  if (typeof invalidarCacheOperaciones === "function") invalidarCacheOperaciones();
   validarDatosBase();
   datosListos = true;
 

@@ -11,6 +11,14 @@ let detalleUnificacionProductoPiso = new Map();
 let detalleDestinoPiso = new Map();
 let cachePlanMultiPiso = { key: "", data: null };
 let cacheUbicacionesActivas = { key: "", data: null };
+let cacheLpnsOperativos = { key: "", data: [] };
+let cacheCapacidadCd = { key: "", data: null };
+let cachePrediccionPts = { key: "", data: null };
+let cacheContextoRecepcion = { key: "", data: null };
+let cacheAsnPaleteroRecepcion = { key: "", data: null };
+let cacheRecepcionUca = { key: "", data: null };
+let cacheMapaLpnsRecepcionUbicados = { key: "", data: null };
+let cacheDetalleRecepcionUbicados = { key: "", data: null };
 let prediccionPtsVista = { total: { ubicaciones: 0, bultos: 0, tareas: new Set(), lpns: new Set() }, resumen: [], ubicaciones: [] };
 let pasilloPrediccionPtsActivo = "";
 let recepcionUcaVista = { resumen: [], proveedores: [], proveedoresAsn: [], paleteros: [], paleterosAsn: [], total: {}, detalleAsnPasillo: [] };
@@ -24,9 +32,25 @@ let filtrosPlanMultiPiso = { lpn: "", producto: "" };
 let timerUbicacionesActivas = null;
 let filtrosUbicacionesActivas = { pasillo: "", zona: "", tipo: "", busqueda: "" };
 let filtrosRecepcionProyeccion = { asn: "", placa: "", proveedor: "" };
+let filtrosRecepcionUbicados = { asns: [], placas: [] };
 let recepcionSubmoduloActivo = "proveedores";
 let filtroRecepcionProveedorNombre = "";
 let filtrosShipToY = { asn: "", placa: "" };
+
+function invalidarCacheOperaciones() {
+  cacheLpnsOperativos = { key: "", data: [] };
+  cacheCapacidadCd = { key: "", data: null };
+  cachePrediccionPts = { key: "", data: null };
+  cacheContextoRecepcion = { key: "", data: null };
+  cacheAsnPaleteroRecepcion = { key: "", data: null };
+  cacheRecepcionUca = { key: "", data: null };
+  cacheMapaLpnsRecepcionUbicados = { key: "", data: null };
+  cacheDetalleRecepcionUbicados = { key: "", data: null };
+  cacheLpnsUbicacion = { key: "", control: [], activo: new Map(), reserva: new Map() };
+  cacheProductosPorCodigo = { key: "", mapa: new Map() };
+  cachePlanMultiPiso = { key: "", data: null };
+  cacheUbicacionesActivas = { key: "", data: null };
+}
 
 function limpiar(valor) {
   if (valor === null || valor === undefined) return "";
@@ -56,6 +80,17 @@ function argumentoSeguro(valor) {
 
 function normalizar(valor) {
   return limpiar(valor).replace(/'/g, "").replace(/\.0$/, "").replace(/\s/g, "").toUpperCase();
+}
+
+function firmaFilas(rows, campos = []) {
+  const lista = Array.isArray(rows) ? rows : [];
+  const indices = [0, Math.floor(lista.length / 2), lista.length - 1].filter((idx, pos, arr) => idx >= 0 && arr.indexOf(idx) === pos);
+  const muestra = indices.map(idx => {
+    const row = lista[idx] || {};
+    const keys = campos.length ? campos : Object.keys(row).slice(0, 6);
+    return keys.map(key => `${key}:${limpiar(row[key])}`).join(",");
+  }).join("|");
+  return `${lista.length}:${muestra}`;
 }
 
 function palabrasClave(texto) {
@@ -503,10 +538,17 @@ function construirCapacidadPorTipo(tipo, ocupadasMap) {
 }
 
 function calcularCapacidadCd() {
-  return {
+  const key = [
+    firmaFilas(dataLPN, ["LPN", "ESTADO", "UBICACION", "CODIGO", "BULTOS"]),
+    firmaFilas(dataInventario, ["PRODUCTO", "UBICACION", "UNACT", "UXB"]),
+    firmaFilas(dataUbicaciones, ["MASCARA", "UBICACION", "TIPO"])
+  ].join("::");
+  if (cacheCapacidadCd.key === key && cacheCapacidadCd.data) return cacheCapacidadCd.data;
+  cacheCapacidadCd = { key, data: {
     reserva: construirCapacidadPorTipo("RESERVA", detalleOcupacionReservaCapacidad()),
     activo: construirCapacidadPorTipo("ACTIVO", detalleOcupacionActivoCapacidad())
-  };
+  } };
+  return cacheCapacidadCd.data;
 }
 
 function pertenecePtsAsignacion(row) {
@@ -551,6 +593,8 @@ function ubicacionPtsAsignacion(row) {
 }
 
 function prediccionLiberacionPts() {
+  const key = firmaFilas(dataAsignacionTareas, ["NRO_TAREA", "LPN", "LPN_ENTRADA", "UBICACION", "ESTADO", "BULTOS"]);
+  if (cachePrediccionPts.key === key && cachePrediccionPts.data) return cachePrediccionPts.data;
   const mapa = new Map();
   (dataAsignacionTareas || []).forEach(row => {
     if (!pertenecePtsAsignacion(row) || estadoPtsAsignacion(row) !== "Listo") return;
@@ -606,7 +650,8 @@ function prediccionLiberacionPts() {
     return acc;
   }, { ubicaciones: 0, bultos: 0, tareas: new Set(), lpns: new Set() });
 
-  return { total, resumen, ubicaciones };
+  cachePrediccionPts = { key, data: { total, resumen, ubicaciones } };
+  return cachePrediccionPts.data;
 }
 
 function verCapacidadCd() {
@@ -720,6 +765,25 @@ function verRecepcionPaleteros() {
   `;
 }
 
+function verRecepcionUbicadosLpns() {
+  recepcionSubmoduloActivo = "ubicados";
+  const capacidad = calcularCapacidadCd();
+  const prediccionPts = prediccionLiberacionPts();
+  const recepcion = calcularRecepcionUca(capacidad, prediccionPts);
+  recepcionUcaVista = recepcion;
+  document.getElementById("modulo").innerHTML = `
+    <div class="section-head">
+      <div>
+        <h2>Recepcion - Ubicados LPN</h2>
+        <p class="muted-note">Validacion de monopalets de paleteros contra LPNs ubicados en reserva MASS y estado UBICADO.</p>
+      </div>
+      <button type="button" onclick="exportarRecepcionUbicadosLpns()">Excel ubicados</button>
+    </div>
+    ${navRecepcionInterna("ubicados")}
+    <div id="recepcionUbicadosContenido">${bloqueRecepcionUbicadosLpns(recepcion)}</div>
+  `;
+}
+
 function verRecepcionProyeccionEspacio() {
   if (recepcionSubmoduloActivo !== "proyeccion") filtrosRecepcionProyeccion = { asn: "", placa: "", proveedor: "" };
   recepcionSubmoduloActivo = "proyeccion";
@@ -746,6 +810,7 @@ function navRecepcionInterna(activo = "proveedores") {
       <button type="button" class="${activo === "proveedores" ? "active" : ""}" onclick="verRecepcionProveedores()">Proveedores</button>
       <button type="button" class="${activo === "paleteros" ? "active" : ""}" onclick="verRecepcionPaleteros()">Paleteros</button>
       <button type="button" class="${activo === "shipto" ? "active" : ""}" onclick="verRecepcionShipToY()">SHIP TO</button>
+      <button type="button" class="${activo === "ubicados" ? "active" : ""}" onclick="verRecepcionUbicadosLpns()">Ubicados</button>
       <button type="button" class="${activo === "proyeccion" ? "active" : ""}" onclick="verRecepcionProyeccionEspacio()">Proyeccion</button>
     </div>
   `;
@@ -1058,6 +1123,8 @@ function valorPorCanonParcial(row, patrones) {
 }
 
 function mapaAsnPaleteroRecepcionSeguro() {
+  const key = firmaFilas(dataRecepcionPaleterosAsn, ["Nro ASN", "NRO ASN", "ASN", "Nro Camion", "NRO CAMION"]);
+  if (cacheAsnPaleteroRecepcion.key === key && cacheAsnPaleteroRecepcion.data) return cacheAsnPaleteroRecepcion.data;
   const mapa = new Map();
   (dataRecepcionPaleterosAsn || []).forEach(row => {
     const asn = limpiar(campoRecepcion(row, ["Nro ASN", "NRO ASN", "ASN Entrada", "ASN", "ASN_ENTRADA"]) || valorPorCanonParcial(row, ["Nro ASN", "ASN"]));
@@ -1068,6 +1135,7 @@ function mapaAsnPaleteroRecepcionSeguro() {
       fechaCreacion: limpiar(campoRecepcion(row, ["Fe y Hr Creac", "FE Y HR CREAC", "Fecha Creacion"]) || valorPorCanonParcial(row, ["Fe Hr Creac", "Fecha Creacion"]))
     });
   });
+  cacheAsnPaleteroRecepcion = { key, data: mapa };
   return mapa;
 }
 
@@ -1349,6 +1417,11 @@ function ganadorMapa(mapa) {
 }
 
 function construirContextoRecepcionUca() {
+  const key = [
+    firmaFilas(dataProductos, ["CODIGO", "CODIGO_ALT", "JERARQUIA 2"]),
+    firmaFilas(dataLPN, ["LPN", "ESTADO", "UBICACION", "CODIGO", "CODIGO_ALT", "BULTOS"])
+  ].join("::");
+  if (cacheContextoRecepcion.key === key && cacheContextoRecepcion.data) return cacheContextoRecepcion.data;
   const productos = productoContextoRecepcion();
   const porProductoPasillo = new Map();
   const porJerarquiaPasillo = new Map();
@@ -1393,7 +1466,8 @@ function construirContextoRecepcionUca() {
     if (mejor > 0) maxPalletPorProducto.set(keyProducto, mejor);
   });
 
-  return { productos, porProductoPasillo, porJerarquiaPasillo, maxPalletPorProducto };
+  cacheContextoRecepcion = { key, data: { productos, porProductoPasillo, porJerarquiaPasillo, maxPalletPorProducto } };
+  return cacheContextoRecepcion.data;
 }
 
 function resolverPasilloRecepcion(ctx, codigo, alternativo, row = {}) {
@@ -1544,6 +1618,7 @@ function guardarValidacionPalletProveedor() {
   const validaciones = validacionesPalletProveedor();
   validaciones[codigo] = { maxPallet, observacion, actualizado: new Date().toISOString() };
   localStorage.setItem("operaciones_validacion_pallet_proveedor", JSON.stringify(validaciones));
+  invalidarCacheOperaciones();
   verRecepcionProyectada();
 }
 
@@ -1865,6 +1940,19 @@ function detalleRecepcionPorAsnPasillo(proveedores, paleterosAlmacenables, resum
 }
 
 function calcularRecepcionUca(capacidad, prediccionPts) {
+  const key = [
+    firmaFilas(dataRecepcionProveedores, ["Orden Compra", "Estado", "Producto", "Codigo Alternativo", "BULTOS"]),
+    firmaFilas(dataRecepcionProveedoresResumen, ["Nro OC", "Nombre Proveedor", "Tipo OC", "Un Env"]),
+    firmaFilas(dataRecepcionPaleteros, ["ASN Entrada", "Nro Pallet", "Nro LPN", "Producto", "BULTOS"]),
+    firmaFilas(dataRecepcionPaleterosAsn, ["Nro ASN", "NRO ASN", "ASN", "Nro Camion", "NRO CAMION"]),
+    firmaFilas(dataProductos, ["CODIGO", "CODIGO_ALT", "JERARQUIA 2"]),
+    firmaFilas(dataLPN, ["LPN", "ESTADO", "UBICACION", "CODIGO", "CODIGO_ALT", "BULTOS"]),
+    firmaFilas(dataInventario, ["PRODUCTO", "UBICACION", "UNACT", "UXB"]),
+    firmaFilas(dataUbicaciones, ["MASCARA", "UBICACION", "TIPO"]),
+    firmaFilas(dataAsignacionTareas, ["NRO_TAREA", "LPN", "UBICACION", "ESTADO", "BULTOS"]),
+    localStorage.getItem("operaciones_validacion_pallet_proveedor") || ""
+  ].join("::");
+  if (cacheRecepcionUca.key === key && cacheRecepcionUca.data) return cacheRecepcionUca.data;
   const ctx = construirContextoRecepcionUca();
   const proveedores = gruposProveedorRecepcion(ctx).map(g => completarGrupoRecepcion(ctx, g));
   const proveedoresAsn = resumenAsnProveedores(proveedores);
@@ -1915,7 +2003,8 @@ function calcularRecepcionUca(capacidad, prediccionPts) {
   const detalleAsnPasillo = detalleRecepcionPorAsnPasillo(proveedores, paleterosMono, resumen);
   const validacionPaletero = validacionPaleteroAsnCodigo();
 
-  return { total, resumen, proveedores, proveedoresAsn, proveedoresResumen, paleteros, paleterosMono, paleterosMulti, paleterosAsn, detalleAsnPasillo, validacionPaletero };
+  cacheRecepcionUca = { key, data: { total, resumen, proveedores, proveedoresAsn, proveedoresResumen, paleteros, paleterosMono, paleterosMulti, paleterosAsn, detalleAsnPasillo, validacionPaletero } };
+  return cacheRecepcionUca.data;
 }
 
 function claseEstadoRecepcion(estado) {
@@ -3250,6 +3339,339 @@ function bloqueRecepcionPaleteros(data) {
   `;
 }
 
+function mapaLpnsRecepcionUbicados() {
+  const key = firmaFilas(dataLPN, ["LPN", "ESTADO", "UBICACION", "CODIGO", "CODIGO_ALT", "BULTOS"]);
+  if (cacheMapaLpnsRecepcionUbicados.key === key && cacheMapaLpnsRecepcionUbicados.data) return cacheMapaLpnsRecepcionUbicados.data;
+  const mapa = new Map();
+  (dataLPN || []).forEach(row => {
+    const lpn = normalizar(campo(row, ["LPN", "NRO LPN", "Nro LPN"]));
+    if (!lpn) return;
+    if (!mapa.has(lpn)) {
+      mapa.set(lpn, {
+        lpn,
+        ubicacion: limpiar(campo(row, ["UBICACION", "Ubicacion"])),
+        estado: limpiar(campo(row, ["ESTADO", "Estado"])),
+        bultos: 0,
+        unidades: 0,
+        codigos: new Set(),
+        descripciones: new Set(),
+        rows: []
+      });
+    }
+    const item = mapa.get(lpn);
+    if (!item.ubicacion && limpiar(campo(row, ["UBICACION", "Ubicacion"]))) item.ubicacion = limpiar(campo(row, ["UBICACION", "Ubicacion"]));
+    if (!item.estado && limpiar(campo(row, ["ESTADO", "Estado"]))) item.estado = limpiar(campo(row, ["ESTADO", "Estado"]));
+    item.bultos += num(campo(row, ["BULTOS", "Bultos", "CS"]));
+    item.unidades += num(campo(row, ["UNIDADES", "Unidades", "UNACT"]));
+    const codigo = normalizar(campo(row, ["CODIGO", "PRODUCTO"]));
+    const descripcion = limpiar(campo(row, ["DESCRIPCION", "Descripcion"]));
+    if (codigo) item.codigos.add(codigo);
+    if (descripcion) item.descripciones.add(descripcion);
+    item.rows.push(row);
+  });
+  cacheMapaLpnsRecepcionUbicados = { key, data: mapa };
+  return mapa;
+}
+
+function lpnsDePalletPaletero(row) {
+  const lpns = String(row.lpnsTxt || "")
+    .split("|")
+    .map(limpiar)
+    .filter(Boolean);
+  if (lpns.length) return Array.from(new Set(lpns));
+  return row.lpn ? [row.lpn] : [];
+}
+
+function estadoUbicacionLpnRecepcion(info) {
+  if (!info) return { estado: "NO EN DATA LPN", clase: "bad" };
+  const ubicacion = limpiar(info.ubicacion);
+  const estado = normalizar(info.estado);
+  const esMass = ubicacion.toUpperCase().startsWith("MASS");
+  if (esMass && estado === "UBICADO") return { estado: "UBICADO RESERVA", clase: "ok" };
+  if (!ubicacion) return { estado: "SIN UBICACION SISTEMA", clase: "warn" };
+  if (!esMass) return { estado: "OTRA UBICACION", clase: "bad" };
+  return { estado: "MASS SIN ESTADO UBICADO", clase: "warn" };
+}
+
+function detalleRecepcionUbicadosLpns(data) {
+  const key = [
+    cacheRecepcionUca.key || firmaFilas(data?.paleterosMono || [], ["asn", "camion", "nroPallet", "lpnsTxt", "lpn", "bultos"]),
+    firmaFilas(dataLPN, ["LPN", "ESTADO", "UBICACION", "CODIGO", "CODIGO_ALT", "BULTOS"])
+  ].join("::");
+  if (cacheDetalleRecepcionUbicados.key === key && cacheDetalleRecepcionUbicados.data) return cacheDetalleRecepcionUbicados.data;
+  const mapaLpn = mapaLpnsRecepcionUbicados();
+  const rows = [];
+  (data.paleterosMono || []).forEach(pallet => {
+    const lpns = lpnsDePalletPaletero(pallet);
+    const bultosPorLpn = num(pallet.bultos) / Math.max(1, lpns.length);
+    lpns.forEach(lpn => {
+      const info = mapaLpn.get(normalizar(lpn));
+      const validacion = estadoUbicacionLpnRecepcion(info);
+      rows.push({
+        asn: pallet.asn || "SIN ASN",
+        placa: pallet.camion || "SIN PLACA",
+        pallet: pallet.nroPallet || pallet.lpn || "",
+        lpn,
+        codigo: pallet.productosTxt || "",
+        descripcion: pallet.descripcion || "",
+        bultos: info?.bultos || bultosPorLpn,
+        ubicacion: info?.ubicacion || "",
+        estadoLpn: info?.estado || "",
+        resultado: validacion.estado,
+        clase: validacion.clase
+      });
+    });
+  });
+  cacheDetalleRecepcionUbicados = { key, data: rows.sort((a, b) =>
+    String(a.placa).localeCompare(String(b.placa), "es", { numeric: true }) ||
+    String(a.asn).localeCompare(String(b.asn), "es", { numeric: true }) ||
+    String(a.lpn).localeCompare(String(b.lpn), "es", { numeric: true })
+  ) };
+  return cacheDetalleRecepcionUbicados.data;
+}
+
+function aplicarFiltrosRecepcionUbicados(rows) {
+  const asns = new Set((filtrosRecepcionUbicados.asns || []).map(normalizar));
+  const placas = new Set((filtrosRecepcionUbicados.placas || []).map(normalizar));
+  return (rows || []).filter(row => {
+    if (asns.size && !asns.has(normalizar(row.asn))) return false;
+    if (placas.size && !placas.has(normalizar(row.placa))) return false;
+    return true;
+  });
+}
+
+function resumenRecepcionUbicadosLpns(rows) {
+  const mapa = new Map();
+  (rows || []).forEach(row => {
+    const key = `${row.placa}|${row.asn}`;
+    if (!mapa.has(key)) {
+      mapa.set(key, { placa: row.placa, asn: row.asn, total: 0, ubicados: 0, sinUbicacion: 0, otras: 0, estadoPendiente: 0, noData: 0, ubicaciones: new Set() });
+    }
+    const item = mapa.get(key);
+    item.total += 1;
+    if (row.resultado === "UBICADO RESERVA") item.ubicados += 1;
+    else if (row.resultado === "SIN UBICACION SISTEMA") item.sinUbicacion += 1;
+    else if (row.resultado === "OTRA UBICACION") item.otras += 1;
+    else if (row.resultado === "NO EN DATA LPN") item.noData += 1;
+    else item.estadoPendiente += 1;
+    if (row.ubicacion) item.ubicaciones.add(row.ubicacion);
+  });
+  return Array.from(mapa.values()).map(row => ({
+    ...row,
+    pct: pct(row.ubicados, row.total),
+    faltan: row.total - row.ubicados,
+    estado: row.total && row.ubicados === row.total ? "100% UBICADO" : "FALTAN LPNs",
+    ubicacionesTxt: Array.from(row.ubicaciones).slice(0, 8).join(" | ")
+  })).sort((a, b) => a.estado.localeCompare(b.estado) || b.faltan - a.faltan || String(a.placa).localeCompare(String(b.placa), "es", { numeric: true }));
+}
+
+function actualizarFiltroRecepcionUbicados(tipo, valor, activo) {
+  const actual = new Set(filtrosRecepcionUbicados[tipo] || []);
+  if (activo) actual.add(valor);
+  else actual.delete(valor);
+  filtrosRecepcionUbicados[tipo] = Array.from(actual);
+  refrescarRecepcionUbicadosContenido();
+}
+
+function limpiarFiltrosRecepcionUbicados() {
+  filtrosRecepcionUbicados = { asns: [], placas: [] };
+  refrescarRecepcionUbicadosContenido();
+}
+
+function refrescarRecepcionUbicadosContenido() {
+  const destino = document.getElementById("recepcionUbicadosContenido");
+  if (!destino) return verRecepcionUbicadosLpns();
+  destino.innerHTML = bloqueRecepcionUbicadosLpns(recepcionUcaVista);
+}
+
+function filtrosRecepcionUbicadosHtml(rows) {
+  const asns = Array.from(new Set(rows.map(row => row.asn).filter(Boolean))).sort((a, b) => a.localeCompare(b, "es", { numeric: true }));
+  const placas = Array.from(new Set(rows.map(row => row.placa).filter(Boolean))).sort((a, b) => a.localeCompare(b, "es", { numeric: true }));
+  const checked = (tipo, valor) => (filtrosRecepcionUbicados[tipo] || []).includes(valor) ? "checked" : "";
+  const resumenFiltro = (tipo, total) => {
+    const cantidad = (filtrosRecepcionUbicados[tipo] || []).length;
+    return cantidad ? `${cantidad} seleccionados` : `Todos (${fmt(total)})`;
+  };
+  const opciones = (tipo, lista) => lista.map(valor => {
+    const total = rows.filter(row => normalizar(row[tipo === "placas" ? "placa" : "asn"]) === normalizar(valor)).length;
+    return `
+      <label class="check-pill">
+        <input type="checkbox" ${checked(tipo, valor)} onchange="actualizarFiltroRecepcionUbicados('${tipo}', ${argumentoSeguro(valor)}, this.checked)">
+        <span>${htmlSeguro(valor)}</span>
+        <strong>${fmt(total)}</strong>
+      </label>
+    `;
+  }).join("");
+  return `
+    <div class="filters ubicados-filters">
+      <details class="check-filter-box dropdown-filter">
+        <summary>
+          <span>Placas</span>
+          <strong>${htmlSeguro(resumenFiltro("placas", placas.length))}</strong>
+        </summary>
+        <div class="check-filter-list">${opciones("placas", placas) || `<span class="muted-note">Sin placas</span>`}</div>
+      </details>
+      <details class="check-filter-box dropdown-filter">
+        <summary>
+          <span>ASN</span>
+          <strong>${htmlSeguro(resumenFiltro("asns", asns.length))}</strong>
+        </summary>
+        <div class="check-filter-list">${opciones("asns", asns) || `<span class="muted-note">Sin ASN</span>`}</div>
+      </details>
+      <button type="button" onclick="limpiarFiltrosRecepcionUbicados()">Limpiar filtros</button>
+    </div>
+  `;
+}
+
+function graficoRecepcionUbicadosLpns(resumen, total, ubicados, sinUbicacion, otras, pendientesEstado) {
+  const porcentaje = pct(ubicados, total);
+  const top = resumen.slice().sort((a, b) => b.faltan - a.faltan || a.pct - b.pct).slice(0, 5);
+  return `
+    <section class="ubicados-report-grid">
+      <div class="ubicados-donut-card">
+        <div class="section-head compact-head">
+          <h3>Estado de ubicacion</h3>
+          <span class="muted-note">${fmt(total)} LPNs mono</span>
+        </div>
+        <div class="ubicados-donut-row">
+          <div class="ubicados-donut" style="--pct:${porcentaje};">
+            <strong>${porcentaje.toFixed(1)}%</strong>
+            <span>Reserva</span>
+          </div>
+          <div class="ubicados-legend">
+            <div><span class="dot ok"></span>Ubicados MASS <strong>${fmt(ubicados)}</strong></div>
+            <div><span class="dot warn"></span>Sin ubicacion <strong>${fmt(sinUbicacion)}</strong></div>
+            <div><span class="dot bad"></span>Otras ubicaciones <strong>${fmt(otras)}</strong></div>
+            <div><span class="dot neutral"></span>Pendiente estado/data <strong>${fmt(pendientesEstado)}</strong></div>
+          </div>
+        </div>
+      </div>
+      <div class="ubicados-ranking-card">
+        <div class="section-head compact-head">
+          <h3>Placas / ASN con faltantes</h3>
+          <span class="muted-note">Prioridad para reporte</span>
+        </div>
+        ${top.length ? top.map((row, idx) => `
+          <button type="button" class="ubicados-rank-row" onclick="abrirDetalleRecepcionUbicados(${argumentoSeguro(row.placa)}, ${argumentoSeguro(row.asn)})">
+            <span>${idx + 1}</span>
+            <div>
+              <strong>${htmlSeguro(row.placa)}</strong>
+              <small>${htmlSeguro(row.asn)} | ${fmt(row.ubicados)} de ${fmt(row.total)}</small>
+              <i><b style="width:${Math.min(100, row.pct)}%"></b></i>
+            </div>
+            <em>${fmt(row.faltan)}</em>
+          </button>
+        `).join("") : `<p class="muted-note">No hay faltantes visibles.</p>`}
+      </div>
+    </section>
+  `;
+}
+
+function tarjetasResumenRecepcionUbicados(resumen) {
+  if (!resumen.length) return `<div class="empty-state">Sin monopalets para validar.</div>`;
+  return `
+    <section class="ubicados-group-grid">
+      ${resumen.map(row => `
+        <article class="ubicados-group-card ${row.estado === "100% UBICADO" ? "ok" : "warn"}">
+          <div>
+            <span>${htmlSeguro(row.placa)}</span>
+            <strong>${htmlSeguro(row.asn)}</strong>
+          </div>
+          <div class="ubicados-group-main">
+            <strong>${row.pct.toFixed(1)}%</strong>
+            <small>${fmt(row.ubicados)} de ${fmt(row.total)} ubicados</small>
+          </div>
+          <div class="ubicados-mini-stats">
+            <span>Faltan <b>${fmt(row.faltan)}</b></span>
+            <span>Sin ubic. <b>${fmt(row.sinUbicacion)}</b></span>
+            <span>Otras <b>${fmt(row.otras)}</b></span>
+          </div>
+          <div class="ubicados-progress"><b style="width:${Math.min(100, row.pct)}%"></b></div>
+          <button type="button" class="compact" onclick="abrirDetalleRecepcionUbicados(${argumentoSeguro(row.placa)}, ${argumentoSeguro(row.asn)})">Ver detalle</button>
+        </article>
+      `).join("")}
+    </section>
+  `;
+}
+
+function bloqueRecepcionUbicadosLpns(data) {
+  const detalle = detalleRecepcionUbicadosLpns(data);
+  const filtrado = aplicarFiltrosRecepcionUbicados(detalle);
+  const resumen = resumenRecepcionUbicadosLpns(filtrado);
+  const total = filtrado.length;
+  const ubicados = filtrado.filter(row => row.resultado === "UBICADO RESERVA").length;
+  const sinUbicacion = filtrado.filter(row => row.resultado === "SIN UBICACION SISTEMA").length;
+  const otras = filtrado.filter(row => row.resultado === "OTRA UBICACION").length;
+  const pendientesEstado = filtrado.filter(row => row.resultado === "MASS SIN ESTADO UBICADO" || row.resultado === "NO EN DATA LPN").length;
+  return `
+    <section class="recepcion-validation-card ubicados-view">
+      ${filtrosRecepcionUbicadosHtml(detalle)}
+      <section class="kpi-grid compact">
+        ${kpi("Monopalets/LPN", fmt(total), "solo paleteros mono")}
+        ${kpi("Ubicados reserva", fmt(ubicados), `${pct(ubicados, total).toFixed(1)}%`, "ok")}
+        ${kpi("Sin ubicacion", fmt(sinUbicacion), "en blanco / paletero", sinUbicacion ? "warn" : "")}
+        ${kpi("Otras ubicaciones", fmt(otras), "no MASS", otras ? "danger" : "")}
+        ${kpi("Estado pendiente", fmt(pendientesEstado), "no ubicado / sin data", pendientesEstado ? "warn" : "")}
+      </section>
+      ${graficoRecepcionUbicadosLpns(resumen, total, ubicados, sinUbicacion, otras, pendientesEstado)}
+      <div class="subhead">
+        <h3>Resumen compacto por ASN / placa</h3>
+        <span class="muted-note">${fmt(resumen.length)} grupos visibles</span>
+      </div>
+      ${tarjetasResumenRecepcionUbicados(resumen)}
+      <div id="modalRecepcionUbicadosLpns" class="modal-backdrop" hidden></div>
+    </section>
+  `;
+}
+
+function htmlDetalleRecepcionUbicados(placa, asn) {
+  const data = recepcionUcaVista?.paleterosMono ? recepcionUcaVista : calcularRecepcionUca(calcularCapacidadCd(), prediccionLiberacionPts());
+  const detalle = aplicarFiltrosRecepcionUbicados(detalleRecepcionUbicadosLpns(data))
+    .filter(row => normalizar(row.placa) === normalizar(placa) && normalizar(row.asn) === normalizar(asn));
+  const ubicados = detalle.filter(row => row.resultado === "UBICADO RESERVA").length;
+  const faltan = detalle.length - ubicados;
+  return `
+    <div class="section-head">
+      <div>
+        <h2>${htmlSeguro(placa)} | ${htmlSeguro(asn)}</h2>
+        <p class="muted-note">${fmt(ubicados)} ubicados en MASS / ${fmt(faltan)} por revisar</p>
+      </div>
+      <button class="ghost" onclick="cerrarDetalleRecepcionUbicados()">Cerrar</button>
+    </div>
+    <section class="kpi-grid compact">
+      ${kpi("LPN mono", fmt(detalle.length), "total")}
+      ${kpi("Ubicados reserva", fmt(ubicados), `${pct(ubicados, detalle.length).toFixed(1)}%`, "ok")}
+      ${kpi("Por revisar", fmt(faltan), "sin ubicacion / otra / estado", faltan ? "warn" : "")}
+    </section>
+    ${tablaConId("tablaRecepcionUbicadosDetalleModal", ["Pallet", "LPN", "Codigo", "Descripcion", "Bultos", "Ubicacion sistema", "Estado LPN", "Resultado"], detalle.map(row => `
+      <tr class="${row.clase}">
+        <td><strong>${htmlSeguro(row.pallet)}</strong></td>
+        <td><strong>${htmlSeguro(row.lpn)}</strong></td>
+        <td>${htmlSeguro(row.codigo)}</td>
+        <td>${htmlSeguro(row.descripcion || "-")}</td>
+        <td class="number">${fmt(row.bultos)}</td>
+        <td><strong>${htmlSeguro(row.ubicacion || "SIN UBICACION")}</strong></td>
+        <td>${htmlSeguro(row.estadoLpn || "-")}</td>
+        <td><strong>${htmlSeguro(row.resultado)}</strong></td>
+      </tr>
+    `), "Sin detalle de LPNs monopalets.")}
+  `;
+}
+
+function abrirDetalleRecepcionUbicados(placa, asn) {
+  const modal = document.getElementById("modalRecepcionUbicadosLpns");
+  if (!modal) return;
+  modal.innerHTML = `<div class="modal-card wide">${htmlDetalleRecepcionUbicados(placa, asn)}</div>`;
+  modal.hidden = false;
+}
+
+function cerrarDetalleRecepcionUbicados() {
+  const modal = document.getElementById("modalRecepcionUbicadosLpns");
+  if (!modal) return;
+  modal.hidden = true;
+  modal.innerHTML = "";
+}
+
 function bloqueRecepcionUca(data, mostrarBotonExcel = true, modo = "todos") {
   const dataCompleta = data.sinFiltro || data;
   const vista = recalcularRecepcionProyeccion(dataCompleta, modo);
@@ -3518,6 +3940,29 @@ function exportarRecepcionPaleterosMulti() {
   ]);
 }
 
+function exportarRecepcionUbicadosLpns() {
+  const data = recepcionUcaVista?.paleterosMono ? recepcionUcaVista : calcularRecepcionUca(calcularCapacidadCd(), prediccionLiberacionPts());
+  const detalle = aplicarFiltrosRecepcionUbicados(detalleRecepcionUbicadosLpns(data));
+  const resumen = resumenRecepcionUbicadosLpns(detalle);
+  if (!detalle.length) return alert("No hay LPNs monopalets para exportar");
+  descargarExcelHojas("recepcion_ubicados_lpn", [
+    {
+      nombre: "Resumen",
+      filas: [
+        ["PLACA", "ASN", "MONO LPN", "UBICADOS RESERVA", "FALTAN", "PORCENTAJE", "SIN UBICACION", "OTRAS UBICACIONES", "ESTADO PENDIENTE", "NO EN DATA LPN", "ESTADO", "UBICACIONES"],
+        ...resumen.map(row => [row.placa, row.asn, row.total, row.ubicados, row.faltan, `${row.pct.toFixed(1)}%`, row.sinUbicacion, row.otras, row.estadoPendiente, row.noData, row.estado, row.ubicacionesTxt || ""])
+      ]
+    },
+    {
+      nombre: "Detalle LPN",
+      filas: [
+        ["PLACA", "ASN", "PALLET", "LPN", "CODIGO", "DESCRIPCION", "BULTOS", "UBICACION SISTEMA", "ESTADO LPN", "RESULTADO"],
+        ...detalle.map(row => [row.placa, row.asn, row.pallet, row.lpn, row.codigo, row.descripcion, row.bultos, row.ubicacion || "SIN UBICACION", row.estadoLpn || "", row.resultado])
+      ]
+    }
+  ]);
+}
+
 function filasTablaCapacidadResumen(data) {
   return data.map(row => `
     <tr>
@@ -3728,7 +4173,10 @@ function prepararHtmlExcel(html) {
 }
 
 function lpnsOperativos() {
-  return dataLPN.filter(r => ["UBICADO", "RECIBIDO"].includes(normalizar(r.ESTADO)));
+  const key = firmaFilas(dataLPN, ["LPN", "ESTADO", "UBICACION", "CODIGO", "BULTOS"]);
+  if (cacheLpnsOperativos.key === key) return cacheLpnsOperativos.data;
+  cacheLpnsOperativos = { key, data: dataLPN.filter(r => ["UBICADO", "RECIBIDO"].includes(normalizar(r.ESTADO))) };
+  return cacheLpnsOperativos.data;
 }
 
 function resumenLpn() {
@@ -5463,6 +5911,7 @@ function guardarValidacionPresencial(codigo) {
   const validaciones = validacionesPresencialesReserva();
   validaciones[codigo] = { capacidad, observacion, actualizado: new Date().toISOString() };
   localStorage.setItem("operaciones_validacion_reserva", JSON.stringify(validaciones));
+  invalidarCacheOperaciones();
   cerrarDetalleOptimizacion();
   verOptimizarReserva();
 }

@@ -1060,26 +1060,39 @@ function resumenNoAsignadoPorFecha() {
 
 function resumenTrabajoValidacion() {
   const { filas } = obtenerValidacionAvance();
-  const codPlusDisponible = new Map();
-  agruparCodPlusPorProducto().forEach((value, codigo) => codPlusDisponible.set(codigo, numeroReal(value.bultos)));
-
+  const crear = origen => ({ origen, pedido: 0, trabajado: 0, pendiente: 0, sobrante: 0, productos: 0, completos: 0, pendientes: 0, sobrantes: 0 });
   const resumen = {
-    RESERVA: { origen: "Reserva", pedido: 0, trabajado: 0, pendiente: 0 },
-    OTRAS: { origen: "Otras ubicaciones", pedido: 0, trabajado: 0, pendiente: 0 },
-    SIN_STOCK: { origen: "Sin stock", pedido: 0, trabajado: 0, pendiente: 0 }
+    RESERVA: crear("Reserva"),
+    OTRAS: crear("Otras ubicaciones"),
+    SIN_STOCK: crear("Sin stock")
   };
 
   filas.forEach(row => {
     const destino = resumen[row.origen];
     if (!destino) return;
     const pedido = numeroReal(row.pedido);
-    const restantePlus = codPlusDisponible.get(row.codigo) || 0;
-    const trabajado = Math.min(pedido, restantePlus);
-    codPlusDisponible.set(row.codigo, Math.max(0, restantePlus - trabajado));
+    const plus = numeroReal(row.codPlus);
     destino.pedido += pedido;
-    destino.trabajado += trabajado;
-    destino.pendiente += Math.max(0, pedido - trabajado);
+    destino.trabajado += Math.min(pedido, plus);
+    destino.pendiente += Math.max(0, pedido - plus);
+    destino.sobrante += Math.max(0, plus - pedido);
+    destino.productos += 1;
+    if (row.estado === "Trabajado completo") destino.completos += 1;
+    else if (row.estado === "Se bajo de mas") destino.sobrantes += 1;
+    else destino.pendientes += 1;
   });
+
+  resumen.total = Object.values(resumen).reduce((acc, row) => {
+    acc.pedido += row.pedido;
+    acc.trabajado += row.trabajado;
+    acc.pendiente += row.pendiente;
+    acc.sobrante += row.sobrante;
+    acc.productos += row.productos;
+    acc.completos += row.completos;
+    acc.pendientes += row.pendientes;
+    acc.sobrantes += row.sobrantes;
+    return acc;
+  }, crear("Total"));
 
   return resumen;
 }
@@ -1129,7 +1142,7 @@ function renderDashboardNoAsignado() {
         <div class="kpi alert"><span>Total no asignado</span><strong>${formatoDecimal(totalNoAsignado)}</strong><small>bultos del pedido</small></div>
         <div class="kpi ok"><span>Reserva</span><strong>${formatoDecimal(r.reserva)}</strong><small>bultos encontrados</small></div>
         <div class="kpi"><span>Otras ubicaciones</span><strong>${formatoDecimal(r.otras)}</strong><small>bultos encontrados</small></div>
-        <div class="kpi alert"><span>Sin stock</span><strong>${formatoDecimal(r.sinCobertura)}</strong><small>no asignable</small></div>
+        <div class="kpi alert"><span>Sin stock</span><strong>${formatoDecimal(r.sinCobertura)}</strong><small>no asignable sin Plus</small></div>
       </div>
 
       <div class="dashboard-full-grid">
@@ -1200,7 +1213,7 @@ function graficoTrabajoPendiente(trabajo) {
             <div class="work-row">
               <div>
                 <strong>${htmlSeguro(r.origen)}</strong>
-                <span><b>${formatoDecimal(r.trabajado)}</b> trabajado | <b>${formatoDecimal(r.pendiente)}</b> pendiente</span>
+                <span><b>${formatoDecimal(r.trabajado)}</b> trabajado | <b>${formatoDecimal(r.pendiente)}</b> pendiente | <b>${formatoDecimal(r.sobrante)}</b> sobrante</span>
               </div>
               <div class="stack-bar dashboard-stack">
                 <div style="width:${pctTrabajado}%"></div>
@@ -1222,12 +1235,13 @@ function graficoSinStockPlus(row) {
     <article class="dash-card wide-card sin-stock-card">
       <div class="subsection-head">
         <h3>Sin stock ubicado en Plus</h3>
-        <span>solo validacion de avance</span>
+        <span>validacion de avance exacta</span>
       </div>
       <div class="sin-stock-summary">
         <div><span>Requerido sin stock</span><strong>${formatoDecimal(row?.pedido || 0)}</strong></div>
         <div><span>Encontrado en Plus</span><strong>${formatoDecimal(row?.trabajado || 0)}</strong></div>
         <div><span>Pendiente</span><strong>${formatoDecimal(row?.pendiente || 0)}</strong></div>
+        <div><span>Sobrante</span><strong>${formatoDecimal(row?.sobrante || 0)}</strong></div>
       </div>
       <div class="percent-meter sin-stock-meter">
         <div style="width:${pctTrabajado}%"></div>
@@ -3084,21 +3098,40 @@ function obtenerValidacionAvance() {
     ...agruparSinStockValidacion(window.sinStockData || [])
   ];
   const codPlus = agruparCodPlusPorProducto();
+  const codPlusRestante = new Map();
+  codPlus.forEach((value, codigo) => codPlusRestante.set(codigo, numeroReal(value.bultos)));
 
   const filas = base.map(item => {
     const plus = codPlus.get(item.codigo) || { bultos: 0, unidades: 0, lpns: [] };
-    const diferencia = plus.bultos - item.pedido;
-    const estado = estadoValidacionAvance(item.pedido, plus.bultos);
+    const disponible = codPlusRestante.get(item.codigo) || 0;
+    const codPlusAsignado = Math.min(item.pedido, disponible);
+    codPlusRestante.set(item.codigo, Math.max(0, disponible - codPlusAsignado));
+    const diferencia = codPlusAsignado - item.pedido;
+    const estado = estadoValidacionAvance(item.pedido, codPlusAsignado);
     return {
       ...item,
-      codPlus: plus.bultos,
+      codPlus: codPlusAsignado,
       unidadesCodPlus: plus.unidades,
       diferencia,
       estado: estado.texto,
       clase: estado.clase,
       lpnsCodPlus: plus.lpns
     };
-  }).sort(ordenValidacionAvance);
+  });
+
+  codPlusRestante.forEach((sobrante, codigo) => {
+    if (sobrante <= 0) return;
+    const candidatas = filas.filter(row => row.codigo === codigo);
+    if (!candidatas.length) return;
+    const destino = candidatas[candidatas.length - 1];
+    destino.codPlus += sobrante;
+    destino.diferencia = destino.codPlus - destino.pedido;
+    const estado = estadoValidacionAvance(destino.pedido, destino.codPlus);
+    destino.estado = estado.texto;
+    destino.clase = estado.clase;
+  });
+
+  filas.sort(ordenValidacionAvance);
 
   cacheValidacionAvance = { filas };
   return cacheValidacionAvance;
@@ -3124,8 +3157,10 @@ function renderValidacionAvance() {
   const falta = data.filter(r => r.estado === "Falta trabajar" || r.estado === "Sin avance").length;
   const exceso = data.filter(r => r.estado === "Se bajo de mas").length;
   const pedido = data.reduce((a, b) => a + b.pedido, 0);
-  const codPlus = data.reduce((a, b) => a + Math.min(b.pedido, b.codPlus), 0);
+  const codPlus = data.reduce((a, b) => a + b.codPlus, 0);
+  const trabajadoExacto = data.reduce((a, b) => a + Math.min(b.pedido, b.codPlus), 0);
   const pendiente = data.reduce((a, b) => a + Math.max(0, b.pedido - b.codPlus), 0);
+  const sobrante = data.reduce((a, b) => a + Math.max(0, b.codPlus - b.pedido), 0);
   const bloques = bloquesValidacionAvance(data);
 
   document.getElementById("contenido").innerHTML = `
@@ -3153,9 +3188,11 @@ function renderValidacionAvance() {
 
       <div class="kpi-grid compact">
         <div class="kpi alert"><span>Total no asignado</span><strong>${formatoDecimal(pedido)}</strong><small>bultos por validar</small></div>
-        <div class="kpi ok"><span>Trabajado en Plus</span><strong>${formatoDecimal(codPlus)}</strong><small>bultos en DROP-COD-PLUS-ALM</small></div>
+        <div class="kpi ok"><span>Trabajado exacto</span><strong>${formatoDecimal(trabajadoExacto)}</strong><small>cubierto contra pedido</small></div>
+        <div class="kpi"><span>Total en Plus</span><strong>${formatoDecimal(codPlus)}</strong><small>DROP-COD-PLUS-ALM</small></div>
         <div class="kpi"><span>Productos</span><strong>${formatoDecimal(data.length)}</strong><small>codigos evaluados</small></div>
         <div class="kpi alert"><span>Queda por trabajar</span><strong>${formatoDecimal(pendiente)}</strong><small>bultos pendientes</small></div>
+        <div class="kpi alert"><span>Sobrante en Plus</span><strong>${formatoDecimal(sobrante)}</strong><small>bultos de mas</small></div>
         <div class="kpi ok"><span>Completos</span><strong>${formatoDecimal(trabajado)}</strong><small>productos cerrados</small></div>
         <div class="kpi alert"><span>Con diferencia</span><strong>${formatoDecimal(falta + exceso)}</strong><small>faltan o se bajo de mas</small></div>
       </div>
