@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>ANC Logistica | RF LPN</title>
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <section id="loginView" class="login-screen">
+    <form class="login-card" onsubmit="login(event)">
+      <div class="rf-mark">RF</div>
+      <h1>Modulo RF</h1>
+      <p>Consulta de LPN para celular</p>
+      <label>Usuario
+        <input id="usuario" autocomplete="username" autocapitalize="characters" required>
+      </label>
+      <label>Contrasena
+        <input id="password" type="password" autocomplete="current-password" required>
+      </label>
+      <button type="submit">Ingresar</button>
+      <div id="loginError" class="error-text"></div>
+    </form>
+  </section>
+
+  <section id="appView" class="rf-app" hidden>
+    <header class="rf-header">
+      <div>
+        <span>ANC RF</span>
+        <strong>Consulta LPN</strong>
+      </div>
+      <button type="button" onclick="logout()">Salir</button>
+    </header>
+
+    <main class="rf-main">
+      <section class="scan-panel">
+        <div class="scan-title">
+          <div>
+            <h1>Escanear LPN</h1>
+            <span id="estadoCarga">Preparando data...</span>
+          </div>
+          <button id="btnActualizar" type="button" onclick="recargarDatos()">Actualizar</button>
+        </div>
+
+        <form class="scan-form" onsubmit="buscarLpnManual(event)">
+          <input id="lpnInput" placeholder="Escanea o digita el LPN" inputmode="text" autocomplete="off">
+          <button type="submit">Buscar</button>
+        </form>
+
+        <div class="camera-actions">
+          <button id="btnCamara" type="button" onclick="alternarCamara()">Camara</button>
+          <span id="scannerEstado">La pistola RF tambien funciona en el campo de busqueda.</span>
+        </div>
+
+        <div id="cameraBox" class="camera-box" hidden>
+          <video id="scannerVideo" playsinline muted></video>
+        </div>
+      </section>
+
+      <section id="resultado" class="resultado">
+        <div class="empty-state">
+          <strong>Sin consulta activa</strong>
+          <span>Escanea un LPN para ver ubicacion, estado y productos.</span>
+        </div>
+      </section>
+    </main>
+  </section>
+
+  <script src="js/data.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
