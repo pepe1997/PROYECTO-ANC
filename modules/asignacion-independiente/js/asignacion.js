@@ -327,7 +327,7 @@ function uxbProductoAsignacion(row, maestro) {
 
 function activoNormalizadoSimulacion(row, codigoPedido, descPedido) {
   const maestro = productoMaestro(codigoPedido);
-  const codigo = limpiarCodigo(campo(row, ["PRODUCTO", "CODIGO"]));
+  const codigo = campoTexto(row, ["PRODUCTO", "Producto", "CODIGO", "Codigo"]) || codigoPedido;
   const unact = numeroReal(campo(row, ["UNACT", "UnAct", "UN ACT"]));
   const asignado = numeroReal(campo(row, ["UNI_ASIG", "UNI ASIG", "Un Asig", "UN ASIG", "UN_ASIG"]));
   const disponibleUnd = Math.max(0, unact - asignado);
@@ -364,6 +364,94 @@ function elegirActivoSimulacion(rows, requerido, codigoPedido, descPedido) {
   }
 
   return usados;
+}
+
+function elegirActivosNormalizados(activos, requerido) {
+  const utiles = (activos || [])
+    .filter(x => numeroReal(x.bultos) > 0)
+    .sort((a, b) => numeroReal(a.bultos) - numeroReal(b.bultos) || String(a.ubicacion || "").localeCompare(String(b.ubicacion || ""), "es", { numeric: true }));
+
+  let restante = requerido;
+  const usados = [];
+
+  for (const item of utiles) {
+    if (restante <= 0) break;
+    const stock = numeroReal(item.bultos);
+    const tomar = Math.min(restante, stock);
+    usados.push({ activo: item, tomar, stock });
+    restante -= tomar;
+  }
+
+  return usados;
+}
+
+function codigosBusquedaItem(item) {
+  return new Set([
+    limpiarCodigo(item.codigo),
+    limpiarCodigo(item.codigoAlt),
+    normalizarCodigoAlt(item.codigoAlt)
+  ].filter(Boolean));
+}
+
+function filaInventarioCoincideItem(row, item) {
+  const claves = codigosBusquedaItem(item);
+  const codigo = campoTexto(row, ["PRODUCTO", "Producto", "CODIGO", "Codigo"]);
+  const codigoAlt = obtenerCodigoAlt(row);
+  return (codigo && claves.has(codigo)) || (codigoAlt && claves.has(codigoAlt));
+}
+
+function activosProductoPedido(item) {
+  const agrupado = new Map();
+
+  (dataInventario || []).forEach(row => {
+    if (!filaInventarioCoincideItem(row, item)) return;
+    const activo = activoNormalizadoSimulacion(row, item.codigo, item.desc);
+    if (activo.bultos <= 0) return;
+    const key = `${activo.ubicacion}|${activo.uxb}`;
+    if (!agrupado.has(key)) {
+      agrupado.set(key, {
+        ...activo,
+        codigo: item.codigo,
+        desc: item.desc,
+        bultos: 0,
+        unact: 0,
+        asignado: 0,
+        disponibleUnd: 0,
+        filas: 0
+      });
+    }
+    const acc = agrupado.get(key);
+    acc.bultos += activo.bultos;
+    acc.unact += activo.unact;
+    acc.asignado += activo.asignado;
+    acc.disponibleUnd += activo.disponibleUnd;
+    acc.filas += 1;
+  });
+
+  return Array.from(agrupado.values());
+}
+
+function filaAsignacionDesdeActivo(item, usado, requerido) {
+  const ubicacion = usado.activo.ubicacion || "SIN UBICACION";
+  return {
+    codigo: item.codigo,
+    desc: item.desc,
+    lpn: `ACTIVO ${ubicacion}`,
+    ubicacion,
+    requerido,
+    requerimientoTotal: item.total,
+    cs: usado.stock,
+    bultos: usado.stock,
+    asignar: usado.tomar,
+    restante: usado.stock - usado.tomar,
+    highlight: usado.stock >= requerido,
+    origen: "activo",
+    unact: usado.activo.unact,
+    unidadesAsignadas: usado.activo.asignado,
+    disponibleUnd: usado.activo.disponibleUnd,
+    uxb: usado.activo.uxb,
+    filasInventario: usado.activo.filas || 1
+  };
 }
 
 function filaAsignacionDesdeLpn(item, usado, requerido, origen) {
@@ -664,6 +752,7 @@ function procesarSimulacionAsignacion() {
 
 function procesarDatos() {
   if (cacheAsignacion) {
+    window.activoData = cacheAsignacion.activo || [];
     window.reservaData = cacheAsignacion.reserva;
     window.otrasData = cacheAsignacion.otras;
     window.sinStockData = cacheAsignacion.sinStock;
@@ -674,6 +763,7 @@ function procesarDatos() {
   construirMapaLPN();
 
   const pedido = obtenerPedido();
+  const tablaActivo = [];
   const tablaReserva = [];
   const tablaOtras = [];
   const sinStock = [];
@@ -695,10 +785,25 @@ function procesarDatos() {
 
     const stockReserva = reserva.reduce((a, b) => a + numeroReal(b.BULTOS), 0);
     const stockOtras = otras.reduce((a, b) => a + numeroReal(b.BULTOS), 0);
+    const activos = activosProductoPedido(item);
+    const stockActivo = activos.reduce((a, b) => a + numeroReal(b.bultos), 0);
     let restante = item.total;
+    let asignadoActivo = 0;
     let asignadoReserva = 0;
     let asignadoOtras = 0;
-    const pedidoReserva = Math.min(item.total, stockReserva);
+
+    const pedidoActivo = Math.min(restante, stockActivo);
+    const usadosActivo = elegirActivosNormalizados(activos, restante);
+    for (const usado of usadosActivo) {
+      const tomar = Math.min(restante, usado.tomar);
+      if (tomar <= 0) continue;
+
+      tablaActivo.push(filaAsignacionDesdeActivo(item, { ...usado, tomar }, pedidoActivo));
+      asignadoActivo += tomar;
+      restante -= tomar;
+    }
+
+    const pedidoReserva = Math.min(restante, stockReserva);
 
     const usadosReserva = elegirLpns(reserva, restante);
     for (const usado of usadosReserva) {
@@ -749,21 +854,23 @@ function procesarDatos() {
       restante -= tomar;
     }
 
-    if (stockReserva + stockOtras <= 0) {
+    if (restante > 0) {
       const prod = (dataProductos || []).find(x => limpiarCodigo(x.CODIGO) === item.codigo);
       sinStock.push({
         codigoAlt: item.codigoAlt || (prod ? obtenerCodigoAlt(prod) : ""),
         codigo: item.codigo,
         desc: item.desc,
-        bultos: item.total,
-        estado: "SIN STOCK"
+        bultos: restante,
+        estado: stockActivo + stockReserva + stockOtras > 0 ? "STOCK INSUFICIENTE" : "SIN STOCK"
       });
     }
 
     productos.push({
       ...item,
+      stockActivo,
       stockReserva,
       stockOtras,
+      asignadoActivo,
       asignadoReserva,
       asignadoOtras,
       sinCobertura: Math.max(0, restante)
@@ -773,15 +880,17 @@ function procesarDatos() {
   const resumenPedido = calcularResumenPedido();
   const resumen = productos.reduce((acc, p) => {
     acc.requerido += p.total;
+    acc.activo += p.asignadoActivo;
     acc.reserva += p.asignadoReserva;
     acc.otras += p.asignadoOtras;
     acc.sinCobertura += p.sinCobertura;
     acc.productos += 1;
     if (p.sinCobertura > 0) acc.productosSinCobertura += 1;
-    if (p.stockReserva + p.stockOtras <= 0) acc.productosSinStock += 1;
+    if (p.stockActivo + p.stockReserva + p.stockOtras <= 0) acc.productosSinStock += 1;
     return acc;
   }, {
     requerido: 0,
+    activo: 0,
     reserva: 0,
     otras: 0,
     sinCobertura: 0,
@@ -794,15 +903,17 @@ function procesarDatos() {
   resumen.asignado = resumenPedido.asignado;
   resumen.noAsignado = resumenPedido.noAsignado;
   resumen.asignable = Math.max(0, resumenPedido.pedido - resumenPedido.asignado);
-  resumen.stockAsignable = resumen.reserva + resumen.otras;
+  resumen.stockAsignable = resumen.activo + resumen.reserva + resumen.otras;
   resumen.cobertura = resumen.noAsignado > 0 ? (resumen.stockAsignable / resumen.noAsignado) * 100 : 0;
 
+  window.activoData = tablaActivo.sort((a, b) => String(a.ubicacion || "").localeCompare(String(b.ubicacion || ""), "es", { numeric: true }));
   window.reservaData = tablaReserva.sort(ordenarReserva);
   window.otrasData = tablaOtras.sort((a, b) => b.asignar - a.asignar);
   window.sinStockData = sinStock.sort((a, b) => b.bultos - a.bultos);
   window.resumenAsignacion = resumen;
 
   cacheAsignacion = {
+    activo: window.activoData,
     reserva: window.reservaData,
     otras: window.otrasData,
     sinStock: window.sinStockData,
@@ -839,6 +950,7 @@ function abrirAsignacion() {
       <div class="kpi"><span>Bultos asignados</span><strong>${formatoDecimal(resumen.asignado)}</strong></div>
       <div class="kpi"><span>Asignable</span><strong>${formatoDecimal(resumen.asignable)}</strong></div>
       <div class="kpi alert"><span>No asignado</span><strong>${formatoDecimal(resumen.noAsignado)}</strong></div>
+      <div class="kpi ok"><span>Activo</span><strong>${formatoDecimal(resumen.activo)}</strong></div>
       <div class="kpi"><span>Reserva</span><strong>${formatoDecimal(resumen.reserva)}</strong></div>
       <div class="kpi"><span>Otras</span><strong>${formatoDecimal(resumen.otras)}</strong></div>
       <div class="kpi alert"><span>Sin cobertura</span><strong>${formatoDecimal(resumen.sinCobertura)}</strong></div>
@@ -850,6 +962,7 @@ function abrirAsignacion() {
     <div class="toolbar module-tabs">
       <button onclick="verDashboard()">Dashboard</button>
       <button onclick="verDashboardPedido()">Dashboard pedido</button>
+      <button onclick="verActivo()">Activo</button>
       <button onclick="verReserva()">Reserva</button>
       <button onclick="verOtras()">Otras ubicaciones</button>
       <button onclick="verOtrasPrimero()">Otras primero</button>
@@ -1062,6 +1175,7 @@ function resumenTrabajoValidacion() {
   const { filas } = obtenerValidacionAvance();
   const crear = origen => ({ origen, pedido: 0, trabajado: 0, pendiente: 0, sobrante: 0, productos: 0, completos: 0, pendientes: 0, sobrantes: 0 });
   const resumen = {
+    ACTIVO: crear("Activo"),
     RESERVA: crear("Reserva"),
     OTRAS: crear("Otras ubicaciones"),
     SIN_STOCK: crear("Sin stock")
@@ -1102,7 +1216,8 @@ function datosDashboardNoAsignado() {
   const fechas = resumenNoAsignadoPorFecha();
   const fechaActual = fechas.length ? fechas[fechas.length - 1] : { fecha: "SIN FECHA", pedido: 0, noAsignado: 0 };
   const noAsignadoPorFecha = fechas.filter(r => r.noAsignado > 0);
-  const asignable = resumen.reserva + resumen.otras;
+  const asignable = resumen.activo + resumen.reserva + resumen.otras;
+  const pctActivo = asignable > 0 ? (resumen.activo / asignable) * 100 : 0;
   const pctReserva = asignable > 0 ? (resumen.reserva / asignable) * 100 : 0;
   const pctOtras = asignable > 0 ? (resumen.otras / asignable) * 100 : 0;
   const trabajo = resumenTrabajoValidacion();
@@ -1111,6 +1226,7 @@ function datosDashboardNoAsignado() {
     fechaActual,
     noAsignadoPorFecha,
     asignable,
+    pctActivo,
     pctReserva,
     pctOtras,
     trabajo
@@ -1127,32 +1243,110 @@ function renderDashboardNoAsignado() {
   const totalNoAsignado = r.noAsignado || r.requerido;
 
   document.getElementById("contenido").innerHTML = `
-    <section class="section-card dashboard-no-asignado">
-      <div class="section-head">
+    <section class="section-card dashboard-no-asignado report-mode">
+      <div class="section-head report-actions">
         <div>
           <h2>Dashboard no asignado</h2>
+          <p>Formato compacto para captura y seguimiento operativo.</p>
         </div>
         <div class="section-actions">
+          <button onclick="abrirVistaReporteNoAsignado()">Vista reporte</button>
           <button onclick="verValidacionAvance()">Ver validacion</button>
         </div>
       </div>
 
-      <div class="kpi-grid dashboard-kpis">
-        <div class="kpi hero-kpi"><span>Pedido general</span><strong>${formatoDecimal(data.fechaActual.pedido)}</strong><small>${htmlSeguro(data.fechaActual.fecha)} - fecha mas actual</small></div>
-        <div class="kpi alert"><span>Total no asignado</span><strong>${formatoDecimal(totalNoAsignado)}</strong><small>bultos del pedido</small></div>
-        <div class="kpi ok"><span>Reserva</span><strong>${formatoDecimal(r.reserva)}</strong><small>bultos encontrados</small></div>
-        <div class="kpi"><span>Otras ubicaciones</span><strong>${formatoDecimal(r.otras)}</strong><small>bultos encontrados</small></div>
-        <div class="kpi alert"><span>Sin stock</span><strong>${formatoDecimal(r.sinCobertura)}</strong><small>no asignable sin Plus</small></div>
-      </div>
-
-      <div class="dashboard-full-grid">
-        ${tarjetaDonutAsignacion("Reserva", data.pctReserva, r.reserva, data.asignable, "reserva")}
-        ${tarjetaDonutAsignacion("Otras ubicaciones", data.pctOtras, r.otras, data.asignable, "otras")}
-        ${graficoBarrasNoAsignadoPorFecha(data.noAsignadoPorFecha)}
-        ${graficoTrabajoPendiente(data.trabajo)}
-        ${graficoSinStockPlus(data.trabajo.SIN_STOCK)}
-      </div>
+      ${htmlVistaReporteNoAsignado(data, r, totalNoAsignado)}
     </section>
+  `;
+}
+
+function htmlCabeceraNoAsignado(data, r, totalNoAsignado, cobertura) {
+  return `
+    <div class="no-asig-hero">
+      <div class="no-asig-title">
+        <h2>NO ASIGNADO OPERACIONAL</h2>
+        <span>${htmlSeguro(data.fechaActual.fecha)} | prioridad activo, reserva y otras ubicaciones</span>
+      </div>
+      <div class="no-asig-hero-kpis">
+        <div><span>Pedido</span><strong>${formatoDecimal(data.fechaActual.pedido)}</strong></div>
+        <div><span>No asignado</span><strong>${formatoDecimal(totalNoAsignado)}</strong></div>
+        <div><span>Cobertura</span><strong>${cobertura.toFixed(1)}%</strong></div>
+        <div><span>Productos</span><strong>${formatoDecimal(r.productos)}</strong></div>
+      </div>
+    </div>
+  `;
+}
+
+function htmlFuentesNoAsignado(r, totalNoAsignado) {
+  return `
+    <div class="no-asig-source-grid">
+      ${tarjetaFuenteNoAsignado("Activo", r.activo, totalNoAsignado, "ok", "stock usable antes de reserva")}
+      ${tarjetaFuenteNoAsignado("Reserva", r.reserva, totalNoAsignado, "reserva", "bultos desde Mass")}
+      ${tarjetaFuenteNoAsignado("Otras", r.otras, totalNoAsignado, "otras", "ubicaciones de apoyo")}
+      ${tarjetaFuenteNoAsignado("Sin stock", r.sinCobertura, totalNoAsignado, "bad", "brecha final")}
+    </div>
+  `;
+}
+
+function abrirVistaReporteNoAsignado() {
+  const data = datosDashboardNoAsignado();
+  const r = data.resumen;
+  const totalNoAsignado = r.noAsignado || r.requerido;
+  const cobertura = totalNoAsignado > 0 ? Math.min(100, (data.asignable / totalNoAsignado) * 100) : 0;
+
+  document.getElementById("modal").innerHTML = `
+    <div class="modal-backdrop asig-report-backdrop">
+      <div class="modal-card asig-report-modal">
+        <div class="asig-report-bar">
+          <div>
+            <strong>Vista reporte</strong>
+            <span>Formato comprimido para captura</span>
+          </div>
+          <button onclick="cerrarModal()">Cerrar</button>
+        </div>
+        <div class="dashboard-no-asignado report-mode report-capture">
+          ${htmlVistaReporteNoAsignado(data, r, totalNoAsignado)}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function htmlVistaReporteNoAsignado(data, r, totalNoAsignado) {
+  return `
+    <div class="report-noasig-kpis">
+      <div class="kpi hero-kpi"><span>Pedido general</span><strong>${formatoDecimal(data.fechaActual.pedido)}</strong><small>${htmlSeguro(data.fechaActual.fecha)} - fecha mas actual</small></div>
+      <div class="kpi alert"><span>Total no asignado</span><strong>${formatoDecimal(totalNoAsignado)}</strong><small>bultos del pedido</small></div>
+      <div class="kpi ok"><span>Activo</span><strong>${formatoDecimal(r.activo)}</strong><small>stock usable antes de reserva</small></div>
+      <div class="kpi ok"><span>Reserva</span><strong>${formatoDecimal(r.reserva)}</strong><small>bultos encontrados</small></div>
+      <div class="kpi"><span>Otras ubicaciones</span><strong>${formatoDecimal(r.otras)}</strong><small>bultos encontrados</small></div>
+      <div class="kpi alert"><span>Sin stock</span><strong>${formatoDecimal(r.sinCobertura)}</strong><small>no asignable sin Plus</small></div>
+    </div>
+    <div class="report-noasig-main">
+      ${tarjetaDonutAsignacion("Activo", data.pctActivo, r.activo, data.asignable, "activo")}
+      ${tarjetaDonutAsignacion("Reserva", data.pctReserva, r.reserva, data.asignable, "reserva")}
+      ${tarjetaDonutAsignacion("Otras ubicaciones", data.pctOtras, r.otras, data.asignable, "otras")}
+      ${graficoBarrasNoAsignadoPorFecha(data.noAsignadoPorFecha)}
+    </div>
+    <div class="report-noasig-bottom">
+      ${graficoTrabajoPendiente(data.trabajo)}
+      ${graficoSinStockPlus(data.trabajo.SIN_STOCK)}
+      ${graficoPastelTrabajoNoAsignado(r)}
+    </div>
+  `;
+}
+
+function tarjetaFuenteNoAsignado(titulo, valor, total, clase, subtitulo) {
+  const pct = total > 0 ? Math.max(0, Math.min(100, (numeroReal(valor) / total) * 100)) : 0;
+  return `
+    <article class="no-asig-source ${clase}">
+      <div>
+        <span>${htmlSeguro(titulo)}</span>
+        <strong>${formatoDecimal(valor)}</strong>
+        <small>${htmlSeguro(subtitulo)} | ${pct.toFixed(1)}%</small>
+      </div>
+      <div class="no-asig-bar"><div style="width:${pct}%"></div></div>
+    </article>
   `;
 }
 
@@ -1202,7 +1396,6 @@ function graficoTrabajoPendiente(trabajo) {
     <article class="dash-card wide-card">
       <div class="subsection-head">
         <h3>Avance trabajado vs pendiente</h3>
-        <span>segun DROP-COD-PLUS-ALM</span>
       </div>
       <div class="work-bars">
         ${filas.map(r => {
@@ -1213,7 +1406,7 @@ function graficoTrabajoPendiente(trabajo) {
             <div class="work-row">
               <div>
                 <strong>${htmlSeguro(r.origen)}</strong>
-                <span><b>${formatoDecimal(r.trabajado)}</b> trabajado | <b>${formatoDecimal(r.pendiente)}</b> pendiente | <b>${formatoDecimal(r.sobrante)}</b> sobrante</span>
+                ${r.sobrante > 0 ? `<span><b>${formatoDecimal(r.sobrante)}</b> sobrante</span>` : ""}
               </div>
               <div class="stack-bar dashboard-stack">
                 <div style="width:${pctTrabajado}%"></div>
@@ -1231,22 +1424,49 @@ function graficoTrabajoPendiente(trabajo) {
 function graficoSinStockPlus(row) {
   const total = Math.max(1, numeroReal(row?.pedido));
   const pctTrabajado = Math.max(0, Math.min(100, (numeroReal(row?.trabajado) / total) * 100));
+  const sobrante = numeroReal(row?.sobrante);
   return `
     <article class="dash-card wide-card sin-stock-card">
       <div class="subsection-head">
         <h3>Sin stock ubicado en Plus</h3>
-        <span>validacion de avance exacta</span>
       </div>
       <div class="sin-stock-summary">
         <div><span>Requerido sin stock</span><strong>${formatoDecimal(row?.pedido || 0)}</strong></div>
         <div><span>Encontrado en Plus</span><strong>${formatoDecimal(row?.trabajado || 0)}</strong></div>
         <div><span>Pendiente</span><strong>${formatoDecimal(row?.pendiente || 0)}</strong></div>
-        <div><span>Sobrante</span><strong>${formatoDecimal(row?.sobrante || 0)}</strong></div>
+        <div><span>Sobrante</span><strong>${formatoDecimal(sobrante)}</strong></div>
       </div>
       <div class="percent-meter sin-stock-meter">
         <div style="width:${pctTrabajado}%"></div>
       </div>
-      <p class="coverage-note">${pctTrabajado.toFixed(1)}% ya aparece en DROP-COD-PLUS-ALM</p>
+    </article>
+  `;
+}
+
+function graficoPastelTrabajoNoAsignado(r) {
+  const activo = numeroReal(r.activo);
+  const reserva = numeroReal(r.reserva);
+  const piso = numeroReal(r.otras);
+  const noAsignado = numeroReal(r.sinCobertura);
+  const total = Math.max(1, activo + reserva + piso + noAsignado);
+  const pActivo = (activo / total) * 100;
+  const pReserva = (reserva / total) * 100;
+  const pPiso = (piso / total) * 100;
+  const pNoAsignado = (noAsignado / total) * 100;
+  return `
+    <article class="dash-card pie-work-card">
+      <div class="subsection-head">
+        <h3>Trabajo por fuente</h3>
+      </div>
+      <div class="pie-work-layout">
+        <div class="pie-work" style="--activo:${pActivo}; --reserva:${pReserva}; --piso:${pPiso};"></div>
+        <div class="pie-work-legend">
+          <div><span><b class="dot activo"></b>Activo</span><strong>${formatoDecimal(activo)}</strong><small>${pActivo.toFixed(1)}%</small></div>
+          <div><span><b class="dot reserva"></b>Reserva</span><strong>${formatoDecimal(reserva)}</strong><small>${pReserva.toFixed(1)}%</small></div>
+          <div><span><b class="dot otras"></b>Piso</span><strong>${formatoDecimal(piso)}</strong><small>${pPiso.toFixed(1)}%</small></div>
+          <div><span><b class="dot brecha"></b>No asignado</span><strong>${formatoDecimal(noAsignado)}</strong><small>${pNoAsignado.toFixed(1)}%</small></div>
+        </div>
+      </div>
     </article>
   `;
 }
@@ -1413,13 +1633,15 @@ function crearTabla(data, tipo) {
 function verDashboard() {
   const { resumen, productos } = procesarDatos();
   const progreso = calcularProgresoReal();
+  const coberturaActivo = resumen.noAsignado > 0 ? (resumen.activo / resumen.noAsignado) * 100 : 0;
   const coberturaReserva = resumen.noAsignado > 0 ? (resumen.reserva / resumen.noAsignado) * 100 : 0;
   const coberturaOtras = resumen.noAsignado > 0 ? (resumen.otras / resumen.noAsignado) * 100 : 0;
   const sinCoberturaPct = resumen.noAsignado > 0 ? (resumen.sinCobertura / resumen.noAsignado) * 100 : 0;
   const criticos = productos.filter(p => p.sinCobertura > 0).sort((a, b) => b.sinCobertura - a.sinCobertura).slice(0, 10);
-  const mixtos = productos.filter(p => p.asignadoReserva > 0 && p.asignadoOtras > 0).length;
-  const soloReserva = productos.filter(p => p.asignadoReserva > 0 && p.asignadoOtras === 0).length;
-  const soloOtras = productos.filter(p => p.asignadoOtras > 0 && p.asignadoReserva === 0).length;
+  const mixtos = productos.filter(p => [p.asignadoActivo, p.asignadoReserva, p.asignadoOtras].filter(v => numeroReal(v) > 0).length > 1).length;
+  const soloActivo = productos.filter(p => p.asignadoActivo > 0 && p.asignadoReserva === 0 && p.asignadoOtras === 0).length;
+  const soloReserva = productos.filter(p => p.asignadoReserva > 0 && p.asignadoActivo === 0 && p.asignadoOtras === 0).length;
+  const soloOtras = productos.filter(p => p.asignadoOtras > 0 && p.asignadoActivo === 0 && p.asignadoReserva === 0).length;
 
   document.getElementById("contenido").innerHTML = `
     <section class="dashboard-grid-pro">
@@ -1451,16 +1673,19 @@ function verDashboard() {
           <h2>Distribucion de cobertura</h2>
         </div>
         <div class="stack-bar">
+          <div style="width:${Math.min(100, coberturaActivo)}%" title="Activo"></div>
           <div style="width:${Math.min(100, coberturaReserva)}%" title="Reserva"></div>
           <div style="width:${Math.min(100, coberturaOtras)}%" title="Otras"></div>
           <div style="width:${Math.min(100, sinCoberturaPct)}%" title="Sin cobertura"></div>
         </div>
         <div class="legend">
+          <span><b class="dot reserva"></b>Activo ${coberturaActivo.toFixed(1)}%</span>
           <span><b class="dot reserva"></b>Reserva ${coberturaReserva.toFixed(1)}%</span>
           <span><b class="dot otras"></b>Otras ${coberturaOtras.toFixed(1)}%</span>
           <span><b class="dot brecha"></b>Brecha ${sinCoberturaPct.toFixed(1)}%</span>
         </div>
         <div class="mini-kpis">
+          <div><span>Activo</span><strong>${formatoDecimal(resumen.activo)}</strong></div>
           <div><span>Reserva</span><strong>${formatoDecimal(resumen.reserva)}</strong></div>
           <div><span>Otras</span><strong>${formatoDecimal(resumen.otras)}</strong></div>
           <div><span>Sin cobertura</span><strong>${formatoDecimal(resumen.sinCobertura)}</strong></div>
@@ -1472,9 +1697,10 @@ function verDashboard() {
           <h2>Lectura operacional</h2>
         </div>
         <div class="insight-list">
+          <div><strong>${soloActivo}</strong><span>productos salen solo de activo.</span></div>
           <div><strong>${soloReserva}</strong><span>productos salen solo de reserva.</span></div>
           <div><strong>${soloOtras}</strong><span>productos salen solo de otras ubicaciones.</span></div>
-          <div><strong>${mixtos}</strong><span>productos requieren trabajo mixto.</span></div>
+          <div><strong>${mixtos}</strong><span>productos usan mas de una fuente.</span></div>
           <div><strong>${resumen.productosSinStock}</strong><span>productos sin stock utilizable.</span></div>
         </div>
       </div>
@@ -1492,6 +1718,7 @@ function verDashboard() {
               <th>Codigo</th>
               <th>Descripcion</th>
               <th>Pedido</th>
+              <th>Activo</th>
               <th>Reserva</th>
               <th>Otras</th>
               <th>Brecha</th>
@@ -1503,11 +1730,12 @@ function verDashboard() {
                 <td><strong>${htmlSeguro(p.codigo)}</strong></td>
                 <td>${htmlSeguro(p.desc)}</td>
                 <td>${formatoDecimal(p.total)}</td>
+                <td>${formatoDecimal(p.asignadoActivo)}</td>
                 <td>${formatoDecimal(p.asignadoReserva)}</td>
                 <td>${formatoDecimal(p.asignadoOtras)}</td>
                 <td class="number">${formatoDecimal(p.sinCobertura)}</td>
               </tr>
-            `).join("") || `<tr><td colspan="6">No hay productos con brecha.</td></tr>`}
+            `).join("") || `<tr><td colspan="7">No hay productos con brecha.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -1671,14 +1899,16 @@ function donutPedido(asignado, noAsignado) {
 }
 
 function barrasDistribucionNoAsignado(resumenAsignacion) {
+  const activo = resumenAsignacion.activo;
   const reserva = resumenAsignacion.reserva;
   const otras = resumenAsignacion.otras;
   const sinStock = resumenAsignacion.productosSinStock > 0
     ? (window.sinStockData || []).reduce((a, b) => a + numeroReal(b.bultos), 0)
     : 0;
-  const base = reserva + otras + sinStock;
+  const base = activo + reserva + otras + sinStock;
 
   const items = [
+    { label: "Activo", valor: activo, clase: "reserva" },
     { label: "Reserva", valor: reserva, clase: "reserva" },
     { label: "Otras", valor: otras, clase: "otras" },
     { label: "Sin stock", valor: sinStock, clase: "brecha" }
@@ -1810,11 +2040,80 @@ function verDashboardPedido() {
           <strong>${formatoDecimal(asignacion.reserva)}</strong>
           <small>Desde ubicaciones Mass</small>
         </div>
+        <div class="metric-panel">
+          <span>Activo usable</span>
+          <strong>${formatoDecimal(asignacion.activo)}</strong>
+          <small>Antes de buscar reserva</small>
+        </div>
         <div class="metric-panel danger">
           <span>Sin cobertura</span>
           <strong>${formatoDecimal(asignacion.sinCobertura)}</strong>
           <small>Revisar reposicion o ubicaciones</small>
         </div>
+      </div>
+    </section>
+  `;
+}
+
+function verActivo() {
+  vistaActual = "activo";
+  const data = window.activoData || [];
+  const total = data.reduce((a, b) => a + numeroReal(b.asignar), 0);
+  const ubicaciones = new Set(data.map(r => limpiarCodigo(r.ubicacion)).filter(Boolean)).size;
+
+  document.getElementById("contenido").innerHTML = `
+    <section class="section-card">
+      <div class="section-head">
+        <div>
+          <h2>Activo disponible</h2>
+        </div>
+        <div class="section-actions">
+          <button onclick="descargarExcel('activo')">Excel detalle</button>
+        </div>
+      </div>
+
+      <div class="kpi-grid compact">
+        <div class="kpi ok"><span>Bultos cubiertos</span><strong>${formatoDecimal(total)}</strong></div>
+        <div class="kpi"><span>Productos</span><strong>${formatoDecimal(new Set(data.map(r => r.codigo)).size)}</strong></div>
+        <div class="kpi"><span>Ubicaciones</span><strong>${formatoDecimal(ubicaciones)}</strong></div>
+        <div class="kpi"><span>Filas INV_ACTIVO</span><strong>${formatoDecimal(data.reduce((a, b) => a + numeroReal(b.filasInventario || 1), 0))}</strong></div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Codigo</th>
+              <th>Descripcion</th>
+              <th>Ubicacion</th>
+              <th>Req total</th>
+              <th>Stock activo</th>
+              <th>Asignar</th>
+              <th>Restante activo</th>
+              <th>UNACT</th>
+              <th>UNI_ASIG</th>
+              <th>Disponible UND</th>
+              <th>UXB</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.map(r => `
+              <tr>
+                <td><strong>${htmlSeguro(r.codigo)}</strong></td>
+                <td>${htmlSeguro(r.desc)}</td>
+                <td><strong>${htmlSeguro(r.ubicacion || "SIN UBICACION")}</strong></td>
+                <td class="number">${formatoDecimal(r.requerimientoTotal)}</td>
+                <td class="number">${formatoDecimal(r.bultos)}</td>
+                <td class="number"><strong>${formatoDecimal(r.asignar)}</strong></td>
+                <td class="number">${formatoDecimal(r.restante)}</td>
+                <td class="number">${formatoDecimal(r.unact)}</td>
+                <td class="number">${formatoDecimal(r.unidadesAsignadas)}</td>
+                <td class="number">${formatoDecimal(r.disponibleUnd)}</td>
+                <td class="number">${formatoDecimal(r.uxb)}</td>
+              </tr>
+            `).join("") || `<tr><td colspan="11">Sin cobertura desde INV_ACTIVO.</td></tr>`}
+          </tbody>
+        </table>
       </div>
     </section>
   `;
@@ -2785,8 +3084,10 @@ function verAnalisisRapido() {
             <th>Codigo</th>
             <th>Descripcion</th>
             <th>Requerido</th>
+            <th>Stock activo</th>
             <th>Stock reserva</th>
             <th>Stock otras</th>
+            <th>Asignado activo</th>
             <th>Asignado reserva</th>
             <th>Asignado otras</th>
             <th>Sin cobertura</th>
@@ -2797,8 +3098,10 @@ function verAnalisisRapido() {
           ${data.map(r => {
             const decision = r.sinCobertura > 0
               ? "Revisar compra/traslado"
-              : r.asignadoOtras > 0 && r.asignadoReserva > 0
+              : [r.asignadoActivo, r.asignadoReserva, r.asignadoOtras].filter(v => numeroReal(v) > 0).length > 1
                 ? "Mixto"
+                : r.asignadoActivo > 0
+                  ? "Activo"
                 : r.asignadoReserva > 0
                   ? "Reserva"
                   : "Otras";
@@ -2808,8 +3111,10 @@ function verAnalisisRapido() {
                 <td><strong>${htmlSeguro(r.codigo)}</strong></td>
                 <td>${htmlSeguro(r.desc)}</td>
                 <td class="number">${formatoDecimal(r.total)}</td>
+                <td>${formatoDecimal(r.stockActivo)}</td>
                 <td>${formatoDecimal(r.stockReserva)}</td>
                 <td>${formatoDecimal(r.stockOtras)}</td>
+                <td>${formatoDecimal(r.asignadoActivo)}</td>
                 <td>${formatoDecimal(r.asignadoReserva)}</td>
                 <td>${formatoDecimal(r.asignadoOtras)}</td>
                 <td class="number">${formatoDecimal(r.sinCobertura)}</td>
@@ -2882,6 +3187,7 @@ function resetOperarios() {
 }
 
 function datosExportacion(tipo) {
+  if (tipo === "activo") return window.activoData || [];
   if (tipo === "reserva") return window.reservaData || [];
   if (tipo === "otras") return window.otrasData || [];
   if (tipo === "sinStock") return window.sinStockData || [];
@@ -2905,8 +3211,11 @@ function descargarExcel(tipo) {
     html += "<tr><th>CODIGO_ALT</th><th>CODIGO</th><th>DESCRIPCION</th><th>BULTOS</th><th>ESTADO</th></tr>";
     html += data.map(d => `<tr>${celdaExcelTexto(d.codigoAlt || "")}${celdaExcelTexto(d.codigo)}<td>${htmlSeguro(d.desc)}</td><td>${formatoDecimal(d.bultos)}</td><td>${htmlSeguro(d.estado)}</td></tr>`).join("");
   } else if (tipo === "analisis") {
-    html += "<tr><th>CODIGO</th><th>DESCRIPCION</th><th>REQUERIDO</th><th>STOCK_RESERVA</th><th>STOCK_OTRAS</th><th>ASIG_RESERVA</th><th>ASIG_OTRAS</th><th>SIN_COBERTURA</th></tr>";
-    html += data.map(d => `<tr>${celdaExcelTexto(d.codigo)}<td>${htmlSeguro(d.desc)}</td><td>${formatoDecimal(d.total)}</td><td>${formatoDecimal(d.stockReserva)}</td><td>${formatoDecimal(d.stockOtras)}</td><td>${formatoDecimal(d.asignadoReserva)}</td><td>${formatoDecimal(d.asignadoOtras)}</td><td>${formatoDecimal(d.sinCobertura)}</td></tr>`).join("");
+    html += "<tr><th>CODIGO</th><th>DESCRIPCION</th><th>REQUERIDO</th><th>STOCK_ACTIVO</th><th>STOCK_RESERVA</th><th>STOCK_OTRAS</th><th>ASIG_ACTIVO</th><th>ASIG_RESERVA</th><th>ASIG_OTRAS</th><th>SIN_COBERTURA</th></tr>";
+    html += data.map(d => `<tr>${celdaExcelTexto(d.codigo)}<td>${htmlSeguro(d.desc)}</td><td>${formatoDecimal(d.total)}</td><td>${formatoDecimal(d.stockActivo)}</td><td>${formatoDecimal(d.stockReserva)}</td><td>${formatoDecimal(d.stockOtras)}</td><td>${formatoDecimal(d.asignadoActivo)}</td><td>${formatoDecimal(d.asignadoReserva)}</td><td>${formatoDecimal(d.asignadoOtras)}</td><td>${formatoDecimal(d.sinCobertura)}</td></tr>`).join("");
+  } else if (tipo === "activo") {
+    html += "<tr><th>CODIGO</th><th>DESCRIPCION</th><th>UBICACION</th><th>REQ_TOTAL</th><th>STOCK_ACTIVO_BULTOS</th><th>ASIGNAR</th><th>RESTANTE_ACTIVO</th><th>UNACT</th><th>UNI_ASIG</th><th>DISPONIBLE_UND</th><th>UXB</th><th>FILAS_INV_ACTIVO</th></tr>";
+    html += data.map(d => `<tr>${celdaExcelTexto(d.codigo)}<td>${htmlSeguro(d.desc)}</td><td>${htmlSeguro(d.ubicacion || "")}</td><td>${formatoDecimal(d.requerimientoTotal)}</td><td>${formatoDecimal(d.bultos)}</td><td>${formatoDecimal(d.asignar)}</td><td>${formatoDecimal(d.restante)}</td><td>${formatoDecimal(d.unact)}</td><td>${formatoDecimal(d.unidadesAsignadas)}</td><td>${formatoDecimal(d.disponibleUnd)}</td><td>${formatoDecimal(d.uxb)}</td><td>${formatoDecimal(d.filasInventario || 1)}</td></tr>`).join("");
   } else {
     html += "<tr><th>LPN</th><th>CODIGO</th><th>DESCRIPCION</th><th>UBICACION</th><th>REQ</th><th>STOCK</th><th>ASIGNAR</th><th>RESTANTE</th></tr>";
     html += data.map(d => `<tr>${celdaExcelTexto(d.lpn)}${celdaExcelTexto(d.codigo)}<td>${htmlSeguro(d.desc)}</td><td>${htmlSeguro(d.ubicacion || "")}</td><td>${formatoDecimal(d.requerido)}</td><td>${formatoDecimal(d.bultos)}</td><td>${formatoDecimal(d.asignar)}</td><td>${formatoDecimal(d.restante)}</td></tr>`).join("");
@@ -3397,11 +3706,12 @@ function filasResumenAsignacion() {
     mapa.get(key).bultos += valor;
   }
 
+  (window.activoData || []).forEach(r => agregar("ACTIVO", r.codigo, r.desc, r.asignar));
   (window.reservaData || []).forEach(r => agregar("RESERVA", r.codigo, r.desc, r.asignar));
   (window.sinStockData || []).forEach(r => agregar("SIN STOCK", r.codigo, r.desc, r.bultos));
   (window.otrasData || []).forEach(r => agregar("PALETERO", r.codigo, r.desc, r.asignar));
 
-  const orden = { "RESERVA": 1, "SIN STOCK": 2, "PALETERO": 3 };
+  const orden = { "ACTIVO": 1, "RESERVA": 2, "SIN STOCK": 3, "PALETERO": 4 };
   return Array.from(mapa.values()).sort((a, b) =>
     (orden[a.ubicacion] || 99) - (orden[b.ubicacion] || 99) ||
     a.desc.localeCompare(b.desc, "es")

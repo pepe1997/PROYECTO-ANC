@@ -1,4 +1,4 @@
-﻿function limpiar(valor) {
+function limpiar(valor) {
   if (valor === null || valor === undefined) return "";
   return String(valor).trim();
 }
@@ -59,42 +59,6 @@ function fechaValor(valor) {
   return new Date(Number(partes[3]), Number(partes[2]) - 1, Number(partes[1]), Number(partes[4] || 0), Number(partes[5] || 0));
 }
 
-function fechaValorPedido(valor) {
-  const texto = limpiar(valor);
-  if (!texto) return null;
-  if (/^\d{4}-\d{1,2}-\d{1,2}/.test(texto)) return fechaValor(texto);
-
-  const partes = texto.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2}))?/);
-  if (!partes) return fechaValor(texto);
-
-  const primero = Number(partes[1]);
-  const segundo = Number(partes[2]);
-  const anio = Number(partes[3]);
-  const hora = Number(partes[4] || 0);
-  const minuto = Number(partes[5] || 0);
-  const candidatos = [];
-
-  if (primero >= 1 && primero <= 12 && segundo >= 1 && segundo <= 31) {
-    candidatos.push(new Date(anio, primero - 1, segundo, hora, minuto));
-  }
-  if (segundo >= 1 && segundo <= 12 && primero >= 1 && primero <= 31) {
-    candidatos.push(new Date(anio, segundo - 1, primero, hora, minuto));
-  }
-
-  const validos = candidatos.filter(fecha =>
-    fecha.getFullYear() === anio &&
-    fecha.getHours() === hora &&
-    fecha.getMinutes() === minuto
-  );
-  if (!validos.length) return fechaValor(texto);
-
-  const hoy = new Date();
-  hoy.setHours(23, 59, 59, 999);
-  const noFuturos = validos.filter(fecha => fecha <= hoy);
-  const base = noFuturos.length ? noFuturos : validos;
-  return base.sort((a, b) => Math.abs(hoy - a) - Math.abs(hoy - b))[0];
-}
-
 function fechaCorta(fecha) {
   if (!fecha) return "";
   return fecha.toLocaleDateString("es-PE", { day: "2-digit", month: "2-digit", year: "numeric" });
@@ -111,25 +75,30 @@ function turnoPorHora(hora) {
   return "NOCHE";
 }
 
-function descripcionIniciaConFruta(descripcion) {
+function descripcionNoCuentaPicking(descripcion) {
   const texto = normalizar(descripcion).replace(/[^A-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
-  const frutas = [
+  const palabras = texto.split(" ");
+  const frescos = [
     "FRUTA", "FRUTAS", "PLATANO", "BANANO", "BANANA", "PERA", "PERAS", "MANZANA", "MANZANAS",
     "NARANJA", "NARANJAS", "MANDARINA", "MANDARINAS", "LIMON", "LIMONES", "FRESA", "FRESAS",
     "UVA", "UVAS", "MANGO", "MANGOS", "PINA", "PINIA", "PALTA", "PALTAS", "SANDIA",
-    "MELON", "PAPAYA", "DURAZNO", "GRANADILLA", "MARACUYA", "KIWI", "CIRUELA", "CHIRIMOYA"
+    "MELON", "PAPAYA", "DURAZNO", "GRANADILLA", "MARACUYA", "KIWI", "CIRUELA", "CHIRIMOYA",
+    "VERDURA", "VERDURAS", "HORTALIZA", "HORTALIZAS", "ZANAHORIA", "ZANAHORIAS", "TOMATE",
+    "TOMATES", "CEBOLLA", "CEBOLLAS", "PAPA", "PAPAS", "CAMOTE", "CAMOTES", "YUCA",
+    "LECHUGA", "LECHUGAS", "BROCOLI", "PEPINO", "PEPINOS", "APIO", "BETERRAGA", "ESPINACA",
+    "ROCOTO", "AJI", "AJIES", "CHOCLO", "CHOCLOS", "PIMIENTO", "PIMIENTOS"
   ].map(normalizar);
-  return frutas.some(fruta => texto === fruta || texto.startsWith(`${fruta} `));
+  if (texto === "JABA" || texto === "JABAS" || texto.startsWith("JABA ") || texto.startsWith("JABAS ")) return true;
+  return frescos.some(item => texto === item || texto.startsWith(`${item} `));
 }
 
 function pickingEsValido(row) {
-  const orden = normalizar(row.orden);
   const descripcion = normalizar(row.descripcion);
-  if (normalizar(row.tipo) === "FULL-CONTAINER") return false;
-  if (normalizar(row.lpn).startsWith("ILE")) return false;
-  if (orden.startsWith("TFC")) return false;
-  if (orden.startsWith("TRF") && descripcion.startsWith("JABA")) return false;
-  if (descripcionIniciaConFruta(row.descripcion)) return false;
+  const tipo = normalizar(row.tipo).replace(/[^A-Z0-9]/g, "");
+  const lpn = normalizar(row.lpn);
+  if (tipo === "FULLCONTAINER") return false;
+  if (lpn.startsWith("ILE")) return false;
+  if (descripcionNoCuentaPicking(descripcion)) return false;
   return true;
 }
 
@@ -359,6 +328,7 @@ function modeloRecepcion() {
       codigoProveedor,
       proveedor,
       proveedorKey: `${codigoProveedor} | ${proveedor}`,
+      oc: limpiar(campo(r, ["NRO OC", "Nro OC", "OC", "ORDEN COMPRA", "Orden Compra"])),
       asn,
       lpn: limpiar(campo(r, ["LPN", "NRO LPN", "PALLET", "NroPallet"])),
       codigo: limpiar(campo(r, ["CODIGO", "PRODUCTO"])),
@@ -366,6 +336,8 @@ function modeloRecepcion() {
       descripcion: limpiar(campo(r, ["DESCRIPCION", "Descripcion"])),
       programado: num(campo(r, ["BULTOS PROGRAMADOS", "BULTOS PROG", "PROGRAMADO"])),
       recibido: num(campo(r, ["BULTOS RECIBIDOS", "BULTOS REC", "RECIBIDO"])),
+      unidadesProgramadas: num(campo(r, ["UND PROGRAMADAS", "UNIDADES PROGRAMADAS", "UND PROG"])),
+      unidadesRecibidas: num(campo(r, ["UND RECIBIDAS", "UNIDADES RECIBIDAS", "UND REC"])),
       usuario: limpiar(campo(r, ["USU RECEP", "USUARIO RECEPCION", "USUARIO"])) || "SIN USUARIO",
       fecha,
       fechaTexto: fechaCorta(fecha),
@@ -410,10 +382,102 @@ function palletsRecepcion(data) {
   }));
 }
 
+function esPuntaNegraRecepcion(codigo) {
+  return normalizar(codigo) === "917";
+}
+
+function codigoProveedorResumenRecepcion(row) {
+  return normalizar(campo(row, [
+    "Proveedor",
+    "CODIGO PROVEE",
+    "CODIGO PROVEEDOR",
+    "COD PROVEEDOR",
+    "Codigo Proveedor",
+    "CODIGO_PROVEEDOR"
+  ]));
+}
+
+function bultosResumenProveedorRecepcion(row) {
+  const requerido = num(campo(row, ["Un Req", "UN REQ", "UN_REQ", "Unidades Requeridas"]));
+  if (requerido > 0) return requerido;
+  const bultos = num(campo(row, ["BULTOS", "Bultos", "BULTOS PROGRAMADOS", "PROGRAMADO"]));
+  if (bultos > 0) return bultos;
+  return num(campo(row, ["Un Env", "UN ENV", "UN_ENV", "Unidades Enviadas"]));
+}
+
+function ocResumenProveedorRecepcion(row) {
+  return normalizar(campo(row, ["Nro OC", "NRO OC", "OC", "Orden Compra", "ORDEN COMPRA"]));
+}
+
+function programadoProveedoresResumenRecepcion(ocsRecepcionPorProveedor) {
+  const mapa = new Map();
+  (dataRecepcionProveedoresResumen || []).forEach(row => {
+    const codigo = codigoProveedorResumenRecepcion(row);
+    if (!codigo || esPuntaNegraRecepcion(codigo)) return;
+    const oc = ocResumenProveedorRecepcion(row);
+    const ocsRecepcion = ocsRecepcionPorProveedor?.get(codigo);
+    if (ocsRecepcion?.size && (!oc || !ocsRecepcion.has(oc))) return;
+    const bultos = bultosResumenProveedorRecepcion(row);
+    if (bultos <= 0) return;
+    mapa.set(codigo, (mapa.get(codigo) || 0) + bultos);
+  });
+  return mapa;
+}
+
+function resumenProveedoresRecepcionDesdeData(data) {
+  const mapa = new Map();
+  const ocsRecepcionPorProveedor = new Map();
+  data.forEach(r => {
+    const codigoKey = normalizar(r.codigoProveedor);
+    const ocKey = normalizar(r.oc);
+    if (codigoKey && ocKey) {
+      if (!ocsRecepcionPorProveedor.has(codigoKey)) ocsRecepcionPorProveedor.set(codigoKey, new Set());
+      ocsRecepcionPorProveedor.get(codigoKey).add(ocKey);
+    }
+    const key = r.proveedorKey;
+    if (!mapa.has(key)) {
+      mapa.set(key, {
+        codigo: r.codigoProveedor,
+        proveedor: r.proveedor,
+        programadoReporte: 0,
+        recibido: 0,
+        recibidoUnidades: 0,
+        registros: 0,
+        asns: new Set()
+      });
+    }
+    const item = mapa.get(key);
+    item.programadoReporte += r.programado;
+    item.recibido += r.recibido;
+    item.recibidoUnidades += r.unidadesRecibidas;
+    item.registros += 1;
+    if (r.asn) item.asns.add(r.asn);
+  });
+  const programadoResumen = programadoProveedoresResumenRecepcion(ocsRecepcionPorProveedor);
+  return Array.from(mapa.values()).map(x => {
+    const codigo = normalizar(x.codigo);
+    const programadoProveedor = programadoResumen.get(codigo) || 0;
+    const usaResumenProveedor = !esPuntaNegraRecepcion(codigo) && programadoProveedor > 0;
+    const programado = usaResumenProveedor ? programadoProveedor : x.programadoReporte;
+    const recibido = usaResumenProveedor ? x.recibidoUnidades : x.recibido;
+    return {
+      ...x,
+      programado,
+      recibido,
+      programadoProveedor,
+      fuenteProgramado: usaResumenProveedor ? "PROVEEDORES RESUMEN" : "REPORTE RECEPCION",
+      diferencia: programado - recibido,
+      cumplimiento: pctCumplimiento(recibido, programado),
+      asnUnicos: x.asns.size
+    };
+  }).sort((a, b) => b.recibido - a.recibido);
+}
+
 function resumenRecepcion(data) {
   const pallets = palletsRecepcion(data);
-  const totalProgramado = data.reduce((a, b) => a + b.programado, 0);
-  const totalRecibido = data.reduce((a, b) => a + b.recibido, 0);
+  const proveedores = resumenProveedoresRecepcionDesdeData(data);
+  const totalProgramado = proveedores.reduce((a, b) => a + b.programado, 0);
+  const totalRecibido = proveedores.reduce((a, b) => a + b.recibido, 0);
   const asnUnicos = new Set(data.map(r => r.asn).filter(Boolean)).size;
   const pallets917 = pallets.filter(p => p.codigoProveedor === "917");
   const data917 = data.filter(r => r.codigoProveedor === "917");
@@ -504,31 +568,7 @@ function limpiarAjustesRecepcion() {
 }
 
 function resumenProveedoresRecepcion(data) {
-  const mapa = new Map();
-  data.forEach(r => {
-    const key = r.proveedorKey;
-    if (!mapa.has(key)) {
-      mapa.set(key, {
-        codigo: r.codigoProveedor,
-        proveedor: r.proveedor,
-        programado: 0,
-        recibido: 0,
-        registros: 0,
-        asns: new Set()
-      });
-    }
-    const item = mapa.get(key);
-    item.programado += r.programado;
-    item.recibido += r.recibido;
-    item.registros += 1;
-    if (r.asn) item.asns.add(r.asn);
-  });
-  return Array.from(mapa.values()).map(x => ({
-    ...x,
-    diferencia: x.programado - x.recibido,
-    cumplimiento: pctCumplimiento(x.recibido, x.programado),
-    asnUnicos: x.asns.size
-  })).sort((a, b) => b.recibido - a.recibido);
+  return resumenProveedoresRecepcionDesdeData(data);
 }
 
 function tablaProveedoresRecepcion(proveedores, totalRecibido) {
@@ -926,349 +966,6 @@ function verDespachoRanking() {
   `;
 }
 
-function modeloPedido() {
-  const base = dataPedido || [];
-  const firma = `${base.length}:${JSON.stringify(base[0] || {})}:${JSON.stringify(base[base.length - 1] || {})}`;
-  if (modeloPedido.cache && modeloPedido.firma === firma) return modeloPedido.cache;
-
-  modeloPedido.firma = firma;
-  const rows = base.map((r, index) => {
-    const fecha = fechaValorPedido(campo(r, ["Fecha Orden", "FECHA ORDEN", "Fecha", "FECHA"]));
-    return {
-      index,
-      fecha,
-      fechaTexto: fechaCorta(fecha),
-      orden: limpiar(campo(r, ["Nro Orden", "NRO ORDEN", "ORDEN"])),
-      estado: limpiar(campo(r, ["Estado", "ESTADO"])) || "SIN ESTADO",
-      producto: limpiar(campo(r, ["Producto", "CODIGO", "CODIGO PRODUCTO"])),
-      codAlterno: limpiar(campo(r, ["Cod Alternat", "COD ALTERNAT", "COD ALTER"])),
-      descripcion: limpiar(campo(r, ["Descripcion", "DESCRIPCION"])),
-      tienda: limpiar(campo(r, ["Tienda", "LOCAL", "Nombre Destino"])) || "SIN TIENDA",
-      pedido: num(campo(r, ["Bultos Ped", "BULTOS_PEDIDO", "BULTOS PED", "UniOrden"])),
-      asignado: num(campo(r, ["Bultos Asig", "BULTOS_ASIGNADOS", "BULTOS ASIG", "Un Asig"])),
-      picking: num(campo(r, ["Bultos Emp", "BULTOS_EMP", "BULTOS PICKING", "Un Emp"])),
-      despacho: num(campo(r, ["Bultos Env", "BULTOS_ENV", "BULTOS DESPACHO", "Un Env"])),
-      noAsignadoFuente: num(campo(r, ["Bultos No Asig", "BULTOS_NO_ASIGNADO", "BULTOS NO ASIG", "Un No asignadas"]))
-    };
-  }).filter(r => r.pedido || r.asignado || r.picking || r.despacho || r.noAsignadoFuente);
-
-  const asignadoPorFecha = new Map();
-  rows.forEach(r => {
-    const key = r.fechaTexto || "SIN FECHA";
-    asignadoPorFecha.set(key, (asignadoPorFecha.get(key) || 0) + r.asignado);
-  });
-
-  modeloPedido.cache = rows.map(r => ({
-    ...r,
-    noAsignado: (asignadoPorFecha.get(r.fechaTexto || "SIN FECHA") || 0) > 0 ? r.noAsignadoFuente : 0
-  }));
-  pedidoCache = null;
-  return modeloPedido.cache;
-}
-
-let pedidoFechaSeleccionada = "";
-let pedidoCache = null;
-
-function modeloUbicacionesNoAsignado() {
-  return (dataUbicaciones || []).map(r => ({
-    ubicacion: limpiar(campo(r, ["UBICACION", "Ubicacion"])) || "SIN UBICACION",
-    codigo: limpiar(campo(r, ["CODIGO PRODUCTO", "CODIGO", "PRODUCTO"])),
-    descripcion: limpiar(campo(r, ["DESCRIPCION", "Descripcion"])),
-    bultos: num(campo(r, ["BULTOS REQUERIDOS", "BULTOS", "Bultos"]))
-  })).filter(r => r.bultos > 0);
-}
-
-function resumenPedido(data) {
-  const pedido = data.reduce((a, b) => a + b.pedido, 0);
-  const asignado = data.reduce((a, b) => a + b.asignado, 0);
-  const picking = data.reduce((a, b) => a + b.picking, 0);
-  const despacho = data.reduce((a, b) => a + b.despacho, 0);
-  const noAsignado = data.reduce((a, b) => a + b.noAsignado, 0);
-  return {
-    pedido,
-    asignado,
-    picking,
-    despacho,
-    noAsignado,
-    asignable: pedido - noAsignado,
-    pctAsignacion: pct(asignado, pedido),
-    pctPicking: pct(picking, pedido),
-    pctDespacho: pct(despacho, pedido),
-    ordenes: new Set(data.map(r => r.orden).filter(Boolean)).size,
-    tiendas: new Set(data.map(r => r.tienda).filter(Boolean)).size,
-    productos: new Set(data.map(r => r.producto).filter(Boolean)).size
-  };
-}
-
-function pedidoPorFecha(data) {
-  const mapa = new Map();
-  data.forEach(r => {
-    const key = r.fechaTexto || "SIN FECHA";
-    if (!mapa.has(key)) mapa.set(key, { label: key, pedido: 0, asignado: 0, picking: 0, despacho: 0, noAsignado: 0, valor: 0, registros: 0 });
-    const x = mapa.get(key);
-    x.pedido += r.pedido;
-    x.asignado += r.asignado;
-    x.picking += r.picking;
-    x.despacho += r.despacho;
-    x.noAsignado += r.noAsignado;
-    x.valor += r.pedido;
-    x.registros += 1;
-  });
-  return Array.from(mapa.values()).sort((a, b) => {
-    const [da, ma, ya] = a.label.split("/").map(Number);
-    const [db, mb, yb] = b.label.split("/").map(Number);
-    return new Date(ya, ma - 1, da) - new Date(yb, mb - 1, db);
-  });
-}
-
-function cachePedido() {
-  const data = modeloPedido();
-  if (pedidoCache && pedidoCache.rows === data) return pedidoCache;
-
-  const porFecha = new Map();
-  data.forEach(r => {
-    const key = r.fechaTexto || "SIN FECHA";
-    if (!porFecha.has(key)) porFecha.set(key, []);
-    porFecha.get(key).push(r);
-  });
-
-  const fechas = pedidoPorFecha(data);
-  const resumenGeneral = resumenPedido(data);
-  const resumenPorFecha = new Map();
-  const estadosPorFecha = new Map();
-  const tiendasPorFecha = new Map();
-  porFecha.forEach((rows, fecha) => {
-    resumenPorFecha.set(fecha, resumenPedido(rows));
-    estadosPorFecha.set(fecha, agruparSum(rows, r => r.estado, r => r.pedido));
-    tiendasPorFecha.set(fecha, agruparSum(rows, r => r.tienda, r => r.pedido));
-  });
-
-  pedidoCache = {
-    rows: data,
-    porFecha,
-    fechas,
-    resumenGeneral,
-    resumenPorFecha,
-    estadosGeneral: agruparSum(data, r => r.estado, r => r.pedido),
-    tiendasGeneral: agruparSum(data, r => r.tienda, r => r.pedido),
-    estadosPorFecha,
-    tiendasPorFecha,
-    noAsignadoUbi: agruparSum(modeloUbicacionesNoAsignado(), r => r.ubicacion, r => r.bultos)
-  };
-  return pedidoCache;
-}
-
-function filtrarPedidoPorFecha(data) {
-  if (!pedidoFechaSeleccionada) return data;
-  return cachePedido().porFecha.get(pedidoFechaSeleccionada) || [];
-}
-
-function seleccionarFechaPedido(fecha) {
-  pedidoFechaSeleccionada = pedidoFechaSeleccionada === fecha ? "" : fecha;
-  renderPedidoOperacional();
-}
-
-function flujoPedidoPanel(resumen) {
-  const pasos = [
-    { label: "Pedido", valor: resumen.pedido },
-    { label: "Asignado", valor: resumen.asignado },
-    { label: "Picking", valor: resumen.picking },
-    { label: "Despacho", valor: resumen.despacho },
-    { label: "No asignado", valor: resumen.noAsignado }
-  ];
-  return `
-    <article class="visual-panel main-chart">
-      <div class="visual-panel-head">
-        <h3>FLUJO DEL PEDIDO</h3>
-        <span>${fmt(resumen.pedido)}</span>
-      </div>
-      <div class="pedido-flow">
-        ${pasos.map((p, i) => `
-          <div class="pedido-step ${i === pasos.length - 1 ? "warn" : ""}">
-            <strong>${fmt(p.valor)}</strong>
-            <span>${p.label}</span>
-            <div><i style="width:${Math.min(100, pct(p.valor, resumen.pedido))}%"></i></div>
-          </div>
-        `).join("")}
-      </div>
-    </article>
-  `;
-}
-
-function verPedidoCompacto() {
-  const cache = cachePedido();
-  const data = cache.rows;
-  const dataVista = filtrarPedidoPorFecha(data);
-  const resumen = pedidoFechaSeleccionada ? (cache.resumenPorFecha.get(pedidoFechaSeleccionada) || resumenPedido(dataVista)) : cache.resumenGeneral;
-  const resumenGeneral = cache.resumenGeneral;
-  const fechas = cache.fechas.map(x => ({ label: x.label.slice(0, 5), valor: x.pedido }));
-  const noAsignadoUbi = cache.noAsignadoUbi;
-  const fechasTabla = cache.fechas;
-  const fechasConNoAsignado = fechasTabla.filter(f => f.noAsignado > 0);
-  const noAsignadoTotal = resumenGeneral.noAsignado;
-  const pedidoConNoAsignado = fechasConNoAsignado.reduce((a, b) => a + b.pedido, 0);
-  const pctNoAsignadoGlobal = pct(noAsignadoTotal, pedidoConNoAsignado || resumenGeneral.pedido);
-
-  document.getElementById("modulo").innerHTML = `
-    <section class="visual-sheet pedido-compact">
-      <div class="visual-header pedido">
-        <div><h2>INDICADORES DE PEDIDO ${pedidoFechaSeleccionada ? pedidoFechaSeleccionada : ""}</h2><span>Control de asignacion, picking, despacho y pendientes</span></div>
-        <div class="visual-kpi-row">
-          ${visualKpi("PEDIDO", fmt(resumen.pedido))}
-          ${visualKpi("ASIGNADO", fmt(resumen.asignado))}
-          ${visualKpi("DESPACHO", fmt(resumen.despacho))}
-          ${visualKpi("NO ASIGNADO", fmt(noAsignadoTotal))}
-        </div>
-      </div>
-      <div class="pedido-highlights">
-        <div><span>Ordenes</span><strong>${fmt(resumen.ordenes)}</strong></div>
-        <div><span>Tiendas</span><strong>${fmt(resumen.tiendas)}</strong></div>
-        <div><span>Productos</span><strong>${fmt(resumen.productos)}</strong></div>
-        <div class="alert"><span>No asignado</span><strong>${fmt(noAsignadoTotal)}</strong><small>${pctNoAsignadoGlobal.toFixed(1)}% del pedido con pendiente</small></div>
-      </div>
-      <div class="pedido-main-grid">
-        ${visualLine("TENDENCIA DEL PEDIDO", fechas, resumen.pedido, "#2563eb", true)}
-        <article class="visual-panel pedido-pending-card">
-          <span>NO ASIGNADO</span>
-          <strong>${fmt(noAsignadoTotal)}</strong>
-          <em>Bultos pendientes</em>
-          <div><b>${pctNoAsignadoGlobal.toFixed(1)}%</b><small>del pedido con pendiente</small></div>
-        </article>
-      </div>
-      <div class="visual-gauge-row pedido-gauges">
-        ${visualGauge("ASIGNACION", resumen.asignado, resumen.pedido, "#22c55e")}
-        ${visualGauge("PICKING", resumen.picking, resumen.pedido, "#2563eb")}
-        ${visualGauge("DESPACHO", resumen.despacho, resumen.pedido, "#6d28d9")}
-        ${visualGauge("NO ASIG.", noAsignadoTotal, pedidoConNoAsignado || resumenGeneral.pedido, "#ef4444")}
-      </div>
-      <div class="pedido-bottom-grid">
-        <article class="visual-panel main-chart">
-          <div class="visual-panel-head">
-            <h3>RESUMEN POR FECHA</h3>
-            <span>${pedidoFechaSeleccionada ? "Filtro activo" : "Clic para filtrar"}</span>
-          </div>
-          ${tabla(["Fecha", "Pedido", "Asignado", "Picking", "Despacho", "No asignado"], fechasTabla.map(f => `
-            <tr class="clickable-row ${pedidoFechaSeleccionada === f.label ? "selected-row" : ""}" onclick="pedidoFechaSeleccionada = pedidoFechaSeleccionada === '${f.label}' ? '' : '${f.label}'; verPedidoCompacto();">
-              <td><strong>${f.label}</strong></td>
-              <td class="number">${fmt(f.pedido)}</td>
-              <td>${fmt(f.asignado)}</td>
-              <td>${fmt(f.picking)}</td>
-              <td>${fmt(f.despacho)}</td>
-              <td>${fmt(f.noAsignado)}</td>
-            </tr>
-          `))}
-        </article>
-        ${noAsignadoPorFechaPanel(fechasTabla.map(x => ({ label: x.label.slice(0, 5), valor: x.noAsignado })), Math.max(resumenGeneral.noAsignado, 1))}
-      </div>
-    </section>
-  `;
-}
-
-function verPedido() {
-  pedidoFechaSeleccionada = "";
-  document.getElementById("modulo").innerHTML = `<div id="pedidoOperacionalVista"></div>`;
-  renderPedidoOperacional();
-}
-
-function renderPedidoOperacional() {
-  const cache = cachePedido();
-  const data = cache.rows;
-  const dataVista = filtrarPedidoPorFecha(data);
-  const resumen = pedidoFechaSeleccionada ? (cache.resumenPorFecha.get(pedidoFechaSeleccionada) || resumenPedido(dataVista)) : cache.resumenGeneral;
-  const fechas = cache.fechas;
-  const estados = pedidoFechaSeleccionada ? (cache.estadosPorFecha.get(pedidoFechaSeleccionada) || []) : cache.estadosGeneral;
-  const tiendas = pedidoFechaSeleccionada ? (cache.tiendasPorFecha.get(pedidoFechaSeleccionada) || []) : cache.tiendasGeneral;
-  const noAsignadoUbi = cache.noAsignadoUbi;
-
-  document.getElementById("pedidoOperacionalVista").innerHTML = `
-    <section class="hero pedido-hero">
-      <div>
-        <span>Dashboard operacional</span>
-        <h2>Pedido ${pedidoFechaSeleccionada ? pedidoFechaSeleccionada : ""}</h2>
-      </div>
-      <div class="hero-metric">
-        <strong>${fmt(resumen.pedido)}</strong>
-        <span>Bultos pedido</span>
-      </div>
-    </section>
-    <section class="kpi-grid">
-      ${kpi("Pedido", fmt(resumen.pedido), "Total", "accent")}
-      ${kpi("Asignado", fmt(resumen.asignado), `${resumen.pctAsignacion.toFixed(1)}%`)}
-      ${kpi("Picking", fmt(resumen.picking), `${resumen.pctPicking.toFixed(1)}%`)}
-      ${kpi("Despacho", fmt(resumen.despacho), `${resumen.pctDespacho.toFixed(1)}%`)}
-      ${kpi("No asignado", fmt(resumen.noAsignado), "Pendiente", "warn")}
-      ${kpi("Ordenes", fmt(resumen.ordenes))}
-    </section>
-    <section class="dashboard-grid">
-      <div class="card wide">
-        <div class="card-title"><h2>Resumen por fecha</h2><span>${fmt(fechas.length)} dias</span></div>
-        ${tabla(["Fecha", "Pedido", "Asignado", "Picking", "Despacho", "No asignado"], fechas.map(f => `
-          <tr class="clickable-row ${pedidoFechaSeleccionada === f.label ? "selected-row" : ""}" onclick="seleccionarFechaPedido('${f.label}')">
-            <td><strong>${f.label}</strong></td>
-            <td class="number">${fmt(f.pedido)}</td>
-            <td>${fmt(f.asignado)}</td>
-            <td>${fmt(f.picking)}</td>
-            <td>${fmt(f.despacho)}</td>
-            <td>${fmt(f.noAsignado)}</td>
-          </tr>
-        `))}
-      </div>
-      <div class="card">
-        <h2>Estado pedido</h2>
-        ${pieChart(estados.slice(0, 6), resumen.pedido, fmt(resumen.pedido))}
-      </div>
-      <div class="card">
-        <h2>Ubicacion no asignado</h2>
-        ${pieChart(noAsignadoUbi, Math.max(resumen.noAsignado, noAsignadoUbi.reduce((a, b) => a + b.valor, 0)), fmt(resumen.noAsignado))}
-      </div>
-      <div class="card wide">
-        <h2>Top tiendas pedido</h2>
-        ${barrasHorizontales(tiendas.slice(0, 10), resumen.pedido)}
-      </div>
-    </section>
-  `;
-}
-
-function verPedidoRanking() {
-  const data = modeloPedido();
-  const resumen = resumenPedido(data);
-  const tiendas = agruparSum(data, r => r.tienda, r => r.pedido);
-  const productos = agruparSum(data, r => `${r.producto} | ${r.descripcion || "SIN DESCRIPCION"}`, r => r.pedido);
-  const noAsignadoProductos = agruparSum(data.filter(r => r.noAsignado > 0), r => `${r.producto} | ${r.descripcion || "SIN DESCRIPCION"}`, r => r.noAsignado);
-  const estados = agruparSum(data, r => r.estado, r => r.pedido);
-
-  document.getElementById("modulo").innerHTML = `
-    <section class="hero pedido-hero">
-      <div>
-        <span>Ranking operativo</span>
-        <h2>Pedido</h2>
-      </div>
-      <div class="hero-metric">
-        <strong>${fmt(resumen.pedido)}</strong>
-        <span>Bultos pedido</span>
-      </div>
-    </section>
-    <section class="dashboard-grid">
-      <div class="card">
-        <h2>Estados</h2>
-        ${barras(estados.slice(0, 10), resumen.pedido)}
-      </div>
-      <div class="card">
-        <h2>Top tiendas</h2>
-        ${barras(tiendas.slice(0, 10), resumen.pedido)}
-      </div>
-      <div class="card wide">
-        <div class="card-title"><h2>Productos con mas pedido</h2><span>Top 10</span></div>
-        ${barrasHorizontales(productos.slice(0, 10), resumen.pedido)}
-      </div>
-      <div class="card wide">
-        <div class="card-title"><h2>Productos no asignados</h2><span>Top 10</span></div>
-        ${barrasHorizontales(noAsignadoProductos.slice(0, 10), Math.max(resumen.noAsignado, 1))}
-      </div>
-    </section>
-  `;
-}
-
 function descargarCsv(nombre, headers, rows) {
   const clean = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
   const csv = [headers.map(clean).join(";"), ...rows.map(row => row.map(clean).join(";"))].join("\n");
@@ -1524,38 +1221,6 @@ function asistenciaEditable() {
   `;
 }
 
-function pedidoFechaResumenes() {
-  const data = modeloPedido();
-  const porFecha = new Map();
-  data.forEach(r => {
-    const key = keyFecha(r.fecha);
-    if (!key) return;
-    if (!porFecha.has(key)) porFecha.set(key, []);
-    porFecha.get(key).push(r);
-  });
-  const keys = Array.from(porFecha.keys()).sort((a, b) => fechaDesdeKey(a) - fechaDesdeKey(b));
-  const ultimoKey = keys[keys.length - 1] || "";
-  const fechaAnterior = fechaDesdeKey(ultimoKey);
-  if (fechaAnterior) fechaAnterior.setDate(fechaAnterior.getDate() - 1);
-  const anteriorKeyCalendario = keyFecha(fechaAnterior);
-  const anteriorKey = porFecha.has(anteriorKeyCalendario) ? anteriorKeyCalendario : (keys[keys.length - 2] || "");
-  const dataSinUltimaFecha = data.filter(r => keyFecha(r.fecha) !== ultimoKey);
-  return {
-    general: resumenPedido(data),
-    generalSinUltimaFecha: resumenPedido(dataSinUltimaFecha),
-    ultimoKey,
-    anteriorKey,
-    ultimo: resumenPedido(porFecha.get(ultimoKey) || []),
-    anterior: resumenPedido(porFecha.get(anteriorKey) || [])
-  };
-}
-
-function fechaReporteLabel(key) {
-  const fecha = fechaDesdeKey(key);
-  if (!fecha) return "-";
-  return `${String(fecha.getDate()).padStart(2, "0")}/${String(fecha.getMonth() + 1).padStart(2, "0")}/${fecha.getFullYear()}`;
-}
-
 function generalValueBox(valor, label, note = "", tone = "blue") {
   return `
     <article class="general-value-box ${tone}">
@@ -1662,7 +1327,6 @@ function verReporteGeneral() {
   const picking = modeloPicking();
   const recepcion = modeloRecepcion();
   const despacho = modeloDespacho();
-  const pedido = pedidoFechaResumenes();
   const totalPicking = picking.reduce((a, b) => a + b.bultos, 0);
   const resRecep = resumenRecepcionVisual(resumenRecepcion(recepcion));
   const proveedores = resumenProveedoresRecepcion(recepcion);
@@ -1697,21 +1361,12 @@ function verReporteGeneral() {
           ${tablaDespachoGeneral(resDesp)}
         </article>
 
-        <article class="general-block pedido-operativo-block">
+        <article class="general-block picking-operativo-block">
           <h3>PICKING</h3>
           <div class="general-stack-card">
             ${generalValueBox(fmt(totalPicking), "TOTAL PICKING", "Data PICKING", "blue")}
-            ${generalValueBox(fmt(pedido.anterior.pedido), "BULTOS PEDIDO", `Fecha ${fechaReporteLabel(pedido.anteriorKey)}`, "blue")}
-            ${generalValueBox(fmt(pedido.anterior.asignado), "ASIGNADO", `Fecha ${fechaReporteLabel(pedido.anteriorKey)}`, "green")}
-          </div>
-        </article>
-
-        <article class="general-block pedido-block">
-          <h3>PEDIDO</h3>
-          <div class="general-date-line"><span>FECHA :</span><strong>${fechaCorta(new Date())}</strong></div>
-          <div class="general-pedido-boxes">
-            ${generalValueBox(fmt(pedido.ultimo.pedido), "BULTOS PEDIDO", "Ultima fecha", "blue")}
-            ${generalValueBox(fmt(pedido.generalSinUltimaFecha.noAsignado), "NO ASIGNADO", "Sin considerar la ultima fecha", "red")}
+            ${generalValueBox(fmt(new Set(picking.map(r => r.usuario).filter(Boolean)).size), "USUARIOS", "Data PICKING", "green")}
+            ${generalValueBox(fmt(new Set(picking.map(r => r.lpn).filter(Boolean)).size), "LPNS", "Data PICKING", "gold")}
           </div>
         </article>
       </div>
@@ -1789,31 +1444,6 @@ function visualColumns(title, data, total, color = "#6d28d9") {
             <span>${corto(x.label, 10)}</span>
           </div>
         `).join("")}
-      </div>
-    </article>
-  `;
-}
-
-function noAsignadoPorFechaPanel(data, total) {
-  const max = Math.max(...data.map(x => x.valor), 1);
-  return `
-    <article class="visual-panel main-chart pedido-no-asignado-chart">
-      <div class="visual-panel-head">
-        <div><h3>NO ASIGNADO POR FECHA</h3><span>Comparativo diario de bultos pendientes</span></div>
-        <strong>${fmt(total)} <small>Total pendiente</small></strong>
-      </div>
-      <div class="pedido-pending-bars">
-        ${data.map(x => {
-          const porcentaje = Math.max(x.valor > 0 ? 3 : 1, pct(x.valor, max));
-          return `
-            <div class="pedido-pending-bar ${x.valor > 0 ? "active" : ""}">
-              <strong>${fmt(x.valor)}</strong>
-              <div><i style="height:${porcentaje}%"></i></div>
-              <span>${x.label}</span>
-              <small>${pct(x.valor, total).toFixed(1)}% del pendiente</small>
-            </div>
-          `;
-        }).join("")}
       </div>
     </article>
   `;

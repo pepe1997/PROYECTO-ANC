@@ -1,22 +1,23 @@
 const SHEET_ID = "1fMEnjNjCZf0c-9VPmeHOQnFERXy5jz7XJ2lY64tblRc";
+const RECEPCION_PROVEEDORES_SHEET_ID = "18iiFahjssG-2Or8HE9KjBer3DcuG0mDaMpxZj-rqycI";
 const HOJAS = {
   picking: "PICKING",
   recepcion: "RECEPCION",
   despacho: "DESPACHO",
-  pedido: "PEDIDO",
-  ubicaciones: "UBICACIONES"
+  ubicaciones: "UBICACIONES",
+  proveedoresResumen: "RESUMEN"
 };
 
 let dataBI = [];
 let dataPicking = [];
 let dataRecepcion = [];
 let dataDespacho = [];
-let dataPedido = [];
 let dataUbicaciones = [];
+let dataRecepcionProveedoresResumen = [];
 let datosListos = false;
 
-async function cargarHoja(nombre) {
-  const url = `https://opensheet.elk.sh/${SHEET_ID}/${encodeURIComponent(nombre)}`;
+async function cargarHojaDesde(sheetId, nombre) {
+  const url = `https://opensheet.elk.sh/${sheetId}/${encodeURIComponent(nombre)}`;
   try {
     if (location.protocol === "file:") throw new Error("carga local");
     if (window.parent !== window && typeof window.parent.ancCargarJson === "function") {
@@ -26,6 +27,10 @@ async function cargarHoja(nombre) {
   const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText || ""}`.trim());
   return await res.json();
+}
+
+function cargarHoja(nombre) {
+  return cargarHojaDesde(SHEET_ID, nombre);
 }
 
 function estado(texto) {
@@ -65,20 +70,19 @@ function recepcionDemo() {
   ];
 }
 
+function proveedoresResumenDemo() {
+  return [
+    { "Proveedor": "2041394056", "Nombre Proveedor": "EMBOTELLADORA SAN MIGUEL DEL SUR S", "Un Req": "120" },
+    { "Proveedor": "2029718245", "Nombre Proveedor": "SNACKS AMERICA LATINA S.R.L.", "Un Req": "80" }
+  ];
+}
+
 function despachoDemo() {
   return [
     { "NroPallet": "01PL96200297006", "Nro LPNs": "CT9620000602803", "Producto": "20138796", "Bultos": "24", "Nro Carga": "OS96200000695964", "Destino": "1263", "Nombre Destino": "BUENOS3 TRU MS", "Fe y Hr de Despacho": "2026-05-09 12:52:07", "Jerarq1": "BAZAR", "Hora": "12" },
     { "NroPallet": "01PL96200297006", "Nro LPNs": "CT9620000602803", "Producto": "29856", "Bultos": "17", "Nro Carga": "OS96200000695964", "Destino": "1263", "Nombre Destino": "BUENOS3 TRU MS", "Fe y Hr de Despacho": "2026-05-09 12:52:07", "Jerarq1": "BEBIDAS", "Hora": "12" },
     { "NroPallet": "01PL96200297361", "Nro LPNs": "CT9620000602864", "Producto": "20501355", "Bultos": "80", "Nro Carga": "OS96200000695965", "Destino": "1623", "Nombre Destino": "ALAMEDA 2 TRU MS", "Fe y Hr de Despacho": "2026-05-09 20:15:07", "Jerarq1": "BEBIDAS", "Hora": "20" },
     { "NroPallet": "01PL96200296082", "Nro LPNs": "CT9620000602900", "Producto": "20468442", "Bultos": "42", "Nro Carga": "OS96200000695966", "Destino": "2749", "Nombre Destino": "SPSA PETTION4 TRU MS", "Fe y Hr de Despacho": "2026-05-09 22:32:07", "Jerarq1": "COMESTIBLES", "Hora": "22" }
-  ];
-}
-
-function pedidoDemo() {
-  return [
-    { "Fecha Orden": "2026-05-09", "Nro Orden": "TRF00108326211", "Estado": "Enviado", "Producto": "7750182000703", "Descripcion": "COCA COLA GASEOSA SIN AZUCAR BT 1 5 L", "Tienda": "ALAMEDA 2 TRU MS", "Bultos Ped": "120", "Bultos Asig": "120", "Bultos Emp": "100", "Bultos Env": "80", "Bultos No Asig": "0" },
-    { "Fecha Orden": "2026-05-09", "Nro Orden": "TRF00108326212", "Estado": "Asignado", "Producto": "7754014007106", "Descripcion": "CLEAN POWER LEJIA TRADICIONAL", "Tienda": "SPSA PETTION4 TRU MS", "Bultos Ped": "90", "Bultos Asig": "82", "Bultos Emp": "40", "Bultos Env": "15", "Bultos No Asig": "8" },
-    { "Fecha Orden": "2026-05-08", "Nro Orden": "TRF00108326213", "Estado": "Empacado", "Producto": "2200205687640", "Descripcion": "MISTRAL LAV LIQ LIMON BT 1L", "Tienda": "BUENOS3 TRU MS", "Bultos Ped": "60", "Bultos Asig": "60", "Bultos Emp": "60", "Bultos Env": "45", "Bultos No Asig": "0" }
   ];
 }
 
@@ -98,8 +102,8 @@ async function cargarDatos() {
     dataPicking = pickingDemo();
     dataRecepcion = recepcionDemo();
     dataDespacho = despachoDemo();
-    dataPedido = pedidoDemo();
     dataUbicaciones = ubicacionesDemo();
+    dataRecepcionProveedoresResumen = proveedoresResumenDemo();
     datosListos = true;
     estado("Modo demo | Configura SHEET_ID");
     return;
@@ -127,17 +131,17 @@ async function cargarDatos() {
   }
 
   try {
-    dataPedido = await cargarHoja(HOJAS.pedido);
-  } catch (error) {
-    console.warn("No se pudo cargar PEDIDO, usando demo.", error);
-    dataPedido = pedidoDemo();
-  }
-
-  try {
     dataUbicaciones = await cargarHoja(HOJAS.ubicaciones);
   } catch (error) {
     console.warn("No se pudo cargar UBICACIONES, usando demo.", error);
     dataUbicaciones = ubicacionesDemo();
+  }
+
+  try {
+    dataRecepcionProveedoresResumen = await cargarHojaDesde(RECEPCION_PROVEEDORES_SHEET_ID, HOJAS.proveedoresResumen);
+  } catch (error) {
+    console.warn("No se pudo cargar RESUMEN de proveedores, usando programado de recepcion.", error);
+    dataRecepcionProveedoresResumen = [];
   }
 
   dataBI = dataPicking.map(r => ({
@@ -149,13 +153,8 @@ async function cargarDatos() {
     VALOR: r["BULTOS"],
     DESTINO: r["LOCAL"]
   }));
-  if (typeof modeloPedido === "function") {
-    modeloPedido.cache = null;
-    modeloPedido.firma = "";
-  }
-  if (typeof pedidoCache !== "undefined") pedidoCache = null;
   datosListos = true;
-  estado(`PICKING ${dataPicking.length} | RECEPCION ${dataRecepcion.length} | DESPACHO ${dataDespacho.length} | PEDIDO ${dataPedido.length}`);
+  estado(`PICKING ${dataPicking.length} | RECEPCION ${dataRecepcion.length} | DESPACHO ${dataDespacho.length}`);
 }
 
 async function iniciarAplicacion() {

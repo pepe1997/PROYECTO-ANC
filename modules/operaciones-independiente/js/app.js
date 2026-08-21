@@ -265,6 +265,109 @@ function enRangoCapacidad(valor, inicio, fin) {
   return valor >= inicio && valor <= fin;
 }
 
+const UCA_MASCARAS_RESERVA_09_11_12 = new Set([
+  "MASS-09-02-02-01",
+  "MASS-09-02-02-02",
+  "MASS-09-02-03-01",
+  "MASS-09-02-03-02",
+  "MASS-09-02-04-01",
+  "MASS-09-02-04-02",
+  "MASS-09-02-05-01",
+  "MASS-09-02-05-02",
+  "MASS-09-04-02-01",
+  "MASS-09-04-02-02",
+  "MASS-09-04-03-01",
+  "MASS-09-04-03-02",
+  "MASS-09-04-04-01",
+  "MASS-09-04-04-02",
+  "MASS-09-04-05-01",
+  "MASS-09-04-05-02",
+  "MASS-09-06-02-01",
+  "MASS-09-06-02-02",
+  "MASS-09-06-03-01",
+  "MASS-09-06-03-02",
+  "MASS-09-06-04-01",
+  "MASS-09-06-04-02",
+  "MASS-09-06-05-01",
+  "MASS-09-06-05-02",
+  "MASS-09-08-02-01",
+  "MASS-09-08-02-02",
+  "MASS-09-08-03-01",
+  "MASS-09-08-03-02",
+  "MASS-09-08-04-01",
+  "MASS-09-08-04-02",
+  "MASS-09-08-05-01",
+  "MASS-09-08-05-02",
+  "MASS-09-10-02-01",
+  "MASS-09-10-02-02",
+  "MASS-09-10-03-01",
+  "MASS-09-10-03-02",
+  "MASS-09-10-04-01",
+  "MASS-09-10-04-02",
+  "MASS-09-10-05-01",
+  "MASS-09-10-05-02",
+  "MASS-09-12-02-01",
+  "MASS-09-12-02-02",
+  "MASS-09-12-04-01",
+  "MASS-09-12-04-02",
+  "MASS-09-12-05-01",
+  "MASS-09-12-05-02",
+  "MASS-09-14-02-01",
+  "MASS-09-14-02-02",
+  "MASS-09-14-03-02",
+  "MASS-09-14-05-01",
+  "MASS-09-14-05-02",
+  "MASS-09-16-02-02",
+  "MASS-09-16-03-01",
+  "MASS-09-16-03-02",
+  "MASS-09-16-04-01",
+  "MASS-09-16-04-02",
+  "MASS-09-16-05-01",
+  "MASS-09-16-05-02",
+  "MASS-11-01-07-02",
+  "MASS-11-03-07-01",
+  "MASS-11-03-07-02",
+  "MASS-11-05-07-01",
+  "MASS-11-05-07-02",
+  "MASS-11-09-07-01",
+  "MASS-11-09-07-02",
+  "MASS-11-11-07-01",
+  "MASS-11-11-07-02",
+  "MASS-11-13-07-01",
+  "MASS-11-13-07-02",
+  "MASS-11-15-07-01",
+  "MASS-11-15-07-02",
+  "MASS-12-20-02-01",
+  "MASS-12-20-02-02",
+  "MASS-12-20-04-01",
+  "MASS-12-20-04-02",
+  "MASS-12-22-02-01",
+  "MASS-12-22-02-02",
+  "MASS-12-22-03-01",
+  "MASS-12-22-03-02",
+  "MASS-12-22-04-02",
+  "MASS-12-24-02-01",
+  "MASS-12-24-02-02",
+  "MASS-12-24-03-01",
+  "MASS-12-24-03-02",
+  "MASS-12-24-04-01",
+  "MASS-12-24-04-02",
+  "MASS-12-26-02-01",
+  "MASS-12-26-03-01",
+  "MASS-12-26-04-01",
+  "MASS-12-26-04-02",
+  "MASS-12-28-04-01",
+  "MASS-12-32-02-02",
+  "MASS-12-32-03-02",
+  "MASS-12-32-04-02",
+  "MASS-12-34-02-01",
+  "MASS-12-34-02-02",
+  "MASS-12-34-03-01",
+  "MASS-12-34-03-02",
+  "MASS-12-34-04-01",
+  "MASS-12-34-04-02"
+]);
+
 function esUbicacionReservaOcupadaPorRegla(ubicacion) {
   const pos = parseUbicacionMassCapacidad(ubicacion);
   if (!pos || !esPasilloCapacidadValido(pos.pasillo)) return false;
@@ -282,15 +385,8 @@ function esUbicacionReservaOcupadaPorRegla(ubicacion) {
   if (pasillo === "07") {
     return [5, 7].includes(bahia) && enRangoCapacidad(nivel, 1, 4) && colValida;
   }
-  if (pasillo === "09") {
-    return true;
-  }
-  if (pasillo === "11") {
-    return (bahia >= 1 && bahia <= 33 && bahia % 2 === 1 && nivel === 7 && colValida) ||
-      (bahia >= 22 && bahia <= 34 && bahia % 2 === 0 && nivel === 4 && colValida);
-  }
-  if (pasillo === "12") {
-    return bahia >= 20 && bahia <= 34 && bahia % 2 === 0 && enRangoCapacidad(nivel, 2, 4) && colValida;
+  if (["09", "11", "12"].includes(pasillo)) {
+    return UCA_MASCARAS_RESERVA_09_11_12.has(normalizar(ubicacion));
   }
   return false;
 }
@@ -997,6 +1093,17 @@ function codigoAltRecepcion(row) {
   return normalizar(campoRecepcion(row, ["Codigo Alternativo", "CODIGO ALTERNATIVO", "CODIGO_ALT", "Cod Alternat", "Artic Padre", "COD ALTERNATIVO"]));
 }
 
+function normalizarCodigoRecepcion(valor) {
+  return normalizar(valor).replace(/[^A-Z0-9]/g, "");
+}
+
+function codigosProductoRecepcion(row) {
+  return [
+    codigoRecepcion(row),
+    codigoAltRecepcion(row)
+  ].map(normalizarCodigoRecepcion).filter(Boolean);
+}
+
 function descripcionRecepcion(row) {
   return limpiar(campoRecepcion(row, ["Descrip Artic", "Descrip Artíc", "Descrip ArtÃ­c", "Descripcion", "DESCRIPCION", "Descripcion Producto"]));
 }
@@ -1105,10 +1212,20 @@ function mapaAsnPaleteroRecepcion() {
 }
 
 function codigosSepararPaleteroRecepcion() {
-  const codigos = new Set();
+  const codigos = new Set(["2200204218128"]);
   (dataRecepcionPaleterosCodigo || []).forEach(row => {
-    const codigo = normalizar(campoRecepcion(row, ["CODIGO", "Codigo", "Producto", "PRODUCTO"]));
-    if (codigo) codigos.add(codigo);
+    const valores = new Set([
+      campoRecepcion(row, ["CODIGO", "Codigo", "Producto", "PRODUCTO", "SKU"]),
+      campoRecepcion(row, ["Codigo Alternativo", "CODIGO ALTERNATIVO", "CODIGO_ALT", "Cod Alternat", "Artic Padre", "COD ALTERNATIVO"])
+    ]);
+    Object.entries(row || {}).forEach(([columna, valor]) => {
+      const canon = canonColumnaRecepcion(columna);
+      if (/(CODIGO|COD|PRODUCTO|SKU|ARTIC|PADRE|ALTERNAT)/.test(canon)) valores.add(valor);
+    });
+    valores.forEach(valor => {
+      const codigo = normalizarCodigoRecepcion(valor);
+      if (codigo && codigo.length >= 6) codigos.add(codigo);
+    });
   });
   return codigos;
 }
@@ -1151,6 +1268,8 @@ function validacionPaleteroAsnCodigo() {
     const pallet = limpiar(campoRecepcion(row, ["Nro Pallet", "NRO PALLET", "Pallet", "PALLET"]));
     const lpn = limpiar(campoRecepcion(row, ["Nro LPN", "LPN", "NRO LPN"]));
     const codigo = codigoRecepcion(row) || codigoAltRecepcion(row);
+    const codigosProducto = codigosProductoRecepcion(row);
+    const codigosShipTo = codigosProducto.filter(cod => codigosValidar.has(cod));
     if (!asn || !pallet) return;
     const info = asnInfo.get(asn) || {};
     const key = `${asn}|${pallet}`;
@@ -1170,14 +1289,12 @@ function validacionPaleteroAsnCodigo() {
     }
     const item = pallets.get(key);
     if (lpn) item.lpnsSet.add(lpn);
-    if (codigo) {
-      item.codigosSet.add(codigo);
-      if (codigosValidar.has(codigo)) item.codigosSepararSet.add(codigo);
-    }
+    codigosProducto.forEach(cod => item.codigosSet.add(cod));
+    codigosShipTo.forEach(cod => item.codigosSepararSet.add(cod));
     item.bultos += bultosRecepcion(row);
     item.unidades += numRecepcion(campoRecepcion(row, ["Un Env", "UN ENV", "Un Rcb", "UN RCB"]));
-    if (codigo && codigosValidar.has(codigo)) {
-      const prodKey = `${lpn}|${codigo}`;
+    codigosShipTo.forEach(codigoShipTo => {
+      const prodKey = `${lpn}|${codigoShipTo}`;
       if (!item.productosShipTo.has(prodKey)) {
         item.productosShipTo.set(prodKey, {
           asn,
@@ -1185,7 +1302,7 @@ function validacionPaleteroAsnCodigo() {
           fechaCreacion: info.fechaCreacion || "",
           pallet,
           lpn,
-          producto: codigo,
+          producto: codigoShipTo,
           descripcion: descripcionRecepcion(row),
           bultos: 0,
           unidades: 0
@@ -1194,7 +1311,7 @@ function validacionPaleteroAsnCodigo() {
       const prod = item.productosShipTo.get(prodKey);
       prod.bultos += bultosRecepcion(row);
       prod.unidades += numRecepcion(campoRecepcion(row, ["Un Env", "UN ENV", "Un Rcb", "UN RCB"]));
-    }
+    });
 
     if (lpn) {
       const lpnKey = `${asn}|${pallet}|${lpn}`;
@@ -1212,10 +1329,8 @@ function validacionPaleteroAsnCodigo() {
         });
       }
       const lpnItem = lpns.get(lpnKey);
-      if (codigo) {
-        lpnItem.codigosSet.add(codigo);
-        if (codigosValidar.has(codigo)) lpnItem.codigosSepararSet.add(codigo);
-      }
+      codigosProducto.forEach(cod => lpnItem.codigosSet.add(cod));
+      codigosShipTo.forEach(cod => lpnItem.codigosSepararSet.add(cod));
       lpnItem.bultos += bultosRecepcion(row);
       lpnItem.unidades += numRecepcion(campoRecepcion(row, ["Un Env", "UN ENV", "Un Rcb", "UN RCB"]));
     }
@@ -1945,6 +2060,7 @@ function calcularRecepcionUca(capacidad, prediccionPts) {
     firmaFilas(dataRecepcionProveedoresResumen, ["Nro OC", "Nombre Proveedor", "Tipo OC", "Un Env"]),
     firmaFilas(dataRecepcionPaleteros, ["ASN Entrada", "Nro Pallet", "Nro LPN", "Producto", "BULTOS"]),
     firmaFilas(dataRecepcionPaleterosAsn, ["Nro ASN", "NRO ASN", "ASN", "Nro Camion", "NRO CAMION"]),
+    firmaFilas(dataRecepcionPaleterosCodigo, ["CODIGO", "Codigo", "Producto", "PRODUCTO"]),
     firmaFilas(dataProductos, ["CODIGO", "CODIGO_ALT", "JERARQUIA 2"]),
     firmaFilas(dataLPN, ["LPN", "ESTADO", "UBICACION", "CODIGO", "CODIGO_ALT", "BULTOS"]),
     firmaFilas(dataInventario, ["PRODUCTO", "UBICACION", "UNACT", "UXB"]),
@@ -3393,6 +3509,28 @@ function estadoUbicacionLpnRecepcion(info) {
   return { estado: "MASS SIN ESTADO UBICADO", clase: "warn" };
 }
 
+function clavePalletUbicadosRecepcion(asn, pallet) {
+  return `${normalizar(asn)}|${normalizar(pallet)}`;
+}
+
+function palletsShipToRecepcionSet(data) {
+  const set = new Set();
+  ((data?.validacionPaletero?.detalle) || []).forEach(row => {
+    if (!row.tieneCodigoSeparar) return;
+    set.add(clavePalletUbicadosRecepcion(row.asn, row.pallet));
+  });
+  return set;
+}
+
+function descripcionBlacklineRecepcion(...valores) {
+  return valores.some(valor => normalizar(valor).includes("BLACKLINE"));
+}
+
+function codigoNoAlmacenableRecepcion(...valores) {
+  const codigosNoAlmacenables = new Set(["0736372560100"]);
+  return valores.some(valor => codigosNoAlmacenables.has(normalizar(valor)));
+}
+
 function detalleRecepcionUbicadosLpns(data) {
   const key = [
     cacheRecepcionUca.key || firmaFilas(data?.paleterosMono || [], ["asn", "camion", "nroPallet", "lpnsTxt", "lpn", "bultos"]),
@@ -3400,20 +3538,27 @@ function detalleRecepcionUbicadosLpns(data) {
   ].join("::");
   if (cacheDetalleRecepcionUbicados.key === key && cacheDetalleRecepcionUbicados.data) return cacheDetalleRecepcionUbicados.data;
   const mapaLpn = mapaLpnsRecepcionUbicados();
+  const palletsShipTo = palletsShipToRecepcionSet(data);
   const rows = [];
   (data.paleterosMono || []).forEach(pallet => {
+    const palletId = pallet.nroPallet || pallet.lpn || "";
+    if (palletsShipTo.has(clavePalletUbicadosRecepcion(pallet.asn, palletId))) return;
     const lpns = lpnsDePalletPaletero(pallet);
     const bultosPorLpn = num(pallet.bultos) / Math.max(1, lpns.length);
     lpns.forEach(lpn => {
       const info = mapaLpn.get(normalizar(lpn));
+      const descripcionLpn = Array.from(info?.descripciones || []).join(" | ");
+      const codigosLpn = Array.from(info?.codigos || []).join(" | ");
+      if (descripcionBlacklineRecepcion(pallet.descripcion, descripcionLpn)) return;
+      if (codigoNoAlmacenableRecepcion(pallet.productosTxt, codigosLpn)) return;
       const validacion = estadoUbicacionLpnRecepcion(info);
       rows.push({
         asn: pallet.asn || "SIN ASN",
         placa: pallet.camion || "SIN PLACA",
-        pallet: pallet.nroPallet || pallet.lpn || "",
+        pallet: palletId,
         lpn,
         codigo: pallet.productosTxt || "",
-        descripcion: pallet.descripcion || "",
+        descripcion: descripcionLpn || pallet.descripcion || "",
         bultos: info?.bultos || bultosPorLpn,
         ubicacion: info?.ubicacion || "",
         estadoLpn: info?.estado || "",
@@ -3607,7 +3752,7 @@ function bloqueRecepcionUbicadosLpns(data) {
     <section class="recepcion-validation-card ubicados-view">
       ${filtrosRecepcionUbicadosHtml(detalle)}
       <section class="kpi-grid compact">
-        ${kpi("Monopalets/LPN", fmt(total), "solo paleteros mono")}
+        ${kpi("Monopalets/LPN", fmt(total), "almacenables: sin ship to ni blackline")}
         ${kpi("Ubicados reserva", fmt(ubicados), `${pct(ubicados, total).toFixed(1)}%`, "ok")}
         ${kpi("Sin ubicacion", fmt(sinUbicacion), "en blanco / paletero", sinUbicacion ? "warn" : "")}
         ${kpi("Otras ubicaciones", fmt(otras), "no MASS", otras ? "danger" : "")}
