@@ -3,7 +3,6 @@ const MODULOS = [
   { id: "asignacion", nombre: "Asignacion Operacional", descripcion: "Cobertura, reserva, paletero y productos sin stock.", ruta: "modules/asignacion-independiente/index.html?integrado=1", icono: "AO" },
   { id: "bi", nombre: "Reporte Operacional", descripcion: "Indicadores ejecutivos de picking, recepcion y despacho.", ruta: "modules/dashboard-bi/index.html?integrado=1", icono: "BI" },
   { id: "operaciones", nombre: "Control Operativo", descripcion: "Inventario, LPNs, ubicaciones, slotting y bloqueo.", ruta: "modules/operaciones-independiente/index.html?integrado=1", icono: "CO" },
-  { id: "rf", nombre: "RF", descripcion: "Consulta mobile de LPN por escaner o camara.", ruta: "modules/rf/index.html?integrado=1", icono: "RF" },
   { id: "tareas", nombre: "Tareas Asignacion", descripcion: "Seguimiento de tareas y reportes desde asignacion.", ruta: "modules/tareas-asignacion/index.html?integrado=1", icono: "TA" }
 ];
 
