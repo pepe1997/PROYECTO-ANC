@@ -2,17 +2,29 @@ const SHEET_ID = "1fMEnjNjCZf0c-9VPmeHOQnFERXy5jz7XJ2lY64tblRc";
 const RECEPCION_PROVEEDORES_SHEET_ID = "18iiFahjssG-2Or8HE9KjBer3DcuG0mDaMpxZj-rqycI";
 const HOJAS = {
   picking: "PICKING",
+  case: "case",
+  tareas: "tareas",
+  asignacion: "asignacion",
   recepcion: "RECEPCION",
-  despacho: "DESPACHO",
+  carga: "CARGA",
+  cartones: "CARTONES",
+  productos: "PRODUCTOS",
   ubicaciones: "UBICACIONES",
+  usuarios: "USUARIO",
   proveedoresResumen: "RESUMEN"
 };
 
 let dataBI = [];
 let dataPicking = [];
+let dataCase = [];
+let dataTareas = [];
+let dataAsignacion = [];
 let dataRecepcion = [];
-let dataDespacho = [];
+let dataCarga = [];
+let dataCartones = [];
+let dataProductos = [];
 let dataUbicaciones = [];
+let dataUsuarios = [];
 let dataRecepcionProveedoresResumen = [];
 let datosListos = false;
 
@@ -60,6 +72,35 @@ function pickingDemo() {
   ];
 }
 
+function caseDemo() {
+  return [
+    { "Tipo Asignac": "Interno Bulk Pick", "Estado": "terminado", "QtyAsgn Cases": "120", "Usua Pick": "SP76148786", "Fe Y Hr Modif": "2026-05-09 08:30", "Destino": "1263", "Nro LPN": "CT962CASE001" },
+    { "Tipo Asignac": "Interno Bulk Pick", "Estado": "asignados", "QtyAsgn Cases": "80", "Usua Pick": "SP70686369", "Fe Y Hr Modif": "2026-05-09 10:15", "Destino": "1405", "Nro LPN": "CT962CASE002" },
+    { "Tipo Asignac": "Interno Bulk Pick", "Estado": "terminado", "QtyAsgn Cases": "95", "Usua Pick": "SP74283955", "Fe Y Hr Modif": "2026-05-09 11:20", "Destino": "2265", "Nro LPN": "CT962CASE003" },
+    { "Tipo Asignac": "Interno Bulk Pick", "Estado": "cancelado", "QtyAsgn Cases": "12", "Usua Pick": "SP77370908", "Fe Y Hr Modif": "2026-05-09 12:10", "Destino": "1300", "Nro LPN": "CT962CASE004" }
+  ];
+}
+
+function tareasDemo() {
+  return [
+    { "Nro Tarea": "T-1001", "Estado": "Terminado", "Fe Y Hr Modif": "2026-05-09 08:20" },
+    { "Nro Tarea": "T-1002", "Estado": "Terminado", "Fe Y Hr Modif": "2026-05-09 09:10" },
+    { "Nro Tarea": "T-1003", "Estado": "Listo", "Fe Y Hr Modif": "2026-05-09 10:15" },
+    { "Nro Tarea": "T-1004", "Estado": "Procesam Iniciado", "Fe Y Hr Modif": "2026-05-09 11:25" },
+    { "Nro Tarea": "T-1005", "Estado": "Terminado", "Fe Y Hr Modif": "2026-05-09 12:40" }
+  ];
+}
+
+function asignacionDemo() {
+  return [
+    { "Nro Tarea": "T-1001", "Estado": "Terminado", "Un Asig": "420", "Usua Pick": "CT7HKQ9WMR", "Fe Y Hr Modif": "2026-05-09 08:30" },
+    { "Nro Tarea": "T-1002", "Estado": "Finalizada", "Un Asig": "385", "Usua Pick": "TK6QXPR7MV", "Fe Y Hr Modif": "2026-05-09 09:15" },
+    { "Nro Tarea": "T-1003", "Estado": "Asignados", "Un Asig": "220", "Usua Pick": "HV8TKQ6PMX", "Fe Y Hr Modif": "2026-05-09 10:20" },
+    { "Nro Tarea": "T-1004", "Estado": "Asignados", "Un Asig": "180", "Usua Pick": "CT7HKQ9WMR", "Fe Y Hr Modif": "2026-05-09 11:35" },
+    { "Nro Tarea": "T-1005", "Estado": "Terminado", "Un Asig": "310", "Usua Pick": "HV8TKQ6PMX", "Fe Y Hr Modif": "2026-05-09 12:45" }
+  ];
+}
+
 function recepcionDemo() {
   return [
     { "CODIGO PROVEE": "", "NOM PROVEEDOR": "", "NRO ASN": "OS91700000693764", "LPN": "500000139788980006", "CODIGO": "2200205692873", "DESCRIPCION": "CLEAN LINE SUAV LIBRE ENJ PRIMAV DP200ML", "BULTOS PROGRAMADOS": "90", "BULTOS RECIBIDOS": "90", "USU RECEP": "SPO73483889", "Fe Recepcion": "2026-05-09 10:08:04" },
@@ -77,12 +118,29 @@ function proveedoresResumenDemo() {
   ];
 }
 
-function despachoDemo() {
+function cargaDemo() {
   return [
-    { "NroPallet": "01PL96200297006", "Nro LPNs": "CT9620000602803", "Producto": "20138796", "Bultos": "24", "Nro Carga": "OS96200000695964", "Destino": "1263", "Nombre Destino": "BUENOS3 TRU MS", "Fe y Hr de Despacho": "2026-05-09 12:52:07", "Jerarq1": "BAZAR", "Hora": "12" },
-    { "NroPallet": "01PL96200297006", "Nro LPNs": "CT9620000602803", "Producto": "29856", "Bultos": "17", "Nro Carga": "OS96200000695964", "Destino": "1263", "Nombre Destino": "BUENOS3 TRU MS", "Fe y Hr de Despacho": "2026-05-09 12:52:07", "Jerarq1": "BEBIDAS", "Hora": "12" },
-    { "NroPallet": "01PL96200297361", "Nro LPNs": "CT9620000602864", "Producto": "20501355", "Bultos": "80", "Nro Carga": "OS96200000695965", "Destino": "1623", "Nombre Destino": "ALAMEDA 2 TRU MS", "Fe y Hr de Despacho": "2026-05-09 20:15:07", "Jerarq1": "BEBIDAS", "Hora": "20" },
-    { "NroPallet": "01PL96200296082", "Nro LPNs": "CT9620000602900", "Producto": "20468442", "Bultos": "42", "Nro Carga": "OS96200000695966", "Destino": "2749", "Nombre Destino": "SPSA PETTION4 TRU MS", "Fe y Hr de Despacho": "2026-05-09 22:32:07", "Jerarq1": "COMESTIBLES", "Hora": "22" }
+    { "Nro Carga": "OS96200000695964", "No-LPN Paletas": "10", "Nro CamiÃ³n": "ABC-123", "Paradas": "2", "Fe Y Hr Modif": "2026-05-09 12:52:07" },
+    { "Nro Carga": "OS96200000695965", "No-LPN Paletas": "8", "Nro CamiÃ³n": "DEF-456", "Paradas": "1", "Fe Y Hr Modif": "2026-05-09 20:15:07" },
+    { "Nro Carga": "OS96200000695966", "No-LPN Paletas": "6", "Nro CamiÃ³n": "GHI-789", "Paradas": "3", "Fe Y Hr Modif": "2026-05-09 22:32:07" }
+  ];
+}
+
+function cartonesDemo() {
+  return [
+    { "Nro Carga": "OS96200000695964", "Nro Pallet": "01PL96200297006", "Codigo": "20138796", "Destino": "1263", "UnAct": "240" },
+    { "Nro Carga": "OS96200000695964", "Nro Pallet": "01PL96200297006", "Codigo": "29856", "Destino": "1263", "UnAct": "204" },
+    { "Nro Carga": "OS96200000695965", "Nro Pallet": "01PL96200297361", "Codigo": "20501355", "Destino": "1623", "UnAct": "960" },
+    { "Nro Carga": "OS96200000695966", "Nro Pallet": "01PL96200296082", "Codigo": "20468442", "Destino": "2749", "UnAct": "504" }
+  ];
+}
+
+function productosDemo() {
+  return [
+    { "Cod Barra": "20138796", "Descripcion": "PRODUCTO DEMO BAZAR", "Std Case Qty": "10", "Costo Unidad": "1.20", "Jerarq1": "BAZAR" },
+    { "Cod Barra": "29856", "Descripcion": "PRODUCTO DEMO BEBIDAS", "Std Case Qty": "12", "Costo Unidad": "0.95", "Jerarq1": "BEBIDAS" },
+    { "Cod Barra": "20501355", "Descripcion": "PRODUCTO DEMO OPERATIVO", "Std Case Qty": "12", "Costo Unidad": "1.65", "Jerarq1": "BEBIDAS" },
+    { "Cod Barra": "20468442", "Descripcion": "PRODUCTO DEMO COMESTIBLES", "Std Case Qty": "12", "Costo Unidad": "1.35", "Jerarq1": "COMESTIBLES" }
   ];
 }
 
@@ -100,9 +158,15 @@ async function cargarDatos() {
   if (!SHEET_ID) {
     dataBI = dataDemo();
     dataPicking = pickingDemo();
+    dataCase = caseDemo();
+    dataTareas = tareasDemo();
+    dataAsignacion = asignacionDemo();
     dataRecepcion = recepcionDemo();
-    dataDespacho = despachoDemo();
+    dataCarga = cargaDemo();
+    dataCartones = cartonesDemo();
+    dataProductos = productosDemo();
     dataUbicaciones = ubicacionesDemo();
+    dataUsuarios = [];
     dataRecepcionProveedoresResumen = proveedoresResumenDemo();
     datosListos = true;
     estado("Modo demo | Configura SHEET_ID");
@@ -117,6 +181,27 @@ async function cargarDatos() {
   }
 
   try {
+    dataCase = await cargarHoja(HOJAS.case);
+  } catch (error) {
+    console.warn("No se pudo cargar CASE, usando demo.", error);
+    dataCase = caseDemo();
+  }
+
+  try {
+    dataTareas = await cargarHoja(HOJAS.tareas);
+  } catch (error) {
+    console.warn("No se pudo cargar tareas, usando demo.", error);
+    dataTareas = tareasDemo();
+  }
+
+  try {
+    dataAsignacion = await cargarHoja(HOJAS.asignacion);
+  } catch (error) {
+    console.warn("No se pudo cargar asignacion, usando demo.", error);
+    dataAsignacion = asignacionDemo();
+  }
+
+  try {
     dataRecepcion = await cargarHoja(HOJAS.recepcion);
   } catch (error) {
     console.warn("No se pudo cargar RECEPCION, usando demo.", error);
@@ -124,10 +209,24 @@ async function cargarDatos() {
   }
 
   try {
-    dataDespacho = await cargarHoja(HOJAS.despacho);
+    dataCarga = await cargarHoja(HOJAS.carga);
   } catch (error) {
-    console.warn("No se pudo cargar DESPACHO, usando demo.", error);
-    dataDespacho = despachoDemo();
+    console.warn("No se pudo cargar CARGA, usando demo.", error);
+    dataCarga = cargaDemo();
+  }
+
+  try {
+    dataCartones = await cargarHoja(HOJAS.cartones);
+  } catch (error) {
+    console.warn("No se pudo cargar CARTONES, usando demo.", error);
+    dataCartones = cartonesDemo();
+  }
+
+  try {
+    dataProductos = await cargarHoja(HOJAS.productos);
+  } catch (error) {
+    console.warn("No se pudo cargar PRODUCTOS, usando demo.", error);
+    dataProductos = productosDemo();
   }
 
   try {
@@ -135,6 +234,13 @@ async function cargarDatos() {
   } catch (error) {
     console.warn("No se pudo cargar UBICACIONES, usando demo.", error);
     dataUbicaciones = ubicacionesDemo();
+  }
+
+  try {
+    dataUsuarios = await cargarHoja(HOJAS.usuarios);
+  } catch (error) {
+    console.warn("No se pudo cargar USUARIO, se mostrara el codigo.", error);
+    dataUsuarios = [];
   }
 
   try {
@@ -154,7 +260,7 @@ async function cargarDatos() {
     DESTINO: r["LOCAL"]
   }));
   datosListos = true;
-  estado(`PICKING ${dataPicking.length} | RECEPCION ${dataRecepcion.length} | DESPACHO ${dataDespacho.length}`);
+  estado(`PICKING ${dataPicking.length} | CASE ${dataCase.length} | PICK ACTIVO ${dataTareas.length}/${dataAsignacion.length} | USUARIO ${dataUsuarios.length} | RECEPCION ${dataRecepcion.length} | DESPACHO ${dataCarga.length}/${dataCartones.length}`);
 }
 
 async function iniciarAplicacion() {

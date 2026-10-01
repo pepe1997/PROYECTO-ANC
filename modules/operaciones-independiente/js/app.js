@@ -34,6 +34,8 @@ let filtrosUbicacionesActivas = { pasillo: "", zona: "", tipo: "", busqueda: "" 
 let filtrosRecepcionProyeccion = { asn: "", placa: "", proveedor: "" };
 let filtrosRecepcionUbicados = { asns: [], placas: [] };
 let recepcionSubmoduloActivo = "proveedores";
+let ucaSubmoduloActivo = "dashboard";
+let filtrosUcaDetalle = { reserva: { pasillo: "", estado: "TODAS" }, activo: { pasillo: "", estado: "TODAS" } };
 let filtroRecepcionProveedorNombre = "";
 let filtrosShipToY = { asn: "", placa: "" };
 
@@ -182,6 +184,9 @@ function campo(row, nombres) {
   for (const nombre of nombres) {
     if (row[nombre] !== undefined && row[nombre] !== null && row[nombre] !== "") return row[nombre];
   }
+  const objetivos = new Set(nombres.map(canonColumnaUbicacion));
+  const key = Object.keys(row || {}).find(k => objetivos.has(canonColumnaUbicacion(k)));
+  if (key && row[key] !== undefined && row[key] !== null && row[key] !== "") return row[key];
   return "";
 }
 
@@ -231,7 +236,7 @@ function ubicacionMassValidaCapacidad(ubicacion) {
 }
 
 function tipoCapacidadUbicacion(row) {
-  const tipo = normalizar(campo(row, ["TIPO", "Tipo", "tipo"]));
+  const tipo = normalizar(campoUbicacion(row, ["TIPO", "Tipo", "tipo"]));
   if (tipo.includes("ACTIVO")) return "ACTIVO";
   if (tipo.includes("RESERVA")) return "RESERVA";
   return "";
@@ -239,6 +244,7 @@ function tipoCapacidadUbicacion(row) {
 
 function tipoSeteoUbicacion(row) {
   const tipo = normalizar(campo(row, [
+    "Tipo Ubicac",
     "TIPO_UBICACION",
     "TIPO UBICACION",
     "TIPOUBICACION",
@@ -248,6 +254,18 @@ function tipoSeteoUbicacion(row) {
   if (tipo.includes("DIN")) return "DINAMICA";
   if (tipo.includes("PER")) return "PERMANENTE";
   return tipoUbicacion(row);
+}
+
+function zonaAsignacUbicacion(row) {
+  return limpiar(campoUbicacion(row, [
+    "Zona Asignac",
+    "ZONA ASIGNAC",
+    "Zona Asignacion",
+    "Zona Asignación",
+    "Zona AsignaciÃ³n",
+    "ZONA_ASIGNAC",
+    "ZonaAsignac"
+  ])) || "SIN ZONA";
 }
 
 function parseUbicacionMassCapacidad(ubicacion) {
@@ -408,8 +426,11 @@ function ocupacionManualReservaCapacidad(base) {
 
 function ubicacionesMaestroCapacidad(tipo = "") {
   const mapa = new Map();
-  dataUbicaciones.forEach(row => {
-    const ubicacion = limpiar(campo(row, ["MASCARA", "UBICACION", "Ubicacion"]));
+  const fuente = tipo === "ACTIVO" && Array.isArray(dataUbicacionesActivo) && dataUbicacionesActivo.length
+    ? dataUbicacionesActivo
+    : dataUbicaciones;
+  fuente.forEach(row => {
+    const ubicacion = limpiar(campoUbicacion(row, ["MASCARA", "Mascara", "UBICACION", "Ubicacion", "Ubicación"]));
     if (!ubicacionMassValidaCapacidad(ubicacion)) return;
     const tipoCapacidad = tipoCapacidadUbicacion(row);
     if (tipo && tipoCapacidad && tipoCapacidad !== tipo) return;
@@ -419,6 +440,7 @@ function ubicacionesMaestroCapacidad(tipo = "") {
         ubicacion,
         pasillo: pasilloMass(ubicacion),
         tipo: tipoUbicacion(row),
+        zonaAsignac: zonaAsignacUbicacion(row),
         tipoCapacidad: tipoCapacidad || tipo || "SIN TIPO",
         origen: "MAESTRO",
         productoSeteado: normalizar(campo(row, ["PRODUCTO", "Codigo", "CODIGO"])),
@@ -429,12 +451,22 @@ function ubicacionesMaestroCapacidad(tipo = "") {
   return mapa;
 }
 
-function detalleOcupacionReservaCapacidad() {
-  const porUbicacion = new Map();
-  lpnsOperativos().forEach(row => {
+function lpnsConStockParaUca() {
+  return (dataLPN || []).filter(row => {
     const ubicacion = limpiar(row.UBICACION);
     const bultos = num(row.BULTOS);
-    if (!ubicacionMassValidaCapacidad(ubicacion) || bultos <= 0) return;
+    const unidades = num(row.UNACT || row.UNIDADES || row.BULTOS);
+    return ubicacionMassValidaCapacidad(ubicacion) && (bultos > 0 || unidades > 0);
+  });
+}
+
+function detalleOcupacionReservaCapacidad() {
+  const porUbicacion = new Map();
+  lpnsConStockParaUca().forEach(row => {
+    const ubicacion = limpiar(row.UBICACION);
+    const bultos = num(row.BULTOS);
+    const unidades = num(row.UNACT || row.UNIDADES || row.BULTOS);
+    if (!ubicacionMassValidaCapacidad(ubicacion) || (bultos <= 0 && unidades <= 0)) return;
     const key = normalizar(ubicacion);
     if (!porUbicacion.has(key)) {
       porUbicacion.set(key, {
@@ -451,7 +483,6 @@ function detalleOcupacionReservaCapacidad() {
     }
     const item = porUbicacion.get(key);
     const codigo = normalizar(row.CODIGO);
-    const unidades = num(row.UNACT || row.UNIDADES || row.BULTOS);
     item.lpns.add(limpiar(row.LPN));
     item.productos.add(codigo);
     item.bultos += bultos;
@@ -462,6 +493,7 @@ function detalleOcupacionReservaCapacidad() {
       lpn: limpiar(row.LPN),
       codigo,
       descripcion: limpiar(row.DESCRIPCION),
+      estadoLpn: limpiar(row.ESTADO),
       bultos,
       unidades
     });
@@ -546,8 +578,9 @@ function stockPendienteActivoPorProductoCapacidad() {
 
 function aplicarSeteosPendientesActivoCapacidad(ocupadasMap) {
   const pendientes = stockPendienteActivoPorProductoCapacidad();
-  dataUbicaciones.forEach(row => {
-    const ubicacion = limpiar(campo(row, ["MASCARA", "UBICACION", "Ubicacion"]));
+  const fuente = Array.isArray(dataUbicacionesActivo) && dataUbicacionesActivo.length ? dataUbicacionesActivo : dataUbicaciones;
+  fuente.forEach(row => {
+    const ubicacion = limpiar(campoUbicacion(row, ["MASCARA", "Mascara", "UBICACION", "Ubicacion", "Ubicación"]));
     const tipoCapacidad = tipoCapacidadUbicacion(row);
     if (!ubicacionMassValidaCapacidad(ubicacion) || (tipoCapacidad && tipoCapacidad !== "ACTIVO") || tipoSeteoUbicacion(row) !== "PERMANENTE") return;
     const codigo = normalizar(campo(row, ["PRODUCTO", "Codigo", "CODIGO"]));
@@ -584,6 +617,7 @@ function construirCapacidadPorTipo(tipo, ocupadasMap) {
         ubicacion: item.ubicacion,
         pasillo: item.pasillo,
         tipo: "SIN MAESTRO",
+        zonaAsignac: "SIN ZONA",
         tipoCapacidad: tipo,
         origen: "STOCK"
       });
@@ -611,6 +645,7 @@ function construirCapacidadPorTipo(tipo, ocupadasMap) {
         ubicacion: base.ubicacion,
         estado: ocupado ? (ocupado.estado || "OCUPADA") : "LIBRE",
         tipoUbicacion: base.tipo,
+        zonaAsignac: base.zonaAsignac || "SIN ZONA",
         origenMaestro: base.origen,
         origen: ocupado?.origen || base.origen,
         lpns: ocupado?.lpns?.size || 0,
@@ -635,9 +670,10 @@ function construirCapacidadPorTipo(tipo, ocupadasMap) {
 
 function calcularCapacidadCd() {
   const key = [
-    firmaFilas(dataLPN, ["LPN", "ESTADO", "UBICACION", "CODIGO", "BULTOS"]),
+    firmaFilas(dataLPN, ["LPN", "ESTADO", "UBICACION", "CODIGO", "BULTOS", "UNACT", "UNIDADES"]),
     firmaFilas(dataInventario, ["PRODUCTO", "UBICACION", "UNACT", "UXB"]),
-    firmaFilas(dataUbicaciones, ["MASCARA", "UBICACION", "TIPO"])
+    firmaFilas(dataUbicaciones, ["MASCARA", "UBICACION", "TIPO"]),
+    firmaFilas(dataUbicacionesActivo || [], ["MASCARA", "UBICACION", "TIPO_UBICACION", "Zona Asignac"])
   ].join("::");
   if (cacheCapacidadCd.key === key && cacheCapacidadCd.data) return cacheCapacidadCd.data;
   cacheCapacidadCd = { key, data: {
@@ -750,71 +786,425 @@ function prediccionLiberacionPts() {
   return cachePrediccionPts.data;
 }
 
-function verCapacidadCd() {
+function verCapacidadCd(submodulo = "dashboard") {
+  ucaSubmoduloActivo = ["reserva", "activo"].includes(submodulo) ? submodulo : "dashboard";
   const data = calcularCapacidadCd();
   const prediccionPts = prediccionLiberacionPts();
+  if (ucaSubmoduloActivo === "dashboard") {
+    document.getElementById("modulo").innerHTML = htmlDashboardUca(data);
+    return;
+  }
+
   document.getElementById("modulo").innerHTML = `
     <div class="section-head">
       <div>
         <h2>UCA</h2>
-        <p class="muted-note">Utilizacion de la Capacidad de Almacenamiento: ubicaciones ocupadas frente al total disponible del CD.</p>
+        <p class="muted-note">Detalle operativo de ${ucaSubmoduloActivo} por pasillo y ubicacion.</p>
       </div>
       <div class="filters">
-        <button onclick="exportarCapacidadCd('reserva')">Excel reserva</button>
-        <button onclick="exportarCapacidadCd('activo')">Excel activo</button>
+        <button onclick="verCapacidadCd()">Dashboard</button>
+        <button class="${ucaSubmoduloActivo === "reserva" ? "active" : ""}" onclick="verCapacidadCd('reserva')">Reserva</button>
+        <button class="${ucaSubmoduloActivo === "activo" ? "active" : ""}" onclick="verCapacidadCd('activo')">Activo</button>
+        <button onclick="exportarCapacidadCd('${ucaSubmoduloActivo}')">Excel ${ucaSubmoduloActivo}</button>
       </div>
     </div>
 
-    <section class="kpi-grid compact capacity-kpis">
-      ${kpi("Reserva total", fmt(data.reserva.total.total), "ubicaciones Mass sin pasillo 10")}
+    ${htmlSubmoduloCapacidad(ucaSubmoduloActivo, data[ucaSubmoduloActivo], prediccionPts)}
+  `;
+}
+
+function htmlDashboardUca(data) {
+  return `
+    <section class="uca-dashboard-hero">
+      <div>
+        <h2>UCA</h2>
+      </div>
+      <div class="uca-hero-actions">
+        <button onclick="abrirVistaReporteUca()">Vista reporte</button>
+        <button onclick="verCapacidadCd('reserva')">Detalle reserva</button>
+        <button onclick="verCapacidadCd('activo')">Detalle activo</button>
+      </div>
+    </section>
+
+    <section class="uca-kpi-grid">
+      ${kpi("Reserva total", fmt(data.reserva.total.total), "ubicaciones")}
       ${kpi("Reserva ocupadas", fmt(data.reserva.total.ocupadas), `${data.reserva.total.pct.toFixed(1)}% ocupado`, "warn")}
-      ${kpi("Reserva libres", fmt(data.reserva.total.libres), "capacidad teorica")}
-      ${kpi("Activo total", fmt(data.activo.total.total), "ubicaciones Mass sin pasillo 10")}
+      ${kpi("Reserva libres", fmt(data.reserva.total.libres), `${(100 - data.reserva.total.pct).toFixed(1)}% libre`)}
+      ${kpi("Activo total", fmt(data.activo.total.total), "ubicaciones")}
       ${kpi("Activo ocupadas", fmt(data.activo.total.ocupadas), `${data.activo.total.pct.toFixed(1)}% ocupado`, "warn")}
-      ${kpi("Activo libres", fmt(data.activo.total.libres), "capacidad teorica")}
+      ${kpi("Activo libres", fmt(data.activo.total.libres), `${(100 - data.activo.total.pct).toFixed(1)}% libre`)}
     </section>
 
-    <section class="capacity-dashboard">
-      ${graficoCapacidad("Reserva", data.reserva)}
-      ${graficoCapacidad("Activo", data.activo)}
+    <section class="uca-pie-dashboard">
+      ${tarjetaPastelUca("Reserva", data.reserva, "reserva")}
+      ${tarjetaPastelUca("Activo", data.activo, "activo")}
+    </section>
+  `;
+}
+
+function tarjetaPastelUca(titulo, data, tipo, interactivo = true) {
+  const ocupado = Math.max(0, Math.min(100, data.total.pct));
+  const libre = Math.max(0, 100 - ocupado);
+  const color = tipo === "reserva" ? "#426b51" : "#4f46e5";
+  const click = interactivo ? ` onclick="verCapacidadCd('${tipo}')"` : "";
+  return `
+    <article class="uca-pie-card ${tipo}" style="--occupied:${ocupado};--chart-color:${color}"${click}>
+      <div class="uca-pie-copy">
+        <span>${htmlSeguro(titulo)}</span>
+        <h3>${ocupado.toFixed(1)}%</h3>
+        <p>${fmt(data.total.ocupadas)} ocupadas de ${fmt(data.total.total)} ubicaciones</p>
+      </div>
+      <div class="uca-pie-visual">
+        <div class="uca-pie-ring">
+          <strong>${fmt(data.total.total)}</strong>
+          <span>Total</span>
+        </div>
+      </div>
+      <div class="uca-pie-stats">
+        <div>
+          <i class="occupied"></i>
+          <span>Ocupadas</span>
+          <strong>${fmt(data.total.ocupadas)}</strong>
+          <small>${ocupado.toFixed(1)}%</small>
+        </div>
+        <div>
+          <i class="free"></i>
+          <span>Libres</span>
+          <strong>${fmt(data.total.libres)}</strong>
+          <small>${libre.toFixed(1)}%</small>
+        </div>
+      </div>
+      ${barrasPasillosUca(data.resumen)}
+    </article>
+  `;
+}
+
+function barrasPasillosUca(resumen) {
+  return `
+    <div class="uca-aisle-strip">
+      ${(resumen || []).map(row => {
+        const pct = Math.max(0, Math.min(100, row.pct || 0));
+        return `
+          <div class="uca-aisle-chip" style="--pct:${pct}">
+            <div class="uca-aisle-chip-head">
+              <span>Pasillo ${htmlSeguro(row.pasillo)}</span>
+              <strong>${pct.toFixed(1)}%</strong>
+            </div>
+            <div class="uca-aisle-meter">
+              <i></i>
+            </div>
+            <small>${fmt(row.ocupadas)} ocupadas / ${fmt(row.libres)} libres</small>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function contenidoVistaReporteUca() {
+  const data = calcularCapacidadCd();
+  return `
+    <section class="uca-report-sheet">
+      <div class="uca-report-title">
+        <h2>UCA</h2>
+      </div>
+      <section class="uca-kpi-grid">
+        ${kpi("Reserva total", fmt(data.reserva.total.total), "ubicaciones")}
+        ${kpi("Reserva ocupadas", fmt(data.reserva.total.ocupadas), `${data.reserva.total.pct.toFixed(1)}% ocupado`, "warn")}
+        ${kpi("Reserva libres", fmt(data.reserva.total.libres), `${(100 - data.reserva.total.pct).toFixed(1)}% libre`)}
+        ${kpi("Activo total", fmt(data.activo.total.total), "ubicaciones")}
+        ${kpi("Activo ocupadas", fmt(data.activo.total.ocupadas), `${data.activo.total.pct.toFixed(1)}% ocupado`, "warn")}
+        ${kpi("Activo libres", fmt(data.activo.total.libres), `${(100 - data.activo.total.pct).toFixed(1)}% libre`)}
+      </section>
+      <section class="uca-pie-dashboard">
+        ${tarjetaPastelUca("Reserva", data.reserva, "reserva", false)}
+        ${tarjetaPastelUca("Activo", data.activo, "activo", false)}
+      </section>
+    </section>
+  `;
+}
+
+function asegurarVisorReporteUca() {
+  let visor = document.getElementById("visorReporteUca");
+  if (visor) return visor;
+  visor = document.createElement("div");
+  visor.id = "visorReporteUca";
+  visor.className = "report-viewer uca-report-viewer";
+  visor.hidden = true;
+  visor.innerHTML = `
+    <div class="report-viewer-bar">
+      <div>
+        <strong>Vista reporte</strong>
+      </div>
+      <div class="report-actions">
+        <button class="ghost" id="btnMaximizarReporteUca" onclick="alternarMaximizarReporteUca()">Maximizar</button>
+        <button class="soft" onclick="exportarImagen('visorReporteUcaContenido', 'uca-vista-reporte')">Imagen</button>
+        <button class="ghost" onclick="cerrarVistaReporteUca()">Cerrar</button>
+      </div>
+    </div>
+    <div id="visorReporteUcaContenido" class="report-viewer-content"></div>
+  `;
+  document.body.appendChild(visor);
+  return visor;
+}
+
+function abrirVistaReporteUca() {
+  const visor = asegurarVisorReporteUca();
+  const contenido = document.getElementById("visorReporteUcaContenido");
+  if (!contenido) return;
+  contenido.innerHTML = contenidoVistaReporteUca();
+  visor.classList.remove("maximized");
+  visor.hidden = false;
+  document.body.classList.add("report-viewer-open");
+  actualizarBotonMaximizarReporteUca();
+}
+
+function actualizarBotonMaximizarReporteUca() {
+  const visor = document.getElementById("visorReporteUca");
+  const boton = document.getElementById("btnMaximizarReporteUca");
+  if (!visor || !boton) return;
+  const maximizado = visor.classList.contains("maximized") || document.fullscreenElement === visor;
+  boton.textContent = maximizado ? "Restaurar" : "Maximizar";
+}
+
+async function alternarMaximizarReporteUca() {
+  const visor = document.getElementById("visorReporteUca");
+  if (!visor || visor.hidden) return;
+  const maximizado = visor.classList.contains("maximized") || document.fullscreenElement === visor;
+  if (maximizado) {
+    visor.classList.remove("maximized");
+    if (document.fullscreenElement && document.exitFullscreen) {
+      try { await document.exitFullscreen(); } catch {}
+    }
+  } else {
+    visor.classList.add("maximized");
+    if (visor.requestFullscreen) {
+      try { await visor.requestFullscreen(); } catch {}
+    }
+  }
+  actualizarBotonMaximizarReporteUca();
+}
+
+async function cerrarVistaReporteUca() {
+  const visor = document.getElementById("visorReporteUca");
+  const contenido = document.getElementById("visorReporteUcaContenido");
+  if (document.fullscreenElement === visor && document.exitFullscreen) {
+    try { await document.exitFullscreen(); } catch {}
+  }
+  if (visor) {
+    visor.hidden = true;
+    visor.classList.remove("maximized");
+  }
+  if (contenido) contenido.innerHTML = "";
+  document.body.classList.remove("report-viewer-open");
+  actualizarBotonMaximizarReporteUca();
+}
+
+document.addEventListener("fullscreenchange", () => {
+  const visor = document.getElementById("visorReporteUca");
+  if (visor && !document.fullscreenElement) {
+    visor.classList.remove("maximized");
+  }
+  actualizarBotonMaximizarReporteUca();
+});
+
+function htmlSubmoduloCapacidad(tipo, data, prediccionPts) {
+  const esReserva = tipo === "reserva";
+  const titulo = esReserva ? "Reserva" : "Activo";
+  const tablaDetalle = esReserva ? "tablaCapacidadReservaDetalle" : "tablaCapacidadActivoDetalle";
+  const headersDetalle = esReserva
+    ? ["Pasillo", "Ubicacion", "Estado", "LPNs", "Productos", "Bultos", "Unidades", "Origen"]
+    : ["Pasillo", "Ubicacion", "Estado", "Tipo ubicacion", "Zona asignac", "Productos", "Bultos", "Unidades", "Origen"];
+  const filtros = filtrosUcaDetalle[tipo] || { pasillo: "", estado: "TODAS" };
+  const detalleFiltrado = filtrarDetalleCapacidad(data.detalle, filtros);
+
+  return `
+    <section class="uca-detail-top">
+      <div class="uca-detail-kpis">
+        ${kpi(`Total ubicaciones en ${titulo.toLowerCase()}`, fmt(data.total.total), "ubicaciones")}
+        ${kpi("Ocupadas", fmt(data.total.ocupadas), "ubicaciones", "warn")}
+        ${kpi("Libres", fmt(data.total.libres), "ubicaciones")}
+        ${kpi("% ocupadas", `${data.total.pct.toFixed(1)}%`, "capacidad usada", "warn")}
+      </div>
+    </section>
+    ${!esReserva ? resumenAtributosActivoCapacidad(data.detalle) : ""}
+
+    <section class="uca-detail-summary-row">
+      <div class="card uca-summary-card">
+        <div class="section-head">
+          <div>
+            <h2>Resumen ${titulo.toLowerCase()} por pasillo</h2>
+          </div>
+          <button onclick="exportarCapacidadCd('${tipo}')">Excel</button>
+        </div>
+        ${resumenPasillosCapacidad(data.resumen)}
+      </div>
     </section>
 
-    ${bloquePrediccionPts(prediccionPts)}
-
-    <section class="dashboard-layout">
-      <div class="card">
-        <div class="section-head">
-          <h2>Resumen reserva por pasillo</h2>
-          <button onclick="exportarCapacidadCd('reserva')">Excel</button>
+    <section class="card uca-detail-card">
+      <div class="section-head">
+        <div>
+          <h2>Detalle ${titulo.toLowerCase()}</h2>
+          <span class="muted-note">${fmt(detalleFiltrado.length)} de ${fmt(data.detalle.length)} ubicaciones</span>
         </div>
-        ${tablaConId("tablaCapacidadReserva", ["Pasillo", "Total ubicaciones", "Ocupadas", "Libres", "% ocupacion"], filasTablaCapacidadResumen(data.reserva.resumen))}
-      </div>
-      <div class="card">
-        <div class="section-head">
-          <h2>Resumen activo por pasillo</h2>
-          <button onclick="exportarCapacidadCd('activo')">Excel</button>
+        <div class="filters">
+          ${filtrosDetalleUcaHtml(tipo, data)}
         </div>
-        ${tablaConId("tablaCapacidadActivo", ["Pasillo", "Total ubicaciones", "Ocupadas", "Libres", "% ocupacion"], filasTablaCapacidadResumen(data.activo.resumen))}
       </div>
+      ${tablaConId(tablaDetalle, headersDetalle, filasTablaCapacidadDetalle(detalleFiltrado, esReserva, tipo))}
     </section>
 
-    <section class="dashboard-layout">
-      <div class="card">
-        <div class="section-head">
-          <h2>Detalle reserva</h2>
-          <span class="muted-note">${fmt(data.reserva.detalle.length)} ubicaciones</span>
+    ${esReserva ? `<section class="uca-pts-bottom">${bloquePrediccionPts(prediccionPts)}</section>` : ""}
+    <div id="modalDetalleUbicacionUca" class="modal-backdrop" hidden></div>
+  `;
+}
+
+function resumenAtributosActivoCapacidad(detalle) {
+  const tipos = { DINAMICA: 0, PERMANENTE: 0 };
+  const zonasOrden = ["MASS-UND", "MASS-PRIME", "MASS-BALD", "MASS-BDIGM", "MASS-DIGM"];
+  const zonas = new Map(zonasOrden.map(zona => [zona, 0]));
+  (detalle || []).forEach(row => {
+    const tipoTxt = limpiar(row.tipoUbicacion).toUpperCase();
+    const tipo = normalizar(row.tipoUbicacion);
+    if (tipo.includes("DIN") || tipoTxt.includes("DIN")) tipos.DINAMICA += 1;
+    else if (tipo.includes("PER") || tipoTxt.includes("PER")) tipos.PERMANENTE += 1;
+
+    const zona = normalizar(row.zonaAsignac || "SIN ZONA");
+    if (zonas.has(zona)) zonas.set(zona, zonas.get(zona) + 1);
+  });
+
+  return `
+    <section class="uca-attribute-grid">
+      <div class="card uca-attribute-card">
+        <div class="uca-attribute-title">Tipo ubicacion</div>
+        <div class="uca-attribute-items">
+          <div><span>Dinamico</span><strong>${fmt(tipos.DINAMICA)}</strong></div>
+          <div><span>Permanente</span><strong>${fmt(tipos.PERMANENTE)}</strong></div>
         </div>
-        ${tablaConId("tablaCapacidadReservaDetalle", ["Pasillo", "Ubicacion", "Estado", "LPNs", "Productos", "Bultos", "Unidades", "Origen"], filasTablaCapacidadDetalle(data.reserva.detalle, true))}
       </div>
-      <div class="card">
-        <div class="section-head">
-          <h2>Detalle activo</h2>
-          <span class="muted-note">${fmt(data.activo.detalle.length)} ubicaciones</span>
+      <div class="card uca-attribute-card">
+        <div class="uca-attribute-title">Zona asignac</div>
+        <div class="uca-attribute-items zones">
+          ${zonasOrden.map(zona => `<div><span>${htmlSeguro(zona)}</span><strong>${fmt(zonas.get(zona) || 0)}</strong></div>`).join("")}
         </div>
-        ${tablaConId("tablaCapacidadActivoDetalle", ["Pasillo", "Ubicacion", "Estado", "Productos", "Bultos", "Unidades", "Origen"], filasTablaCapacidadDetalle(data.activo.detalle, false))}
       </div>
     </section>
   `;
+}
+
+function resumenPasillosCapacidad(resumen) {
+  return `
+    <div class="uca-capacity-list">
+      ${(resumen || []).map(row => {
+        const pctOcupado = Math.max(0, Math.min(100, row.pct || 0));
+        return `
+          <button type="button" class="uca-capacity-row" onclick="filtrarUcaDetalle('${row.tipo.toLowerCase()}', '${atributoSeguro(row.pasillo)}', '')" style="--pct:${pctOcupado}">
+            <span>Pasillo ${htmlSeguro(row.pasillo)}</span>
+            <strong>${pctOcupado.toFixed(1)}%</strong>
+            <i><b></b></i>
+            <em><b>${fmt(row.ocupadas)}</b> ocupadas<br><b>${fmt(row.libres)}</b> libres</em>
+          </button>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function filtrarDetalleCapacidad(detalle, filtros) {
+  const pasillo = limpiar(filtros?.pasillo);
+  const estado = normalizar(filtros?.estado || "TODAS");
+  return (detalle || []).filter(row => {
+    if (pasillo && row.pasillo !== pasillo) return false;
+    if (estado === "OCUPADAS" && row.estado === "LIBRE") return false;
+    if (estado === "LIBRES" && row.estado !== "LIBRE") return false;
+    return true;
+  });
+}
+
+function filtrosDetalleUcaHtml(tipo, data) {
+  const filtros = filtrosUcaDetalle[tipo] || { pasillo: "", estado: "TODAS" };
+  const pasillos = (data.resumen || []).map(row => row.pasillo);
+  return `
+    <select onchange="filtrarUcaDetalle('${tipo}', this.value, null)">
+      <option value="">Todos los pasillos</option>
+      ${pasillos.map(p => `<option value="${atributoSeguro(p)}" ${filtros.pasillo === p ? "selected" : ""}>Pasillo ${htmlSeguro(p)}</option>`).join("")}
+    </select>
+    <select onchange="filtrarUcaDetalle('${tipo}', null, this.value)">
+      <option value="TODAS" ${filtros.estado === "TODAS" ? "selected" : ""}>Todas</option>
+      <option value="OCUPADAS" ${filtros.estado === "OCUPADAS" ? "selected" : ""}>Ocupadas</option>
+      <option value="LIBRES" ${filtros.estado === "LIBRES" ? "selected" : ""}>Libres</option>
+    </select>
+    <button class="ghost" onclick="limpiarFiltrosUcaDetalle('${tipo}')">Limpiar</button>
+  `;
+}
+
+function filtrarUcaDetalle(tipo, pasillo, estado) {
+  const clave = tipo === "activo" ? "activo" : "reserva";
+  if (!filtrosUcaDetalle[clave]) filtrosUcaDetalle[clave] = { pasillo: "", estado: "TODAS" };
+  if (pasillo !== null && pasillo !== undefined) filtrosUcaDetalle[clave].pasillo = limpiar(pasillo);
+  if (estado !== null && estado !== undefined) filtrosUcaDetalle[clave].estado = estado || "TODAS";
+  verCapacidadCd(clave);
+}
+
+function limpiarFiltrosUcaDetalle(tipo) {
+  const clave = tipo === "activo" ? "activo" : "reserva";
+  filtrosUcaDetalle[clave] = { pasillo: "", estado: "TODAS" };
+  verCapacidadCd(clave);
+}
+
+function abrirDetalleUbicacionUca(tipo, ubicacion) {
+  const clave = tipo === "activo" ? "activo" : "reserva";
+  const data = calcularCapacidadCd()[clave];
+  const row = (data?.detalle || []).find(item => normalizar(item.ubicacion) === normalizar(ubicacion));
+  let destino = document.getElementById("modalDetalleUbicacionUca");
+  if (!destino) {
+    destino = document.createElement("div");
+    destino.id = "modalDetalleUbicacionUca";
+    destino.className = "modal-backdrop";
+    document.body.appendChild(destino);
+  }
+  if (!row) {
+    destino.innerHTML = `<div class="modal-card"><button class="ghost" onclick="cerrarDetalleUbicacionUca()">Cerrar</button><p>Sin detalle.</p></div>`;
+    destino.hidden = false;
+    return;
+  }
+  const detalle = row.detalle || [];
+  destino.innerHTML = `
+    <div class="modal-card wide">
+      <div class="section-head">
+        <div>
+          <h2>${htmlSeguro(row.ubicacion)}</h2>
+          <p class="muted-note">Pasillo ${htmlSeguro(row.pasillo)} | ${htmlSeguro(row.estado)} | ${fmt(row.bultos)} bultos | ${fmt(row.unidades)} unidades</p>
+        </div>
+        <button class="ghost" onclick="cerrarDetalleUbicacionUca()">Cerrar</button>
+      </div>
+      <section class="kpi-grid compact capacity-kpis">
+        ${kpi("LPNs", fmt(row.lpns || detalle.filter(d => d.lpn).length), "en ubicacion")}
+        ${kpi("Productos", fmt(row.productos || detalle.length), "codigos")}
+        ${kpi("Bultos", fmt(row.bultos), "total")}
+        ${kpi("Unidades", fmt(row.unidades), "total")}
+      </section>
+      ${tablaConId("tablaDetalleUbicacionUca", ["LPN", "Codigo", "Descripcion", "Estado LPN", "Bultos", "Unidades"], detalle.map(det => `
+        <tr>
+          <td><strong>${htmlSeguro(det.lpn || "-")}</strong></td>
+          <td>${htmlSeguro(det.codigo || "-")}</td>
+          <td>${htmlSeguro(det.descripcion || "-")}</td>
+          <td>${htmlSeguro(det.estadoLpn || "-")}</td>
+          <td class="number">${fmt(det.bultos)}</td>
+          <td class="number">${fmt(det.unidades)}</td>
+        </tr>
+      `), "Ubicacion libre o sin detalle de productos.")}
+    </div>
+  `;
+  destino.hidden = false;
+}
+
+function cerrarDetalleUbicacionUca() {
+  const destino = document.getElementById("modalDetalleUbicacionUca");
+  if (destino) {
+    destino.hidden = true;
+    destino.innerHTML = "";
+  }
 }
 
 function verRecepcionProyectada() {
@@ -992,25 +1382,24 @@ function bloquePrediccionPts(data) {
     <section class="card pts-release-card">
       <div class="section-head">
         <div>
-          <h2>Prediccion de liberacion PTS</h2>
-          <p class="muted-note">Tareas PTS en estado Listo ubicadas en reserva. Son posiciones que deberian liberarse durante el dia al trabajar pallets completos.</p>
+          <h2>Liberacion PTS</h2>
         </div>
       </div>
       <div class="capacity-mini-kpis pts-release-kpis">
         <div>
-          <span>Ubicaciones por liberar</span>
+          <span>Ubicaciones</span>
           <strong>${fmt(data.total.ubicaciones)}</strong>
         </div>
         <div>
-          <span>Tareas PTS listas</span>
+          <span>Tareas</span>
           <strong>${fmt(data.total.tareas.size)}</strong>
         </div>
         <div>
-          <span>Bultos comprometidos</span>
+          <span>Bultos</span>
           <strong>${fmt(data.total.bultos)}</strong>
         </div>
         <div>
-          <span>LPNs entrada</span>
+          <span>LPNs</span>
           <strong>${fmt(data.total.lpns.size)}</strong>
         </div>
       </div>
@@ -1030,7 +1419,7 @@ function bloquePrediccionPts(data) {
         </div>
         <div class="pts-release-detail-card">
           <div class="section-head compact-head">
-            <h3 id="tituloPrediccionPts">Detalle todos los pasillos</h3>
+            <h3 id="tituloPrediccionPts">Todos los pasillos</h3>
             <button type="button" onclick="filtrarPrediccionPts('')">Ver todos</button>
           </div>
           <div id="detallePrediccionPts">
@@ -1102,6 +1491,10 @@ function codigosProductoRecepcion(row) {
     codigoRecepcion(row),
     codigoAltRecepcion(row)
   ].map(normalizarCodigoRecepcion).filter(Boolean);
+}
+
+function productoUnicoRecepcion(row) {
+  return claveProductoRecepcion(codigoRecepcion(row), codigoAltRecepcion(row));
 }
 
 function descripcionRecepcion(row) {
@@ -1267,7 +1660,7 @@ function validacionPaleteroAsnCodigo() {
     const asn = limpiar(campoRecepcion(row, ["ASN Entrada", "ASN", "ASN_ENTRADA"]));
     const pallet = limpiar(campoRecepcion(row, ["Nro Pallet", "NRO PALLET", "Pallet", "PALLET"]));
     const lpn = limpiar(campoRecepcion(row, ["Nro LPN", "LPN", "NRO LPN"]));
-    const codigo = codigoRecepcion(row) || codigoAltRecepcion(row);
+    const productoUnico = productoUnicoRecepcion(row);
     const codigosProducto = codigosProductoRecepcion(row);
     const codigosShipTo = codigosProducto.filter(cod => codigosValidar.has(cod));
     if (!asn || !pallet) return;
@@ -1289,12 +1682,13 @@ function validacionPaleteroAsnCodigo() {
     }
     const item = pallets.get(key);
     if (lpn) item.lpnsSet.add(lpn);
-    codigosProducto.forEach(cod => item.codigosSet.add(cod));
-    codigosShipTo.forEach(cod => item.codigosSepararSet.add(cod));
+    if (productoUnico) item.codigosSet.add(productoUnico);
+    if (codigosShipTo.length && productoUnico) item.codigosSepararSet.add(productoUnico);
     item.bultos += bultosRecepcion(row);
     item.unidades += numRecepcion(campoRecepcion(row, ["Un Env", "UN ENV", "Un Rcb", "UN RCB"]));
-    codigosShipTo.forEach(codigoShipTo => {
-      const prodKey = `${lpn}|${codigoShipTo}`;
+    if (codigosShipTo.length && productoUnico) {
+      const codigoShipTo = codigosShipTo[0];
+      const prodKey = `${lpn}|${productoUnico}`;
       if (!item.productosShipTo.has(prodKey)) {
         item.productosShipTo.set(prodKey, {
           asn,
@@ -1311,7 +1705,7 @@ function validacionPaleteroAsnCodigo() {
       const prod = item.productosShipTo.get(prodKey);
       prod.bultos += bultosRecepcion(row);
       prod.unidades += numRecepcion(campoRecepcion(row, ["Un Env", "UN ENV", "Un Rcb", "UN RCB"]));
-    });
+    }
 
     if (lpn) {
       const lpnKey = `${asn}|${pallet}|${lpn}`;
@@ -1329,8 +1723,8 @@ function validacionPaleteroAsnCodigo() {
         });
       }
       const lpnItem = lpns.get(lpnKey);
-      codigosProducto.forEach(cod => lpnItem.codigosSet.add(cod));
-      codigosShipTo.forEach(cod => lpnItem.codigosSepararSet.add(cod));
+      if (productoUnico) lpnItem.codigosSet.add(productoUnico);
+      if (codigosShipTo.length && productoUnico) lpnItem.codigosSepararSet.add(productoUnico);
       lpnItem.bultos += bultosRecepcion(row);
       lpnItem.unidades += numRecepcion(campoRecepcion(row, ["Un Env", "UN ENV", "Un Rcb", "UN RCB"]));
     }
@@ -4120,13 +4514,14 @@ function filasTablaCapacidadResumen(data) {
   `);
 }
 
-function filasTablaCapacidadDetalle(data, incluyeLpns) {
+function filasTablaCapacidadDetalle(data, incluyeLpns, tipo = "reserva") {
   return data.map(row => `
-    <tr class="${row.estado === "LIBRE" ? "ok" : "warn"}">
+    <tr class="${row.estado === "LIBRE" ? "ok" : "warn"} uca-location-row" onclick="abrirDetalleUbicacionUca('${tipo}', ${argumentoSeguro(row.ubicacion)})">
       <td><strong>${htmlSeguro(row.pasillo)}</strong></td>
-      <td>${htmlSeguro(row.ubicacion)}</td>
+      <td><strong>${htmlSeguro(row.ubicacion)}</strong></td>
       <td><strong>${htmlSeguro(row.estado)}</strong></td>
       ${incluyeLpns ? `<td class="number">${fmt(row.lpns)}</td>` : ""}
+      ${!incluyeLpns ? `<td>${htmlSeguro(row.tipoUbicacion || "SIN TIPO")}</td><td>${htmlSeguro(row.zonaAsignac || "SIN ZONA")}</td>` : ""}
       <td class="number">${fmt(row.productos)}</td>
       <td class="number">${fmt(row.bultos)}</td>
       <td class="number">${fmt(row.unidades)}</td>
@@ -4156,12 +4551,12 @@ function exportarCapacidadCd(tipo) {
   const nombre = tipo === "reserva" ? "capacidad_reserva_detalle" : "capacidad_activo_detalle";
   const headers = tipo === "reserva"
     ? ["PASILLO", "UBICACION", "ESTADO", "CODIGO", "DESCRIPCION", "LPNS", "PRODUCTOS", "BULTOS", "UNIDADES", "ORIGEN"]
-    : ["PASILLO", "UBICACION", "ESTADO", "CODIGO", "DESCRIPCION", "PRODUCTOS", "BULTOS", "UNIDADES", "ORIGEN"];
+    : ["PASILLO", "UBICACION", "ESTADO", "TIPO_UBICACION", "ZONA_ASIGNAC", "CODIGO", "DESCRIPCION", "PRODUCTOS", "BULTOS", "UNIDADES", "ORIGEN"];
   const filas = data.detalle.map(row => {
     const producto = productosExcelCapacidad(row);
     return tipo === "reserva"
       ? [row.pasillo, row.ubicacion, row.estado, producto.codigos, producto.descripciones, row.lpns || 0, row.productos || 0, row.bultos || 0, row.unidades || 0, row.origen]
-      : [row.pasillo, row.ubicacion, row.estado, producto.codigos, producto.descripciones, row.productos || 0, row.bultos || 0, row.unidades || 0, row.origen];
+      : [row.pasillo, row.ubicacion, row.estado, row.tipoUbicacion || "", row.zonaAsignac || "", producto.codigos, producto.descripciones, row.productos || 0, row.bultos || 0, row.unidades || 0, row.origen];
   });
 
   descargarExcelHojas(nombre, [
@@ -4572,16 +4967,6 @@ function alertasGenerales() {
     clase: "warn"
   });
 
-  if (sinUbicacion.length) filas.push({
-    prioridad: "MEDIA",
-    alerta: "Productos sin activo",
-    detalle: "Productos operativos sin ubicacion activa/permanente util",
-    cantidad: sinUbicacion.length,
-    accion: "Revisar Slotting",
-    modulo: "Slotting",
-    clase: "warn"
-  });
-
   if (noEncontradosBloqueo.length) filas.push({
     prioridad: "MEDIA",
     alerta: "Bloqueo no encontrado",
@@ -4624,16 +5009,15 @@ function panelAlertasGenerales() {
 }
 
 function barrasPasillo(data) {
-  const max = Math.max(...data.map(x => Math.max(x.bultos, x.slotting, x.antiguos, x.dinamicas)), 1);
+  const max = Math.max(...data.map(x => Math.max(x.bultos, x.antiguos, x.dinamicas)), 1);
   return `
     <div class="aisle-map">
       ${data.map(p => `
         <div class="aisle-row">
           <strong>${p.pasillo}</strong>
           <span class="aisle-track stock" style="width:${pct(p.bultos, max)}%"></span>
-          <span class="aisle-track slot" style="width:${pct(p.slotting, max)}%"></span>
           <span class="aisle-track old" style="width:${pct(p.antiguos, max)}%"></span>
-          <small>${fmt(p.bultos)} bul | ${p.slotting} slot | ${p.antiguos} ant</small>
+          <small>${fmt(p.bultos)} bul | ${p.antiguos} ant</small>
         </div>
       `).join("")}
     </div>
@@ -4666,7 +5050,6 @@ function verDashboard() {
       ${semaforo("Paletero", fmt(r.lpn.paletero), "LPNs sin ubicacion", estadoSemaforo(r.lpn.paletero, 20, 60))}
       ${semaforo("Antiguos +7", fmt(r.antiguosCriticos.length), "LPNs con antiguedad critica", estadoSemaforo(r.antiguosCriticos.length, 15, 40))}
       ${semaforo("Puntos control", fmt(r.puntosCriticos.reduce((a, b) => a + b.bultos, 0)), "bultos +7 dias", estadoSemaforo(r.puntosCriticos.length, 10, 30))}
-      ${semaforo("Slotting", fmt(r.slotting.length), "productos con sugerencia", estadoSemaforo(r.slotting.length, 5, 20))}
       ${semaforo("Dinamicas libres", fmt(r.dinamicasLibres), `${ocupacionDinamica.toFixed(1)}% ocupadas`, estadoSemaforo(r.dinamicasLibres, 10, 25, true))}
       ${semaforo("Bloqueo", fmt(r.bloqueados), "productos bloqueados", estadoSemaforo(r.bloqueados, 5, 15))}
     </section>
@@ -4676,7 +5059,6 @@ function verDashboard() {
       <button onclick="verLpnsSinActivo()">Ver LPNs sin activo +7</button>
       <button onclick="verPuntosControl()">Ver puntos control</button>
       <button onclick="verBloqueo()">Ver bloqueo</button>
-      <button onclick="verSlotting()">Ver slotting</button>
       <button onclick="verInventario()">Ver inventario</button>
     </section>
 
@@ -4687,7 +5069,6 @@ function verDashboard() {
         <h2>Mapa por pasillo</h2>
         <div class="legend">
           <span><b class="dot green"></b>Stock</span>
-          <span><b class="dot blue"></b>Slotting</span>
           <span><b class="dot red"></b>Antiguos</span>
         </div>
         ${barrasPasillo(pasillos)}
@@ -4696,7 +5077,6 @@ function verDashboard() {
         <h2>Flujo de atencion</h2>
         ${barra("Avance antiguos", r.antiguos.filter(x => x.estado === "HECHO").length, r.antiguos.length)}
         ${barra("Dinamicas libres", r.dinamicasLibres, totalDinamicas)}
-        ${barra("Slotting usable", r.slotting.filter(x => x.accionSlotting === "USAR LIBRE").length, r.slotting.length)}
         ${barra("Inventario saturado", r.saturadas, r.inv.length)}
       </div>
     </section>
@@ -4743,7 +5123,6 @@ function verGerencia() {
         ${semaforo("LPNs operativos", fmt(r.lpn.lpns), `${fmt(r.lpn.stock)} bultos`, "ok")}
         ${semaforo("Antiguos +7", fmt(r.antiguosCriticos.length), "requieren accion", estadoSemaforo(r.antiguosCriticos.length, 15, 40))}
         ${semaforo("Puntos control", fmt(r.puntosCriticos.reduce((a, b) => a + b.bultos, 0)), "bultos criticos", estadoSemaforo(r.puntosCriticos.length, 10, 30))}
-        ${semaforo("Slotting", fmt(r.slotting.length), "productos sugeridos", estadoSemaforo(r.slotting.length, 5, 20))}
       </section>
       <section class="dashboard-layout">
         <div class="card">
@@ -9980,11 +10359,16 @@ function clasificarZonaControl(ubicacion) {
   if (ubi.includes("BLOQUEADO") || ubi.includes("BLOQUEO") || ubi.includes("CIRCUITO") || ubi.includes("PTS")) return "DROP CIRCUITO PTS";
   if (ubi.startsWith("DROP-BUFR") || ubi.includes("BUFFER")) return "BUFFER";
   if (ubi.startsWith("DROP")) return "DROP";
-  return "OTRAS UBICACIONES";
+  return zonaDinamicaControl(ubi);
+}
+
+function zonaDinamicaControl(ubicacion) {
+  const token = limpiar(ubicacion).toUpperCase().split(/[-_\s/]+/).find(Boolean);
+  return token || "OTRAS UBICACIONES";
 }
 
 function ordenZonaControl(zona) {
-  const orden = ["STAGING", "SIN UBICACION", "DROP CIRCUITO PTS", "BUFFER", "DROP", "OTRAS UBICACIONES", "MASS"];
+  const orden = ["STAGING", "SIN UBICACION", "DROP CIRCUITO PTS", "BUFFER", "DROP", "RAMPA", "SALDOS", "OTRAS UBICACIONES", "MASS"];
   const idx = orden.indexOf(zona);
   return idx === -1 ? 99 : idx;
 }
@@ -10234,6 +10618,33 @@ function detallePuntoControlFilas(data) {
     });
 }
 
+function resumenProductosPuntoControl(data) {
+  const mapa = new Map();
+  data.forEach(r => {
+    const key = `${normalizar(r.codigo)}|${limpiar(r.desc)}`;
+    if (!mapa.has(key)) {
+      mapa.set(key, {
+        codigo: r.codigo,
+        desc: r.desc,
+        unidades: 0,
+        bultos: 0,
+        costoUnitario: r.precioUnitario,
+        costoTotal: 0,
+        antiguedad: 0,
+        lpns: new Set()
+      });
+    }
+    const item = mapa.get(key);
+    item.unidades += num(r.unidades);
+    item.bultos += num(r.bultos);
+    item.costoTotal += num(r.unidades) * num(r.precioUnitario);
+    item.antiguedad = Math.max(item.antiguedad, num(r.antiguedad));
+    if (r.lpn) item.lpns.add(r.lpn);
+  });
+  return Array.from(mapa.values())
+    .sort((a, b) => b.antiguedad - a.antiguedad || b.bultos - a.bultos || String(a.codigo).localeCompare(String(b.codigo)));
+}
+
 function abrirDetallePuntoControl(detalleKey) {
   const detalle = detallePuntosControl.get(detalleKey);
   const destino = document.getElementById("modalPuntoControl");
@@ -10246,6 +10657,7 @@ function abrirDetallePuntoControl(detalleKey) {
   }
 
   const rows = aplicarPrecioUnicoControl(detallePuntoControlFilas(detalle.data));
+  const resumenProductos = resumenProductosPuntoControl(detalle.data);
   const totalBultos = detalle.data.reduce((a, b) => a + b.bultos, 0);
   const totalLpns = new Set(detalle.data.map(r => r.lpn)).size;
   destino.innerHTML = `
@@ -10261,7 +10673,20 @@ function abrirDetallePuntoControl(detalleKey) {
           <button class="ghost" onclick="cerrarDetallePuntoControl()">Cerrar</button>
         </div>
       </div>
-      ${tablaConId("tablaDetallePuntoControl", ["Ubicacion", "LPN", "Estado LPN", "Codigo", "Descripcion", "Stock BUL", "Stock UND", "Precio UND", "Precio total", "Ubicacion activo", "Asignado activo", "Transito activo", "Disp activo UND", "Disp activo BUL", "Antiguedad dias"], rows.map(r => `
+      <h3>Resumen por producto</h3>
+      ${tablaConId("tablaResumenPuntoControlProductos", ["Codigo", "Descripcion", "Unidades", "Bultos", "Costo x unidad", "Costo total", "Antiguedad"], resumenProductos.map(r => `
+        <tr class="${r.antiguedad >= 7 ? "bad" : r.antiguedad >= 3 ? "warn" : ""}">
+          <td><strong>${htmlSeguro(r.codigo)}</strong></td>
+          <td>${htmlSeguro(r.desc)}</td>
+          <td class="number">${fmt(r.unidades)}</td>
+          <td class="number">${fmt(r.bultos)}</td>
+          <td class="number">${fmt(r.costoUnitario)}</td>
+          <td class="number">${fmt(r.costoTotal)}</td>
+          <td class="number">${fmt(r.antiguedad)}</td>
+        </tr>
+      `), "Sin productos para esta ubicacion.")}
+      <h3>Detalle por LPN</h3>
+      ${tablaConId("tablaDetallePuntoControl", ["Ubicacion", "LPN", "Estado LPN", "Codigo", "Descripcion", "Stock BUL", "Stock UND", "Costo x UND", "Costo total", "Ubicacion activo", "Asignado activo", "Transito activo", "Disp activo UND", "Disp activo BUL", "Antiguedad dias"], rows.map(r => `
         <tr class="${r.antiguedad >= 7 ? "bad" : r.antiguedad >= 3 ? "warn" : ""}">
           <td>${htmlSeguro(r.ubicacion)}</td>
           <td><strong>${htmlSeguro(r.lpn)}</strong></td>
@@ -10318,8 +10743,8 @@ function exportarDetallePuntosControlGeneral() {
         <th>DESCRIPCION</th>
         <th>STOCK BUL</th>
         <th>STOCK UND</th>
-        <th>PRECIO UND</th>
-        <th>PRECIO TOTAL LPN</th>
+        <th>COSTO X UND</th>
+        <th>COSTO TOTAL LPN</th>
         <th>UBICACION ACTIVO</th>
         <th>ASIGNADO ACTIVO</th>
         <th>TRANSITO ACTIVO</th>
@@ -10666,7 +11091,16 @@ function productosCriticosSlotting() {
 }
 
 function tipoUbicacion(row) {
-  const tipo = limpiar(row.TIPO_UBICACION || row.TIPO || row.TIPOUBICACION)
+  const tipo = limpiar(campo(row, [
+    "Tipo Ubicac",
+    "TIPO_UBICACION",
+    "TIPO UBICACION",
+    "TIPOUBICACION",
+    "Tipo ubicacion",
+    "Tipo Ubicacion",
+    "TIPO",
+    "Tipo"
+  ]))
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toUpperCase();

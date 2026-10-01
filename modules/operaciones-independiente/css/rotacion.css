@@ -1,0 +1,51 @@
+.rot-dashboard { color:#202c36; padding:8px 0; }
+.rot-dashboard * { box-sizing:border-box; letter-spacing:0; }
+.rot-dashboard .section-head { margin-bottom:18px; }
+.rot-dashboard h2 { margin:0 0 4px; font-size:24px; }
+.rot-muted,.rot-dashboard small { color:#657481; }
+.rot-dashboard .filters { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:12px; align-items:center; }
+.rot-dashboard .filters input.search { flex:1 1 290px; min-width:0; width:auto; }
+.rot-dashboard select,.rot-dashboard input { border:1px solid #cbd5df; border-radius:6px; background:white; min-height:40px; padding:8px 12px; font:inherit; max-width:100%; }
+.rot-dashboard select { flex:1 1 155px; min-width:0; }
+.rot-method { border-bottom:1px solid #dce3e9; margin:0 0 18px; padding:0 0 12px; font-size:12px; color:#627080; }
+.rot-method summary { cursor:pointer; width:fit-content; }
+.rot-method input { width:80px; }
+.rot-method p { max-width:850px; line-height:1.6; }
+.rot-kpis { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:12px; margin-bottom:20px; }
+.rot-kpi { padding:14px; border:1px solid #dce3e9; border-top:3px solid #167d8d; border-radius:6px; min-width:0; background:#fff; }
+.rot-kpi span,.rot-kpi small { display:block; font-size:12px; }
+.rot-kpi strong { display:block; font-size:25px; margin:8px 0; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
+.rot-kpi.k4 { border-top-color:#b44747; }
+.rot-kpi.k5 { border-top-color:#d39428; }
+.rot-charts { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.3fr) minmax(0,1fr); gap:22px; padding:18px 0 24px; border-block:1px solid #dce3e9; margin-bottom:22px; }
+.rot-charts section { min-width:0; }
+.rot-dashboard h3 { font-size:15px; margin:0 0 18px; }
+.rot-dashboard h3 small { font-size:12px; margin-left:8px; font-weight:400; }
+.rot-distribution { display:flex; align-items:center; gap:18px; flex-wrap:wrap; }
+.rot-donut { width:160px; height:160px; flex-shrink:0; border-radius:50%; display:grid; place-items:center; }
+.rot-donut>div { width:112px; height:112px; border-radius:50%; background:white; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+.rot-donut strong { font-size:24px; }
+.rot-donut small { font-size:11px; }
+.rot-legend { flex:1; min-width:105px; font-size:11px; }
+.rot-legend>div { display:flex; gap:7px; align-items:center; margin:12px 0; }
+.rot-legend i { width:8px; height:8px; border-radius:50%; }
+.rot-legend span { flex:1; }
+.rot-bar-row { margin:0 0 12px; }
+.rot-bar-row>div:first-child,.rot-cover-row>div:first-child { display:flex; justify-content:space-between; gap:10px; font-size:11px; margin-bottom:5px; }
+.rot-bar-row span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.rot-bar-row strong { flex-shrink:0; }
+.rot-track,.rot-stacked { height:9px; border-radius:3px; overflow:hidden; background:#e9edf1; display:flex; }
+.rot-track i { display:block; background:#167d8d; height:100%; }
+.rot-cover-row { margin-bottom:24px; }
+.rot-cover-row small { display:block; font-size:10px; margin-top:6px; line-height:1.5; }
+.rot-desc { display:block; max-width:310px; white-space:normal; font-size:11px; color:#677581; margin-top:4px; }
+.rot-dashboard td { vertical-align:top; padding:12px 10px; font-variant-numeric:tabular-nums; }
+.rot-badge { display:inline-block; padding:4px 7px; font-size:10px; font-weight:700; border-radius:4px; background:#edf0f4; white-space:nowrap; }
+.rot-badge.alta { color:#076576; background:#dbf0f0; }
+.rot-badge.media,.rot-badge.ship { color:#81560c; background:#fff1d6; }
+.rot-warning { color:#a33e3e; }
+.rot-dashboard .table-wrap { max-height:570px; overflow:auto; }
+.rot-dashboard table { min-width:1100px; }
+@media(max-width:1150px) { .rot-kpis { grid-template-columns:repeat(3,minmax(0,1fr)); } .rot-charts { grid-template-columns:repeat(2,minmax(0,1fr)); } .rot-charts section:last-child { grid-column:1/-1; } }
+@media(max-width:620px) { .rot-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); } .rot-charts { grid-template-columns:minmax(0,1fr); } .rot-charts section:last-child { grid-column:auto; } .rot-dashboard h2 { font-size:21px; } .rot-dashboard .section-head { flex-wrap:wrap; gap:12px; } .rot-kpi strong { font-size:23px; } }
+@media(max-width:420px) { .rot-dashboard select { flex-basis:100%; width:100%; } }

@@ -8,6 +8,7 @@ let dataProductos = [];
 let dataPedido = [];
 let dataInventario = [];
 let dataUbicaciones = [];
+let dataUbicacionesActivo = [];
 let dataBloqueo = [];
 let dataAsignacionTareas = [];
 let dataRecepcionProveedores = [];
@@ -326,12 +327,13 @@ async function cargarDatos() {
   datosListos = false;
   estado("Cargando hojas base...");
 
-  const [lpns, productos, pedido, inventario, ubicaciones, bloqueo, asignacionTareas, recepcionProveedores, recepcionProveedoresResumen, recepcionPaleteros, recepcionPaleterosAsn, recepcionPaleterosCodigo] = await Promise.all([
+  const [lpns, productos, pedido, inventario, ubicaciones, ubicacionesActivo, bloqueo, asignacionTareas, recepcionProveedores, recepcionProveedoresResumen, recepcionPaleteros, recepcionPaleterosAsn, recepcionPaleterosCodigo] = await Promise.all([
     cargarHoja("LPNS"),
     cargarHoja("PRODUCTOS"),
     cargarHoja("PEDIDO"),
     cargarHoja("INV_ACTIVO"),
     cargarOpcional("UBICACION"),
+    cargarOpcional("UBI_ACTIVO"),
     cargarOpcional("BLOQUEO"),
     cargarOpcionalDesde(TAREAS_ASIGNACION_SHEET_ID, "ASIGNACION"),
     cargarOpcionalDesde(RECEPCION_PROVEEDORES_SHEET_ID, "DETALLE_OC"),
@@ -346,6 +348,7 @@ async function cargarDatos() {
   dataPedido = pedido;
   dataInventario = inventario;
   dataUbicaciones = ubicaciones;
+  dataUbicacionesActivo = ubicacionesActivo;
   dataBloqueo = bloqueo;
   dataAsignacionTareas = asignacionTareas;
   dataRecepcionProveedores = recepcionProveedores;
@@ -357,7 +360,7 @@ async function cargarDatos() {
   validarDatosBase();
   datosListos = true;
 
-  estado(`LPNS ${lpns.length} | Productos ${productos.length} | Pedido ${pedido.length} | INV ${inventario.length} | Recepcion ${recepcionProveedores.length + recepcionProveedoresResumen.length + recepcionPaleteros.length}${advertenciasCarga.length ? " | Revisar columnas" : ""}`);
+  estado(`LPNS ${lpns.length} | Productos ${productos.length} | Pedido ${pedido.length} | INV ${inventario.length} | UBI_ACTIVO ${ubicacionesActivo.length} | Recepcion ${recepcionProveedores.length + recepcionProveedoresResumen.length + recepcionPaleteros.length}${advertenciasCarga.length ? " | Revisar columnas" : ""}`);
 }
 
 async function iniciarAplicacion() {

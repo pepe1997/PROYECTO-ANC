@@ -40,6 +40,47 @@ function campo(row, nombres) {
   return "";
 }
 
+let cacheUsuariosPorDni = { firma: "", mapa: new Map() };
+
+function clavesUsuarioDni(valor) {
+  const texto = limpiar(valor);
+  if (!texto) return [];
+  const exacta = normalizar(texto);
+  const sinDecimalCero = texto.replace(/[,.]0+$/, "");
+  const digitos = sinDecimalCero.replace(/\D/g, "");
+  return Array.from(new Set([exacta, digitos].filter(Boolean)));
+}
+
+function claveDniUsuario(valor) {
+  return clavesUsuarioDni(valor)[0] || "";
+}
+
+function mapaUsuariosPorDni() {
+  const data = Array.isArray(dataUsuarios) ? dataUsuarios : [];
+  const firma = `${data.length}|${data[0] ? Object.keys(data[0]).join(",") : ""}|${limpiar(campo(data[0] || {}, ["DNI"]))}|${limpiar(campo(data[data.length - 1] || {}, ["DNI"]))}`;
+  if (cacheUsuariosPorDni.firma === firma) return cacheUsuariosPorDni.mapa;
+
+  const mapa = new Map();
+  data.forEach(row => {
+    const claves = clavesUsuarioDni(campo(row, ["DNI", "Documento", "DOCUMENTO", "Codigo", "CODIGO"]));
+    const nombre = limpiar(campo(row, ["Nombre", "NOMBRE", "Nombres", "NOMBRES"]));
+    if (nombre) claves.forEach(clave => mapa.set(clave, nombre));
+  });
+  cacheUsuariosPorDni = { firma, mapa };
+  return mapa;
+}
+
+function nombreUsuarioPorDni(usuario) {
+  const codigo = limpiar(usuario);
+  if (!codigo) return "";
+  const mapa = mapaUsuariosPorDni();
+  for (const clave of clavesUsuarioDni(codigo)) {
+    const nombre = mapa.get(clave);
+    if (nombre) return nombre;
+  }
+  return codigo;
+}
+
 function pct(a, b) {
   return b > 0 ? (a / b) * 100 : 0;
 }
@@ -54,9 +95,10 @@ function fechaValor(valor) {
   const iso = texto.replace(" ", "T");
   const fecha = new Date(iso);
   if (!Number.isNaN(fecha.getTime())) return fecha;
-  const partes = texto.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2}))?/);
+  const partes = texto.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:\s+(\d{1,2}):(\d{2}))?/);
   if (!partes) return null;
-  return new Date(Number(partes[3]), Number(partes[2]) - 1, Number(partes[1]), Number(partes[4] || 0), Number(partes[5] || 0));
+  const year = Number(partes[3]) < 100 ? 2000 + Number(partes[3]) : Number(partes[3]);
+  return new Date(year, Number(partes[2]) - 1, Number(partes[1]), Number(partes[4] || 0), Number(partes[5] || 0));
 }
 
 function fechaCorta(fecha) {
@@ -75,31 +117,8 @@ function turnoPorHora(hora) {
   return "NOCHE";
 }
 
-function descripcionNoCuentaPicking(descripcion) {
-  const texto = normalizar(descripcion).replace(/[^A-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
-  const palabras = texto.split(" ");
-  const frescos = [
-    "FRUTA", "FRUTAS", "PLATANO", "BANANO", "BANANA", "PERA", "PERAS", "MANZANA", "MANZANAS",
-    "NARANJA", "NARANJAS", "MANDARINA", "MANDARINAS", "LIMON", "LIMONES", "FRESA", "FRESAS",
-    "UVA", "UVAS", "MANGO", "MANGOS", "PINA", "PINIA", "PALTA", "PALTAS", "SANDIA",
-    "MELON", "PAPAYA", "DURAZNO", "GRANADILLA", "MARACUYA", "KIWI", "CIRUELA", "CHIRIMOYA",
-    "VERDURA", "VERDURAS", "HORTALIZA", "HORTALIZAS", "ZANAHORIA", "ZANAHORIAS", "TOMATE",
-    "TOMATES", "CEBOLLA", "CEBOLLAS", "PAPA", "PAPAS", "CAMOTE", "CAMOTES", "YUCA",
-    "LECHUGA", "LECHUGAS", "BROCOLI", "PEPINO", "PEPINOS", "APIO", "BETERRAGA", "ESPINACA",
-    "ROCOTO", "AJI", "AJIES", "CHOCLO", "CHOCLOS", "PIMIENTO", "PIMIENTOS"
-  ].map(normalizar);
-  if (texto === "JABA" || texto === "JABAS" || texto.startsWith("JABA ") || texto.startsWith("JABAS ")) return true;
-  return frescos.some(item => texto === item || texto.startsWith(`${item} `));
-}
-
 function pickingEsValido(row) {
-  const descripcion = normalizar(row.descripcion);
-  const tipo = normalizar(row.tipo).replace(/[^A-Z0-9]/g, "");
-  const lpn = normalizar(row.lpn);
-  if (tipo === "FULLCONTAINER") return false;
-  if (lpn.startsWith("ILE")) return false;
-  if (descripcionNoCuentaPicking(descripcion)) return false;
-  return true;
+  return Number.isFinite(row.bultos) && row.bultos > 0;
 }
 
 function modeloPicking() {
@@ -132,6 +151,533 @@ function modeloPicking() {
   }).filter(pickingEsValido);
 }
 
+function modeloCase() {
+  return (dataCase || [])
+    .map((r, index) => {
+      const tipo = limpiar(campo(r, ["Tipo Asignac", "TIPO ASIGNAC", "Tipo Asignac  - Interno Bulk Pick", "TIPO ASGIN", "Tipo Asign"]));
+      const estado = normalizar(campo(r, ["Estado", "ESTADO"]));
+      const fecha = fechaValor(campo(r, ["Fe Y Hr Modif", "Fe y Hr Modif", "FE Y HR MODIF", "Fecha Modif", "FECHA"]));
+      const hora = horaFecha(fecha);
+      const destino = limpiar(campo(r, ["Destino", "DESTINO", "Cod Destino", "Tienda", "TIENDA"]));
+      const local = limpiar(campo(r, ["Local", "LOCAL", "Nombre Destino", "NOMBRE DESTINO"]));
+      return {
+        index,
+        tipo,
+        estado,
+        estadoLabel: esCaseTerminado({ estado }) ? "Terminado" : estado === "ASIGNADOS" || estado === "ASIGNADO" ? "Asignado" : estado === "CANCELADO" ? "Cancelado" : estado || "Sin estado",
+        bultos: num(campo(r, ["QtyAsgn Cases", "QTYASGN CASES", "Qty Asgn Cases", "QTY ASGN CASES", "Bultos", "BULTOS"])),
+        usuario: limpiar(campo(r, ["Usua Pick", "USUA PICK", "Usuario Pick", "USUARIO PICKING", "USUARIO"])) || "SIN USUARIO",
+        fecha,
+        fechaTexto: fechaCorta(fecha),
+        hora,
+        turno: turnoPorHora(hora),
+        destino,
+        local,
+        tiendaKey: destino && local ? `${destino} | ${local}` : destino || local || "SIN TIENDA",
+        lpn: limpiar(campo(r, ["Nro LPN", "NRO LPN", "LPN", "Nro LPNs"])),
+        raw: r
+      };
+    })
+    .filter(r => {
+      const tipo = normalizar(r.tipo);
+      return tipo.includes("INTERNO") && tipo.includes("BULK") && tipo.includes("PICK") && r.bultos > 0;
+    });
+}
+
+function filtrosCase(data) {
+  return data;
+}
+
+function esCaseTerminado(row) {
+  return row.estado === "TERMINADO" || row.estado === "FINALIZADA";
+}
+
+function esPickActivoTerminado(row) {
+  return row.estado === "TERMINADO" || row.estado === "FINALIZADA";
+}
+
+function estadoPickActivoLabel(estado) {
+  const normal = normalizar(estado);
+  if (normal === "TERMINADO") return "Terminado";
+  if (normal === "FINALIZADA") return "Finalizada";
+  if (normal === "LISTO") return "Listo";
+  if (normal.includes("PROCESAM")) return "Procesam Iniciado";
+  if (normal === "ASIGNADOS" || normal === "ASIGNADO") return "Asignados";
+  return limpiar(estado) || "Sin estado";
+}
+
+function modeloTareasPickActivo() {
+  const mapa = new Map();
+  (dataTareas || []).forEach((r, index) => {
+    const tarea = limpiar(campo(r, ["Nro Tarea", "NRO TAREA", "NroTarea", "Tarea", "TAREA"]));
+    if (!tarea) return;
+    const fecha = fechaValor(campo(r, ["Fe Y Hr Modif", "Fe y Hr Modif", "FE Y HR MODIF", "Fecha Modif", "FECHA"]));
+    const estado = normalizar(campo(r, ["Estado", "ESTADO"]));
+    const item = {
+      index,
+      tarea,
+      estado,
+      estadoLabel: estadoPickActivoLabel(estado),
+      fecha,
+      fechaTexto: fechaCorta(fecha),
+      hora: horaFecha(fecha),
+      turno: turnoPorHora(horaFecha(fecha)),
+      raw: r
+    };
+    const actual = mapa.get(tarea);
+    const actualTime = actual?.fecha?.getTime() || 0;
+    const itemTime = item.fecha?.getTime() || 0;
+    if (!actual || itemTime > actualTime || (itemTime === actualTime && item.estado === "TERMINADO")) {
+      mapa.set(tarea, item);
+    }
+  });
+  return Array.from(mapa.values());
+}
+
+function modeloAsignacionPickActivo() {
+  return (dataAsignacion || [])
+    .map((r, index) => {
+      const tareaId = limpiar(campo(r, ["Nro Tarea", "NRO TAREA", "NroTarea", "Tarea", "TAREA"]));
+      const estado = normalizar(campo(r, ["Estado", "ESTADO"]));
+      const fecha = fechaValor(campo(r, ["Fe Y Hr Modif", "Fe y Hr Modif", "FE Y HR MODIF", "Fecha Modif", "FECHA"]));
+      const hora = horaFecha(fecha);
+      return {
+        index,
+        tarea: tareaId,
+        estado,
+        estadoLabel: estadoPickActivoLabel(estado),
+        unidades: num(campo(r, ["Un Asig", "UN ASIG", "Unidades Asig", "Unidades", "UNIDADES"])),
+        usuario: limpiar(campo(r, ["Usua Pick", "USUA PICK", "Usuario Pick", "USUARIO PICKING", "USUARIO"])) || "SIN USUARIO",
+        fecha,
+        fechaTexto: fechaCorta(fecha),
+        hora,
+        turno: turnoPorHora(hora),
+        raw: r
+      };
+    })
+    .filter(r => r.unidades > 0);
+}
+
+function resumenPickActivo() {
+  const tareas = modeloTareasPickActivo();
+  const asignacion = modeloAsignacionPickActivo();
+  const tareasTerminadas = tareas.filter(esPickActivoTerminado);
+  const tareasPendientes = tareas.filter(t => t.estado === "LISTO" || t.estado.includes("PROCESAM"));
+  const unidadesTerminadas = asignacion.filter(esPickActivoTerminado);
+  const unidadesPendientes = asignacion.filter(r => r.estado === "ASIGNADOS" || r.estado === "ASIGNADO");
+  const totalUnidades = asignacion.reduce((sum, row) => sum + row.unidades, 0);
+  const totalTerminadas = unidadesTerminadas.reduce((sum, row) => sum + row.unidades, 0);
+  const totalPendientes = unidadesPendientes.reduce((sum, row) => sum + row.unidades, 0);
+  const horasUnidades = promedioPickActivoPorHora(unidadesTerminadas, "unidades");
+  const horasTareas = promedioPickActivoPorHora(tareasTerminadas, "tareas");
+  return {
+    tareas,
+    asignacion,
+    tareasTerminadas,
+    tareasPendientes,
+    unidadesTerminadas,
+    unidadesPendientes,
+    totalTareas: tareas.length,
+    totalUnidades,
+    totalTerminadas,
+    totalPendientes,
+    avanceTareas: pct(tareasTerminadas.length, tareas.length),
+    avanceUnidades: pct(totalTerminadas, totalUnidades),
+    horasUnidades,
+    horasTareas,
+    promedioUnidadesHora: horasUnidades.length ? totalTerminadas / horasUnidades.length : 0
+  };
+}
+
+function pickActivoGauge(label, value, max, icon, color = "#2563eb") {
+  const p = Math.max(0, Math.min(100, pct(value, max)));
+  return `
+    <article class="pick-active-gauge">
+      <div>
+        <i class="visual-title-icon">${iconoPicking(icon)}</i>
+        <span>${label}</span>
+      </div>
+      <strong>${p.toFixed(1)}%</strong>
+      <small>${fmt(value)} de ${fmt(max)}</small>
+      <b><u style="width:${p}%;background:${color}"></u></b>
+    </article>
+  `;
+}
+
+function pickActivoUsuariosCompacto(usuarios, total) {
+  const top = usuarios.slice(0, 5);
+  const max = Math.max(...top.map(x => x.valor), 1);
+  const palette = caseUserPalette();
+  return `
+    <article class="visual-panel pick-active-user-compact">
+      <div class="visual-panel-head">
+        <div>
+          <h3><i class="visual-title-icon">${iconoPicking("usuarios")}</i>TOP USUARIOS PICK ACTIVO</h3>
+          <span>Unidades terminadas y participacion</span>
+        </div>
+      </div>
+      <div class="pick-active-user-compact-grid">
+        <div class="pick-active-user-rows">
+          ${top.map((x, index) => `
+            <article style="--active-color:${palette[index % palette.length]}">
+              <b>${index + 1}</b>
+              <div>
+                <strong>${corto(nombreUsuarioPorDni(x.label), 16)}</strong>
+                <small>${fmt(x.valor)} unid. | pico ${x.horaPico} con ${fmt(x.bultosPico)}</small>
+              </div>
+              <em>${pct(x.valor, total).toFixed(1)}%</em>
+              <i><u style="width:${Math.max(2, pct(x.valor, max))}%"></u></i>
+            </article>
+          `).join("") || `<div class="empty-state">Sin usuarios terminados.</div>`}
+        </div>
+        ${caseUserDonutVisible(top, total, "Unidades")}
+      </div>
+    </article>
+  `;
+}
+
+function promedioPickActivoPorHora(data, tipo) {
+  const mapa = new Map();
+  data.forEach(r => {
+    if (r.hora === null || r.hora === undefined) return;
+    const key = String(r.hora).padStart(2, "0");
+    if (!mapa.has(key)) mapa.set(key, { label: `${key}:00`, valor: 0, registros: 0 });
+    const item = mapa.get(key);
+    item.valor += tipo === "tareas" ? 1 : r.unidades;
+    item.registros += 1;
+  });
+  return Array.from(mapa.values())
+    .sort((a, b) => Number(a.label.slice(0, 2)) - Number(b.label.slice(0, 2)));
+}
+
+function rankingPickActivoUsuarios(data, asignacionTotal) {
+  const totalPorUsuario = new Map();
+  asignacionTotal.forEach(row => {
+    const actual = totalPorUsuario.get(row.usuario) || { total: 0, pendiente: 0 };
+    actual.total += row.unidades;
+    if (row.estado === "ASIGNADOS" || row.estado === "ASIGNADO") actual.pendiente += row.unidades;
+    totalPorUsuario.set(row.usuario, actual);
+  });
+
+  return rankingPickingDetalle(data.map(row => ({ ...row, bultos: row.unidades })), r => r.usuario).map(item => {
+    const totals = totalPorUsuario.get(item.label) || { total: item.valor, pendiente: 0 };
+    return {
+      ...item,
+      totalAsignado: totals.total,
+      pendiente: totals.pendiente,
+      cumplimiento: pct(item.valor, totals.total)
+    };
+  });
+}
+
+function verPickActivo() {
+  document.getElementById("modulo").innerHTML = `
+    <section class="hero picking-hero pick-active-hero">
+      <div>
+        <span>Reporte Picking</span>
+        <h2>Pick Activo</h2>
+      </div>
+    </section>
+    <div id="pickActivoVista"></div>
+  `;
+  renderPickActivo();
+}
+
+function renderPickActivo() {
+  const resumen = resumenPickActivo();
+  const usuarios = rankingPickActivoUsuarios(resumen.unidadesTerminadas, resumen.asignacion).slice(0, 12);
+  const horaPico = [...resumen.horasUnidades].sort((a, b) => b.valor - a.valor)[0];
+  const horaPicoTareas = [...resumen.horasTareas].sort((a, b) => b.valor - a.valor)[0];
+
+  document.getElementById("pickActivoVista").innerHTML = `
+    <section class="visual-sheet pick-active-compact">
+      <div class="visual-header pick-active">
+        <div>
+          <h2>REPORTE PICK ACTIVO</h2>
+          <span>Tareas, unidades y productividad en una sola vista</span>
+        </div>
+        <div class="visual-kpi-row">
+          ${visualKpi("TOTAL TAREAS", fmt(resumen.totalTareas), "", "check")}
+          ${visualKpi("UNIDADES", fmt(resumen.totalTerminadas), "", "recibido")}
+          ${visualKpi("PENDIENTES", fmt(resumen.totalPendientes), "", "programado")}
+          ${visualKpi("PROM. HORA", fmt(resumen.promedioUnidadesHora), "", "reloj")}
+        </div>
+      </div>
+
+      <div class="pick-active-summary">
+        ${pickActivoGauge("Avance tareas", resumen.tareasTerminadas.length, resumen.totalTareas, "check", "#2563eb")}
+        ${pickActivoGauge("Avance unidades", resumen.totalTerminadas, resumen.totalUnidades, "recibido", "#22c55e")}
+        ${pickActivoGauge("Pendiente unidades", resumen.totalPendientes, resumen.totalUnidades, "programado", "#f59e0b")}
+        <article class="pick-active-peak-card">
+          <i class="visual-title-icon">${iconoPicking("linea")}</i>
+          <span>Pico operativo</span>
+          <strong>${horaPico?.label || horaPicoTareas?.label || "-"}</strong>
+          <small>${horaPico ? `${fmt(horaPico.valor)} unidades` : `${fmt(horaPicoTareas?.valor || 0)} tareas`}</small>
+        </article>
+      </div>
+
+      <div class="pick-active-report-main">
+        <div class="pick-active-chart-stack">
+          ${visualLine("TENDENCIA TAREAS", resumen.horasTareas, resumen.tareasTerminadas.length, "#2563eb", true, "TAREAS")}
+          ${visualLine("TENDENCIA UNIDADES", resumen.horasUnidades, resumen.totalTerminadas, "#22c55e", true, "UNIDADES")}
+        </div>
+        ${pickActivoUsuariosCompacto(usuarios, resumen.totalTerminadas)}
+      </div>
+    </section>
+  `;
+}
+
+function pickActivoUserBars(data, total) {
+  const max = Math.max(...data.map(x => x.valor), 1);
+  const palette = caseUserPalette();
+  return `
+    <div class="case-user-layout pick-active-user-layout">
+      <div class="case-user-bars">
+        ${data.slice(0, 8).map((x, index) => `
+          <article style="--case-user-color:${palette[index % palette.length]}">
+            <div class="case-user-head">
+              <span>${index + 1}</span>
+              <div>
+                <strong>${nombreUsuarioPorDni(x.label)}</strong>
+                <small>${fmt(x.valor)} unidades · pico ${x.horaPico} con ${fmt(x.bultosPico)} · ${x.cumplimiento.toFixed(1)}% avance</small>
+              </div>
+              <b>${pct(x.valor, total).toFixed(1)}%</b>
+            </div>
+            <i><u style="width:${Math.max(2, pct(x.valor, max))}%"></u></i>
+          </article>
+        `).join("") || `<div class="empty-state">Sin usuarios terminados.</div>`}
+      </div>
+      ${caseUserDonutVisible(data, total, "Unidades")}
+    </div>
+  `;
+}
+
+function tablaPickActivo(resumen) {
+  const rows = resumen.tareas
+    .slice()
+    .sort((a, b) => (b.fecha?.getTime() || 0) - (a.fecha?.getTime() || 0))
+    .slice(0, 300)
+    .map(tarea => {
+      const asignadas = resumen.asignacion.filter(a => a.tarea === tarea.tarea);
+      const unidades = asignadas.reduce((sum, row) => sum + row.unidades, 0);
+      const terminadas = asignadas.filter(esPickActivoTerminado).reduce((sum, row) => sum + row.unidades, 0);
+      const usuarios = Array.from(new Set(asignadas.map(row => nombreUsuarioPorDni(row.usuario)).filter(Boolean))).slice(0, 3).join(", ") || "-";
+      return `
+        <tr>
+          <td><strong>${tarea.tarea}</strong></td>
+          <td>${tarea.fechaTexto}<small>${tarea.hora !== null && tarea.hora !== undefined ? `${String(tarea.hora).padStart(2, "0")}:00` : ""}</small></td>
+          <td><strong>${tarea.estadoLabel}</strong></td>
+          <td>${usuarios}</td>
+          <td class="number">${fmt(unidades)}</td>
+          <td class="number">${fmt(terminadas)}</td>
+          <td><strong>${pct(terminadas, unidades).toFixed(1)}%</strong></td>
+        </tr>
+      `;
+    });
+  return tabla(["Nro Tarea", "Fecha", "Estado tarea", "Usuarios", "Un asignadas", "Un terminadas", "Avance"], rows, "Sin tareas.");
+}
+
+function resumenCase(data) {
+  const terminados = data.filter(esCaseTerminado);
+  const pendientes = data.filter(r => r.estado === "ASIGNADOS" || r.estado === "ASIGNADO");
+  const cancelados = data.filter(r => r.estado === "CANCELADO");
+  const bultosTerminados = terminados.reduce((a, b) => a + b.bultos, 0);
+  const bultosPendientes = pendientes.reduce((a, b) => a + b.bultos, 0);
+  const bultosCancelados = cancelados.reduce((a, b) => a + b.bultos, 0);
+  const totalOperativo = bultosTerminados + bultosPendientes;
+  return {
+    terminados,
+    pendientes,
+    cancelados,
+    bultosTerminados,
+    bultosPendientes,
+    bultosCancelados,
+    totalOperativo,
+    avance: pct(bultosTerminados, totalOperativo)
+  };
+}
+
+function horasCase(data, estado = "") {
+  const filtrado = estado === "TERMINADO" ? data.filter(esCaseTerminado) : estado ? data.filter(r => r.estado === estado) : data;
+  return promedioPickingPorHora(filtrado);
+}
+
+function verCase() {
+  document.getElementById("modulo").innerHTML = `
+    
+
+    <div id="caseVista"></div>
+  `;
+  renderCase();
+}
+
+function renderCase() {
+  const data = filtrosCase(modeloCase());
+  const resumen = resumenCase(data);
+  const usuariosDetalle = rankingPickingDetalle(data.filter(esCaseTerminado), r => r.usuario).slice(0, 12);
+  const horasTerminadas = horasCase(data, "TERMINADO");
+  const horaPico = [...horasTerminadas].sort((a, b) => b.valor - a.valor)[0];
+  const promedioHora = horasTerminadas.length ? resumen.bultosTerminados / horasTerminadas.length : 0;
+
+  document.getElementById("caseVista").innerHTML = `
+    <section class="visual-sheet case-compact">
+      <div class="visual-header case">
+        <div>
+          <h2>REPORTE CASE</h2>
+          <span>Avance de bultos, productividad y usuarios en una sola vista</span>
+        </div>
+        <div class="visual-kpi-row">
+          ${visualKpi("TOTAL CASE", fmt(resumen.totalOperativo), "", "caja")}
+          ${visualKpi("TRABAJADO", fmt(resumen.bultosTerminados), "", "check")}
+          ${visualKpi("PENDIENTE", fmt(resumen.bultosPendientes), "", "programado")}
+          ${visualKpi("PROM. HORA", fmt(promedioHora), "", "reloj")}
+        </div>
+      </div>
+
+      <div class="case-summary">
+        ${pickActivoGauge("Avance case", resumen.bultosTerminados, resumen.totalOperativo, "check", "#2563eb")}
+        ${pickActivoGauge("Pendiente case", resumen.bultosPendientes, resumen.totalOperativo, "programado", "#f59e0b")}
+        ${pickActivoGauge("Cancelado", resumen.bultosCancelados, resumen.totalOperativo + resumen.bultosCancelados, "caja", "#ef4444")}
+        <article class="pick-active-peak-card">
+          <i class="visual-title-icon">${iconoPicking("linea")}</i>
+          <span>Pico operativo</span>
+          <strong>${horaPico?.label || "-"}</strong>
+          <small>${fmt(horaPico?.valor || 0)} bultos</small>
+        </article>
+      </div>
+
+      <div class="case-report-main">
+        <div class="case-chart-stack">
+          ${visualLine("TENDENCIA CASE", horasTerminadas, resumen.bultosTerminados, "#2563eb", true, "BULTOS TRABAJADOS")}
+        </div>
+        ${caseUsuariosCompacto(usuariosDetalle, resumen.bultosTerminados)}
+      </div>
+    </section>
+  `;
+}
+
+function caseKpiPanel(resumen) {
+  return `
+    <section class="case-kpi-grid">
+      <article class="case-kpi total">
+        <span>Total</span>
+        <strong>${fmt(resumen.totalOperativo)}</strong>
+        <small>Bultos case</small>
+      </article>
+      <article class="case-kpi pending">
+        <span>Pendiente</span>
+        <strong>${fmt(resumen.bultosPendientes)}</strong>
+        <small>${fmt(resumen.pendientes.length)} registros</small>
+      </article>
+      <article class="case-kpi done">
+        <span>Trabajado</span>
+        <strong>${fmt(resumen.bultosTerminados)}</strong>
+        <small>${fmt(resumen.terminados.length)} registros</small>
+      </article>
+      <article class="case-kpi progress">
+        <span>Avance</span>
+        <strong>${resumen.avance.toFixed(1)}%</strong>
+        <small>Terminado vs operativo</small>
+      </article>
+    </section>
+  `;
+}
+
+function caseUsuariosCompacto(data, total) {
+  return `
+    <article class="visual-panel case-users-card">
+      <div class="visual-panel-head">
+        <div>
+          <h3><i class="visual-title-icon">${iconoPicking("usuarios")}</i>TOP USUARIOS CASE</h3>
+          <span>Bultos terminados y participacion</span>
+        </div>
+      </div>
+      ${caseUserBarsVisible(data, total)}
+    </article>
+  `;
+}
+
+function caseUserBarsVisible(data, total) {
+  const max = Math.max(...data.map(x => x.valor), 1);
+  const palette = caseUserPalette();
+  const usuarios = data.slice(0, 6);
+  const renderUsuario = (x, index) => `
+    <article style="--case-user-color:${palette[index % palette.length]}">
+      <div class="case-user-head">
+        <span>${index + 1}</span>
+        <div>
+          <strong>${nombreUsuarioPorDni(x.label)}</strong>
+          <small>${fmt(x.valor)} bultos · pico ${x.horaPico} con ${fmt(x.bultosPico)}</small>
+        </div>
+        <b>${pct(x.valor, total).toFixed(1)}%</b>
+      </div>
+      <i><u style="width:${Math.max(2, pct(x.valor, max))}%"></u></i>
+    </article>
+  `;
+  return `
+    <div class="case-user-layout">
+      ${usuarios.length ? `
+        <div class="case-user-bars case-user-bars-columns">
+          ${usuarios.map(renderUsuario).join("")}
+        </div>
+      ` : `<div class="empty-state">Sin datos.</div>`}
+      ${caseUserDonutVisible(data, total)}
+    </div>
+  `;
+}
+
+function caseUserPalette() {
+  return ["#2563eb", "#22c55e", "#f59e0b", "#7c3aed", "#0f766e", "#db2777"];
+}
+
+function caseUserDonutVisible(data, total, label = "Bultos") {
+  const top = data.slice(0, 5);
+  const palette = caseUserPalette();
+  let cursor = 0;
+  const segments = top.map((item, index) => {
+    const start = cursor;
+    const end = cursor + pct(item.valor, total);
+    cursor = end;
+    return `${palette[index]} ${start.toFixed(2)}% ${end.toFixed(2)}%`;
+  });
+  const otros = Math.max(0, total - top.reduce((sum, item) => sum + item.valor, 0));
+  if (otros > 0) segments.push(`#cbd5e1 ${cursor.toFixed(2)}% 100%`);
+  return `
+    <div class="case-user-donut-panel">
+      <div class="case-user-donut" style="--segments:${segments.length ? segments.join(", ") : "#e2e8f0 0% 100%"}">
+        <strong>${fmt(total)}</strong>
+        <span>${label}</span>
+      </div>
+    </div>
+  `;
+}
+
+function tablaCase(data) {
+  const rows = data
+    .slice()
+    .sort((a, b) => (b.fecha?.getTime() || 0) - (a.fecha?.getTime() || 0))
+    .slice(0, 500)
+    .map(r => `
+      <tr>
+        <td>${r.fechaTexto || ""}</td>
+        <td>${r.hora !== null && r.hora !== undefined ? `${String(r.hora).padStart(2, "0")}:00` : ""}</td>
+        <td><strong>${r.estadoLabel}</strong></td>
+        <td>${nombreUsuarioPorDni(r.usuario)}</td>
+        <td>${r.tiendaKey}</td>
+        <td>${r.lpn}</td>
+        <td><strong>${fmt(r.bultos)}</strong></td>
+      </tr>
+    `);
+  return tabla(["Fecha", "Hora", "Estado", "Usuario", "Tienda", "LPN", "Bultos"], rows, "Sin data CASE.");
+}
+
+function exportarCaseCsv() {
+  const data = filtrosCase(modeloCase());
+  const headers = ["Fecha", "Turno", "Hora", "Estado", "Usuario", "Tienda", "LPN", "Tipo", "Bultos"];
+  const rows = data.map(r => [r.fechaTexto, r.turno, r.hora !== null ? `${r.hora}:00` : "", r.estadoLabel, nombreUsuarioPorDni(r.usuario), r.tiendaKey, r.lpn, r.tipo, r.bultos]);
+  descargarCsv("case.csv", headers, rows);
+}
+
 function agruparSum(data, fn, valueFn) {
   const mapa = new Map();
   data.forEach(r => {
@@ -148,12 +694,12 @@ function opcionesFiltro(data, fn) {
   return Array.from(new Set(data.map(fn).filter(Boolean))).sort((a, b) => String(a).localeCompare(String(b)));
 }
 
-function selectFiltro(id, label, opciones, valor) {
+function selectFiltro(id, label, opciones, valor, labelFn = op => op) {
   return `
     <label class="filter-label">${label}
       <select id="${id}" onchange="renderPicking()">
         <option value="">Todos</option>
-        ${opciones.map(op => `<option value="${op}" ${op === valor ? "selected" : ""}>${op}</option>`).join("")}
+        ${opciones.map(op => `<option value="${htmlAttr(op)}" ${op === valor ? "selected" : ""}>${htmlAttr(labelFn(op))}</option>`).join("")}
       </select>
     </label>
   `;
@@ -222,7 +768,7 @@ function verPicking() {
 
     <section class="filter-panel picking-filter-panel">
       ${selectFiltro("filtroTurnoPicking", "Turno", opcionesFiltro(data, r => r.turno), filtros.turno)}
-      ${selectFiltro("filtroUsuarioPicking", "Usuario", opcionesFiltro(data, r => r.usuario), filtros.usuario)}
+      ${selectFiltro("filtroUsuarioPicking", "Usuario", opcionesFiltro(data, r => r.usuario), filtros.usuario, nombreUsuarioPorDni)}
       ${selectFiltro("filtroLocalPicking", "Local", opcionesFiltro(data, r => r.tiendaKey), filtros.local)}
     </section>
 
@@ -278,8 +824,8 @@ function renderPicking() {
       </div>
 
       <div class="card picking-rank-card">
-        <h2>Ranking usuarios</h2>
-        ${rankingPickingVisible(usuariosDetalle, total)}
+          <h2>Ranking usuarios</h2>
+          ${rankingPickingVisible(usuariosDetalle, total)}
       </div>
 
       <div class="card picking-rank-card">
@@ -309,7 +855,7 @@ function renderPicking() {
 function exportarPickingCsv() {
   const data = filtrosPicking(modeloPicking());
   const headers = ["Fecha", "Turno", "Hora", "Usuario", "LPN", "Orden", "Destino", "Local", "Tipo", "Codigo", "Cod alterno", "Descripcion", "Bultos"];
-  const rows = data.map(r => [r.fechaTexto, r.turno, r.hora !== null ? `${r.hora}:00` : "", r.usuario, r.lpn, r.orden, r.destino, r.local, r.tipo, r.codigo, r.codAlterno, r.descripcion, r.bultos]);
+  const rows = data.map(r => [r.fechaTexto, r.turno, r.hora !== null ? `${r.hora}:00` : "", nombreUsuarioPorDni(r.usuario), r.lpn, r.orden, r.destino, r.local, r.tipo, r.codigo, r.codAlterno, r.descripcion, r.bultos]);
   descargarCsv("picking.csv", headers, rows);
 }
 
@@ -744,25 +1290,131 @@ function verRecepcionRanking() {
 
 function turnoDespachoPorHora(hora) {
   if (hora === null || hora === undefined) return "SIN TURNO";
-  return hora >= 7 && hora < 21 ? "DIA" : "NOCHE";
+  if (hora >= 7 && hora < 19) return "DIA";
+  if (hora >= 21 || hora < 7) return "NOCHE";
+  return "SIN TURNO";
+}
+
+function codigoKey(valor) {
+  return normalizar(valor).replace(/\s+/g, "").replace(/\.0+$/, "");
+}
+
+function catalogoProductosDespacho() {
+  const mapa = new Map();
+  (dataProductos || []).forEach(row => {
+    const codigos = [
+      campo(row, ["Cod Barra", "Cod. Barra", "CodBarra", "COD BARRA", "COD. BARRA", "Codigo", "CODIGO", "Codigo Producto", "CODIGO PRODUCTO"]),
+      campo(row, ["CODIGO_ALT", "COD_ALT", "CODIGO ALTERNATIVO", "Cod Alternat", "Cod Altern", "COD ALTERN"])
+    ].map(codigoKey).filter(Boolean);
+    if (!codigos.length) return;
+    const producto = {
+      codigo: codigos[0],
+      descripcion: limpiar(campo(row, ["Descripcion", "DESCRIPCION", "Descrip Artic", "Descrip ArtÃ­c", "Producto", "PRODUCTO"])),
+      undCaja: num(campo(row, ["Std Case Qty", "STD CASE QTY", "StdCaseQty", "STDCASEQTY", "Und x Caja", "UND X CAJA", "Und Caja", "UxC", "UNIDADES CAJA"])),
+      costoUnidad: num(campo(row, ["Costo Unidad", "Costo unidad", "Costo Unitario", "Costo", "Precio", "PRECIO"])),
+      jerarquia: limpiar(campo(row, ["Jerarq1", "JERARQ1", "Jerarquia", "JERARQUIA", "Familia", "FAMILIA"])) || "SIN JERARQUIA"
+    };
+    codigos.forEach(codigo => {
+      if (!mapa.has(codigo)) mapa.set(codigo, producto);
+    });
+  });
+  return mapa;
+}
+
+function capacidadCamion(paletas) {
+  const valor = num(paletas);
+  if (valor <= 0) return 0;
+  if (valor <= 5) return 6;
+  return [6, 8, 10, 12].reduce((mejor, actual) => {
+    const diffActual = Math.abs(valor - actual);
+    const diffMejor = Math.abs(valor - mejor);
+    return diffActual < diffMejor || (diffActual === diffMejor && actual > mejor) ? actual : mejor;
+  }, 6);
+}
+
+function cargasDespachoMap() {
+  const mapa = new Map();
+  (dataCarga || []).forEach(row => {
+    const carga = limpiar(campo(row, ["Nro Carga", "NRO CARGA", "Carga", "CARGA", "Nro Ola", "OLA"]));
+    const key = normalizar(carga);
+    if (!key || mapa.has(key)) return;
+    const fecha = fechaValor(campo(row, ["Fe Y Hr Modif", "Fe y Hr Modif", "FE Y HR MODIF", "Fecha de Envio", "Fecha Envio", "FECHA ENVIO", "Fecha"]));
+    const paletas = num(campo(row, ["No-LPN Paletas", "NO-LPN PALETAS", "No LPN Paletas", "Nro Paletas", "Paletas", "PALETAS"]));
+    mapa.set(key, {
+      carga,
+      fecha,
+      hora: horaFecha(fecha),
+      placa: limpiar(campo(row, ["Nro Camión", "Nro Camion", "Nro CamiÃ³n", "NRO CAMION", "NRO CAMIÓN", "Placa", "PLACA"])),
+      paradas: num(campo(row, ["Paradas", "PARADAS", "Nro Paradas", "NRO PARADAS"])),
+      paletasDeclaradas: paletas,
+      capacidad: capacidadCamion(paletas),
+      raw: row
+    });
+  });
+  return mapa;
+}
+
+let turnoDespachoReporte = "TODOS";
+
+function seleccionarTurnoDespacho(turno, vista = "principal") {
+  turnoDespachoReporte = turno;
+  if (vista === "compacto") verDespachoCompacto();
+  else verDespacho();
+}
+
+function cargasDespachoLista(turno = "TODOS") {
+  const cargas = Array.from(cargasDespachoMap().values());
+  return turno === "TODOS" ? cargas : cargas.filter(carga => turnoDespachoPorHora(carga.hora) === turno);
+}
+
+function filtrarDespachoPorTurno(data, turno = turnoDespachoReporte) {
+  return turno === "TODOS" ? data : data.filter(row => row.turno === turno);
+}
+
+function viajesDespachoPorHora(turno = "TODOS") {
+  const mapa = new Map();
+  cargasDespachoLista(turno).forEach(carga => {
+    if (carga.hora === null || carga.hora === undefined) return;
+    const key = String(carga.hora).padStart(2, "0");
+    if (!mapa.has(key)) mapa.set(key, { label: `${key}:00`, valor: 0, registros: 0 });
+    const item = mapa.get(key);
+    item.valor += 1;
+    item.registros += 1;
+  });
+  return Array.from(mapa.values())
+    .sort((a, b) => Number(a.label.slice(0, 2)) - Number(b.label.slice(0, 2)));
 }
 
 function modeloDespacho() {
-  return (dataDespacho || []).map((r, index) => {
-    const fecha = fechaValor(campo(r, ["Fe y Hr de Despacho", "FECHA DESPACHO", "Fecha Despacho", "Fecha Modif"]));
-    const horaRaw = campo(r, ["Hora", "HORA"]);
-    const hora = horaRaw !== "" ? Math.trunc(num(horaRaw)) : horaFecha(fecha);
-    const destino = limpiar(campo(r, ["Destino", "DESTINO", "Cod Destino"]));
-    const local = limpiar(campo(r, ["Nombre Destino", "LOCAL", "TIENDA"])) || "SIN DESTINO";
+  const cargas = cargasDespachoMap();
+  const productos = catalogoProductosDespacho();
+  return (dataCartones || []).map((r, index) => {
+    const carga = limpiar(campo(r, ["Nro Carga", "NRO CARGA", "Carga", "CARGA", "Nro Ola", "OLA"]));
+    const cargaInfo = cargas.get(normalizar(carga));
+    const fecha = cargaInfo?.fecha || fechaValor(campo(r, ["Fe Y Hr Modif", "Fe y Hr Modif", "FE Y HR MODIF", "Fecha", "FECHA"]));
+    const hora = horaFecha(fecha);
+    const destino = limpiar(campo(r, ["Destino", "DESTINO", "Cod Destino", "COD DESTINO", "Tienda", "TIENDA"]));
+    const local = limpiar(campo(r, ["Nombre Destino", "NOMBRE DESTINO", "LOCAL", "TIENDA"])) || "SIN DESTINO";
+    const productoCodigo = codigoKey(campo(r, ["Cod Barra", "Cod. Barra", "CodBarra", "COD BARRA", "COD. BARRA", "Codigo", "CODIGO", "Codigo Producto", "CODIGO PRODUCTO", "Producto", "PRODUCTO"]));
+    const producto = productos.get(productoCodigo);
+    const unidades = num(campo(r, ["UnAct", "UNACT", "Un Act", "UN ACT", "Unidades", "UNIDADES", "Un Rcb", "UN RCB"]));
+    const undCaja = producto?.undCaja || num(campo(r, ["Std Case Qty", "STD CASE QTY", "StdCaseQty", "STDCASEQTY", "Und x Caja", "UND X CAJA", "Und Caja", "UxC"]));
+    const bultos = undCaja > 0 ? unidades / undCaja : 0;
+    const costoUnidad = producto?.costoUnidad || 0;
     return {
       index,
       sucursal: limpiar(campo(r, ["Sucursal", "CENTRO DISTRIBUCION", "CD"])),
-      pallet: limpiar(campo(r, ["NroPallet", "NRO PALLET", "PALLET"])),
-      lpn: limpiar(campo(r, ["Nro LPNs", "NRO LPNS", "LPN"])),
+      pallet: limpiar(campo(r, ["Nro Pallet", "NroPallet", "NRO PALLET", "PALLET", "Pallet"])),
+      lpn: limpiar(campo(r, ["Nro LPNs", "Nro LPN", "NRO LPNS", "LPN"])),
       estado: limpiar(campo(r, ["Estado LPN", "ESTADO LPN"])) || "SIN ESTADO",
-      producto: limpiar(campo(r, ["Producto", "CODIGO", "PRODUCTO"])),
-      bultos: num(campo(r, ["Bultos", "BULTOS"])),
-      carga: limpiar(campo(r, ["Nro Carga", "NRO CARGA", "CARGA"])),
+      producto: productoCodigo,
+      descripcion: producto?.descripcion || limpiar(campo(r, ["Descripcion", "DESCRIPCION", "Descrip Artic", "Descrip ArtÃ­c"])),
+      unidades,
+      undCaja,
+      bultos,
+      costoUnidad,
+      costo: unidades * costoUnidad,
+      carga,
       destino,
       local,
       destinoKey: destino ? `${destino} | ${local}` : local,
@@ -770,23 +1422,29 @@ function modeloDespacho() {
       fechaTexto: fechaCorta(fecha),
       hora,
       turno: turnoDespachoPorHora(hora),
-      jerarquia: limpiar(campo(r, ["Jerarq1", "JERARQ1", "JERARQUIA"])) || "SIN JERARQUIA",
+      placa: cargaInfo?.placa || "",
+      paradas: cargaInfo?.paradas || 0,
+      paletasDeclaradas: cargaInfo?.paletasDeclaradas || 0,
+      capacidadCamion: cargaInfo?.capacidad || 0,
+      jerarquia: producto?.jerarquia || limpiar(campo(r, ["Jerarq1", "JERARQ1", "JERARQUIA"])) || "SIN JERARQUIA",
       tipoDistribucion: limpiar(campo(r, ["Tipo Distribucion", "TIPO DISTRIBUCION"])),
       orden: limpiar(campo(r, ["Nro Orden", "NRO ORDEN"]))
     };
-  }).filter(r => r.bultos > 0);
+  }).filter(r => r.pallet && r.carga && (r.bultos > 0 || r.unidades > 0));
 }
 
 function palletsDespacho(data) {
   const mapa = new Map();
   data.forEach(r => {
     if (!r.pallet) return;
-    const key = r.pallet;
+    const key = `${normalizar(r.carga)}|${normalizar(r.pallet)}`;
     if (!mapa.has(key)) {
-      mapa.set(key, { pallet: r.pallet, bultos: 0, productos: new Set(), destinos: new Set(), cargas: new Set(), turno: r.turno });
+      mapa.set(key, { pallet: r.pallet, bultos: 0, unidades: 0, costo: 0, productos: new Set(), destinos: new Set(), cargas: new Set(), turno: r.turno, placa: r.placa });
     }
     const item = mapa.get(key);
     item.bultos += r.bultos;
+    item.unidades += r.unidades || 0;
+    item.costo += r.costo || 0;
     if (r.producto) item.productos.add(r.producto);
     if (r.destinoKey) item.destinos.add(r.destinoKey);
     if (r.carga) item.cargas.add(r.carga);
@@ -799,27 +1457,50 @@ function palletsDespacho(data) {
   }));
 }
 
-function resumenDespacho(data) {
+function resumenDespacho(data, turnoFiltro = "TODOS") {
+  const cargasBase = cargasDespachoLista(turnoFiltro);
   const pallets = palletsDespacho(data);
   const totalBultos = data.reduce((a, b) => a + b.bultos, 0);
-  const cargas = new Set(data.map(r => r.carga).filter(Boolean)).size;
+  const totalUnidades = data.reduce((a, b) => a + (b.unidades || 0), 0);
+  const costoTotal = data.reduce((a, b) => a + (b.costo || 0), 0);
+  const cargas = cargasBase.length || new Set(data.map(r => r.carga).filter(Boolean)).size;
+  const tiendas = new Set(data.map(r => r.destino).filter(Boolean)).size;
+  const placas = new Set(cargasBase.map(r => r.placa).filter(Boolean)).size || new Set(data.map(r => r.placa).filter(Boolean)).size;
+  const paradas = cargasBase.reduce((a, b) => a + (b.paradas || 0), 0) || data.reduce((a, b) => a + (b.paradas || 0), 0);
+  const capacidadTotal = cargasBase.reduce((a, b) => a + (b.capacidad || 0), 0);
+  const ocupacion = pct(cargasBase.reduce((a, b) => a + (b.paletasDeclaradas || 0), 0), capacidadTotal);
   const turnos = agruparSum(data, r => r.turno, r => r.bultos);
   const porTurno = {};
   ["DIA", "NOCHE"].forEach(turno => {
     const rows = data.filter(r => r.turno === turno);
     const palletsTurno = palletsDespacho(rows);
+    const cargasTurno = cargasBase.filter(c => turnoDespachoPorHora(c.hora) === turno);
+    const capacidadTurno = cargasTurno.reduce((a, b) => a + (b.capacidad || 0), 0);
     porTurno[turno] = {
       bultos: rows.reduce((a, b) => a + b.bultos, 0),
+      unidades: rows.reduce((a, b) => a + (b.unidades || 0), 0),
+      costo: rows.reduce((a, b) => a + (b.costo || 0), 0),
       pallets: palletsTurno.length,
-      viajes: new Set(rows.map(r => r.carga).filter(Boolean)).size,
+      viajes: cargasTurno.length || new Set(rows.map(r => r.carga).filter(Boolean)).size,
+      placas: new Set(cargasTurno.map(r => r.placa).filter(Boolean)).size || new Set(rows.map(r => r.placa).filter(Boolean)).size,
+      paradas: cargasTurno.reduce((a, b) => a + (b.paradas || 0), 0),
+      capacidad: capacidadTurno,
+      ocupacion: pct(cargasTurno.reduce((a, b) => a + (b.paletasDeclaradas || 0), 0), capacidadTurno),
       bultosPallet: rows.reduce((a, b) => a + b.bultos, 0) / Math.max(palletsTurno.length, 1)
     };
   });
   return {
     pallets,
     totalBultos,
+    totalUnidades,
+    costoTotal,
     palletsTotal: pallets.length,
     viajes: cargas,
+    tiendas,
+    placas,
+    paradas,
+    capacidadTotal,
+    ocupacion,
     bultosPallet: totalBultos / Math.max(pallets.length, 1),
     mono: pallets.filter(p => p.tipo === "MONOPALLET").length,
     multi: pallets.filter(p => p.tipo === "MULTISKU").length,
@@ -840,7 +1521,7 @@ function turnoDespachoCards(resumen) {
             <div class="shift-metrics">
               <b>${fmt(x.pallets)}<small>Pallets</small></b>
               <b>${fmt(x.viajes)}<small>Viajes</small></b>
-              <b>${fmt(x.bultosPallet)}<small>Bultos x pallet</small></b>
+              <b>S/ ${fmt(x.costo)}<small>Costo</small></b>
             </div>
           </article>
         `;
@@ -850,13 +1531,11 @@ function turnoDespachoCards(resumen) {
 }
 
 function verDespacho() {
-  const data = modeloDespacho();
-  const resumen = resumenDespacho(data);
-  const destinos = agruparSum(data, r => r.destinoKey, r => r.bultos);
-  const jerarquias = agruparSum(data, r => r.jerarquia, r => r.bultos);
-  const cargas = agruparSum(data, r => r.carga || "SIN CARGA", r => r.bultos);
-  const destinosUnicos = new Set(data.map(r => r.destinoKey).filter(Boolean)).size;
-  const cargaPrincipal = cargas[0];
+  const dataGeneral = modeloDespacho();
+  const data = filtrarDespachoPorTurno(dataGeneral);
+  const resumen = resumenDespacho(data, turnoDespachoReporte);
+  const viajesHora = viajesDespachoPorHora(turnoDespachoReporte);
+  const horaPico = viajesHora.slice().sort((a, b) => b.valor - a.valor)[0];
 
   document.getElementById("modulo").innerHTML = `
     <section class="hero despacho-hero">
@@ -865,54 +1544,45 @@ function verDespacho() {
         <h2>Despacho</h2>
       </div>
       <div class="hero-metric">
-        <strong>${fmt(resumen.totalBultos)}</strong>
-        <span>Bultos despachados</span>
+        <strong>S/ ${fmt(resumen.costoTotal)}</strong>
+        <span>Costo despachado</span>
       </div>
     </section>
 
     <section class="kpi-grid">
-      ${kpi("Bultos total", fmt(resumen.totalBultos), "General", "accent")}
-      ${kpi("Pallets", fmt(resumen.palletsTotal))}
-      ${kpi("Viajes", fmt(resumen.viajes))}
+      ${kpi("Viajes", fmt(resumen.viajes), "Nro Carga sin duplicar", "accent")}
+      ${kpi("Pallets", fmt(resumen.palletsTotal), "Nro Pallet sin duplicar")}
+      ${kpi("Tiendas", fmt(resumen.tiendas), "Destinos despachados")}
+      ${kpi("Costo total", `S/ ${fmt(resumen.costoTotal)}`, "UnAct x Costo Unidad")}
       ${kpi("Bultos x pallet", fmt(resumen.bultosPallet))}
-      ${kpi("Destinos", fmt(destinosUnicos))}
-      ${kpi("Carga principal", fmt(cargaPrincipal?.valor || 0), corto(cargaPrincipal?.label || "-"), "warn")}
+      ${kpi("Unidades", fmt(resumen.totalUnidades), "UnAct total", "warn")}
+    </section>
+
+    <div class="picking-turn-control despacho-turn-control">
+      <div class="picking-turn-buttons">
+        ${["TODOS", "DIA", "NOCHE"].map(turno => `
+          <button class="${turnoDespachoReporte === turno ? "active" : ""}" onclick="seleccionarTurnoDespacho('${turno}')">${turno}</button>
+        `).join("")}
+      </div>
+      <div class="picking-turn-highlights">
+        <div><span>Turno evaluado</span><strong>${turnoDespachoReporte}</strong></div>
+        <div><span>Hora pico viajes</span><strong>${horaPico?.label || "-"}</strong><small>${fmt(horaPico?.valor || 0)} viajes</small></div>
+        <div><span>Placas</span><strong>${fmt(resumen.placas)}</strong><small>${fmt(resumen.paradas)} paradas</small></div>
+        <div><span>Unidades</span><strong>${fmt(resumen.totalUnidades)}</strong><small>${fmt(resumen.totalBultos)} bultos</small></div>
+      </div>
+    </div>
+
+    <section class="dashboard-grid">
+      <div class="card wide picking-trend-card">
+        <div class="card-title">
+          <h2>Tendencia viajes despachados</h2>
+          <span>Por hora desde CARGA.Fe Y Hr Modif</span>
+        </div>
+        ${lineaPickingVisible(viajesHora)}
+      </div>
     </section>
 
     ${turnoDespachoCards(resumen)}
-
-    <section class="dashboard-grid">
-      <div class="card wide visual-suite">
-        <div class="card-title">
-          <h2>Vista grafica Despacho</h2>
-          <span>Turno, pallets y principales destinos</span>
-        </div>
-        <div class="visual-combo">
-          <div class="visual-box">
-            <h3>Bultos por turno</h3>
-            ${pieChart(resumen.turnos, resumen.totalBultos, fmt(resumen.totalBultos))}
-          </div>
-          <div class="visual-box">
-            <h3>Bultos por jerarquia</h3>
-            ${pieChart(jerarquias.slice(0, 6), resumen.totalBultos, fmt(resumen.totalBultos))}
-          </div>
-          <div class="visual-box bars-box">
-            <h3>Top destinos</h3>
-            ${verticalBars(destinos.slice(0, 8), resumen.totalBultos)}
-          </div>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2>Jerarquias</h2>
-        ${barras(jerarquias.slice(0, 8), resumen.totalBultos)}
-      </div>
-
-      <div class="card">
-        <h2>Destinos clave</h2>
-        ${metricTiles(destinos.slice(0, 6), resumen.totalBultos)}
-      </div>
-    </section>
   `;
 }
 
@@ -1077,10 +1747,11 @@ function pickingEjecutivoPanel(turnos, total, promedioHora) {
 function despachoEjecutivoPanel(resumen) {
   return `
     <div class="executive-dispatch-totals">
+      ${executiveMetric("COSTO DESPACHADO", `S/ ${fmt(resumen.costoTotal)}`)}
       ${executiveMetric("BULTOS TOTALES", fmt(resumen.totalBultos))}
       ${executiveMetric("PALLETS TOTALES", fmt(resumen.palletsTotal))}
       ${executiveMetric("VIAJES TOTALES", fmt(resumen.viajes))}
-      ${executiveMetric("BULTOS / PALLET", fmt(resumen.bultosPallet))}
+      ${executiveMetric("TIENDAS", fmt(resumen.tiendas))}
     </div>
     ${despachoTurnoPanel(resumen)}
   `;
@@ -1307,14 +1978,15 @@ function tablaRecepcionGeneral(proveedores) {
 }
 
 function tablaDespachoGeneral(resumen) {
-  const dia = resumen.porTurno.DIA || { bultos: 0, pallets: 0, viajes: 0, bultosPallet: 0 };
-  const noche = resumen.porTurno.NOCHE || { bultos: 0, pallets: 0, viajes: 0, bultosPallet: 0 };
+  const dia = resumen.porTurno.DIA || { bultos: 0, pallets: 0, viajes: 0, bultosPallet: 0, costo: 0, ocupacion: 0 };
+  const noche = resumen.porTurno.NOCHE || { bultos: 0, pallets: 0, viajes: 0, bultosPallet: 0, costo: 0, ocupacion: 0 };
   return `
     <table class="general-mini-table despacho-general-table">
       <thead><tr><th></th><th>Dia</th><th>Noche</th><th>Total</th></tr></thead>
       <tbody>
         <tr><td>Viajes</td><td>${fmt(dia.viajes)}</td><td>${fmt(noche.viajes)}</td><td><strong>${fmt(resumen.viajes)}</strong></td></tr>
         <tr><td>Pallets</td><td>${fmt(dia.pallets)}</td><td>${fmt(noche.pallets)}</td><td><strong>${fmt(resumen.palletsTotal)}</strong></td></tr>
+        <tr><td>Costo despachado</td><td>S/ ${fmt(dia.costo)}</td><td>S/ ${fmt(noche.costo)}</td><td><strong>S/ ${fmt(resumen.costoTotal)}</strong></td></tr>
         <tr><td>Bultos total</td><td>${fmt(dia.bultos)}</td><td>${fmt(noche.bultos)}</td><td><strong>${fmt(resumen.totalBultos)}</strong></td></tr>
         <tr><td>Bultos x Pallet</td><td>${fmt(dia.bultosPallet)}</td><td>${fmt(noche.bultosPallet)}</td><td><strong>${fmt(resumen.bultosPallet)}</strong></td></tr>
       </tbody>
@@ -1398,16 +2070,41 @@ function compactTopList(titulo, data, total) {
   `;
 }
 
-function visualKpi(label, value, tone = "") {
+function iconoPicking(tipo) {
+  const iconos = {
+    caja: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16v13H4z"></path><path d="M7 7V4h10v3"></path><path d="M9 11h6"></path></svg>`,
+    usuarios: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>`,
+    barras: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5v14"></path><path d="M6 5v14"></path><path d="M9 5v14"></path><path d="M12 5v14"></path><path d="M15 5v14"></path><path d="M18 5v14"></path><path d="M21 5v14"></path></svg>`,
+    reloj: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v6l4 2"></path></svg>`,
+    linea: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18"></path><path d="m7 15 4-4 3 3 5-7"></path></svg>`,
+    recibido: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 8v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8"></path><path d="M3 8l9-5 9 5"></path><path d="M12 3v18"></path><path d="m8 13 3 3 5-6"></path></svg>`,
+    programado: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"></rect><path d="M8 2v4"></path><path d="M16 2v4"></path><path d="M3 10h18"></path><path d="M8 15h4"></path><path d="M8 18h8"></path></svg>`,
+    check: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="m8 12 3 3 5-6"></path></svg>`,
+    paletero: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 20V8"></path><path d="M18 20V8"></path><path d="M4 20h16"></path><path d="M7 8h10l-1-4H8z"></path><path d="M8 12h8"></path><path d="M8 16h8"></path></svg>`,
+    proveedor: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21V8l9-5 9 5v13"></path><path d="M9 21v-7h6v7"></path><path d="M7 10h2"></path><path d="M15 10h2"></path></svg>`,
+    camion: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h11v9H3z"></path><path d="M14 10h4l3 3v3h-7z"></path><circle cx="7" cy="18" r="2"></circle><circle cx="18" cy="18" r="2"></circle></svg>`,
+    pallet: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v5H4z"></path><path d="M4 14h16v5H4z"></path><path d="M8 10v4"></path><path d="M16 10v4"></path><path d="M8 19v2"></path><path d="M16 19v2"></path></svg>`,
+    tienda: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10h16"></path><path d="M5 10l1-6h12l1 6"></path><path d="M6 10v10h12V10"></path><path d="M9 20v-6h6v6"></path></svg>`,
+    moneda: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v20"></path><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7H14a3.5 3.5 0 0 1 0 7H6"></path></svg>`,
+    ruta: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="3"></circle><circle cx="18" cy="18" r="3"></circle><path d="M9 6h4a5 5 0 0 1 0 10h-2"></path></svg>`,
+    dia: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v3"></path><path d="M12 19v3"></path><path d="M4.93 4.93l2.12 2.12"></path><path d="M16.95 16.95l2.12 2.12"></path><path d="M2 12h3"></path><path d="M19 12h3"></path><path d="M4.93 19.07l2.12-2.12"></path><path d="M16.95 7.05l2.12-2.12"></path></svg>`,
+    tarde: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18h16"></path><path d="M7 15a5 5 0 0 1 10 0"></path><path d="M12 6v3"></path><path d="M5 10l2 2"></path><path d="M19 10l-2 2"></path></svg>`,
+    noche: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 13.2A8 8 0 1 1 10.8 3a6 6 0 0 0 10.2 10.2z"></path><path d="M18 5h.01"></path><path d="M20 8h.01"></path></svg>`
+  };
+  return iconos[tipo] || "";
+}
+
+function visualKpi(label, value, tone = "", icon = "") {
   return `
-    <article class="visual-kpi ${tone}">
+    <article class="visual-kpi ${tone} ${icon ? "with-icon" : ""}">
+      ${icon ? `<i class="visual-kpi-icon">${iconoPicking(icon)}</i>` : ""}
       <span>${label}</span>
       <strong>${value}</strong>
     </article>
   `;
 }
 
-function visualGauge(label, value, max, color = "#2563eb") {
+function visualGauge(label, value, max, color = "#2563eb", icon = "") {
   const p = Math.max(0, Math.min(100, pct(value, max)));
   const radio = 42;
   const circ = Math.PI * radio;
@@ -1415,7 +2112,7 @@ function visualGauge(label, value, max, color = "#2563eb") {
   const restante = Math.max(0, circ - largo);
   return `
     <article class="visual-gauge">
-      <h3>${label}</h3>
+      <h3>${icon ? `<i class="visual-title-icon">${iconoPicking(icon)}</i>` : ""}${label}</h3>
       <div class="gauge-svg-wrap">
         <svg class="gauge-svg" viewBox="0 0 100 58" aria-hidden="true">
           <path d="M 10 50 A 40 40 0 0 1 90 50" fill="none" stroke="#e5e7eb" stroke-width="14" stroke-linecap="butt"></path>
@@ -1449,7 +2146,10 @@ function visualColumns(title, data, total, color = "#6d28d9") {
   `;
 }
 
-function visualLine(title, data, total, color = "#2563eb", destacado = false) {
+function visualLine(title, data, total, color = "#2563eb", destacado = false, totalLabel = "BULTOS TOTALES") {
+  const isViajes = totalLabel === "VIAJES";
+  const isCase = title.toUpperCase().includes("CASE");
+  const isPickActiveTrend = totalLabel === "TAREAS" || totalLabel === "UNIDADES";
   const max = Math.max(...data.map(x => x.valor), 1);
   const points = data.map((x, i) => {
     const xPos = data.length === 1 ? 500 : 20 + (i / (data.length - 1)) * 960;
@@ -1464,12 +2164,13 @@ function visualLine(title, data, total, color = "#2563eb", destacado = false) {
         return `${d} C ${mitad} ${anterior.y}, ${mitad} ${point.y}, ${point.x} ${point.y}`;
       }, "")
     : "";
+  const labelX = point => Math.min(925, Math.max(75, point.x));
   return `
-    <article class="visual-panel main-chart ${destacado ? "visual-line-highlighted" : ""}">
+    <article class="visual-panel main-chart ${destacado ? "visual-line-highlighted" : ""} ${isViajes ? "viajes-line" : ""} ${isCase ? "case-line" : ""} ${isPickActiveTrend ? "pick-active-line" : ""}">
       <div class="visual-panel-head">
         <div>
-          <h3>${title}</h3>
-          ${destacado ? `<strong class="visual-line-total">${fmt(total)} <small>BULTOS TOTALES</small></strong>` : ""}
+          <h3>${destacado ? `<i class="visual-title-icon">${iconoPicking("linea")}</i>` : ""}${title}</h3>
+          ${destacado ? `<strong class="visual-line-total">${fmt(total)} <small>${totalLabel}</small></strong>` : ""}
         </div>
         ${destacado ? "" : `<span>${fmt(total)}</span>`}
       </div>
@@ -1480,10 +2181,12 @@ function visualLine(title, data, total, color = "#2563eb", destacado = false) {
           <line x1="20" y1="94" x2="980" y2="94"></line>
           <line x1="20" y1="31" x2="980" y2="31"></line>
           <path d="${path}" style="stroke:${color}"></path>
+          ${isCase || isPickActiveTrend ? points.map(p => `<text class="visual-line-value" x="${labelX(p)}" y="${Math.max(20, p.y - 12)}" text-anchor="middle">${fmt(p.valor)}</text>`).join("") : ""}
           ${points.map(p => `<circle cx="${p.x}" cy="${p.y}" r="5" style="fill:${color}"></circle>`).join("")}
+          ${isViajes ? points.map(p => `<text x="${p.x}" y="${Math.max(18, p.y - 16)}" text-anchor="middle">${fmt(p.valor)}</text>`).join("") : ""}
         </svg>
         <div class="visual-line-axis">
-          ${points.map(p => `<span><b>${fmt(p.valor)}</b><small>${p.label}</small></span>`).join("")}
+          ${points.map(p => (isViajes || isCase || isPickActiveTrend) ? `<span><small>${p.label}</small></span>` : `<span><b>${fmt(p.valor)}</b><small>${p.label}</small></span>`).join("")}
         </div>
       </div>
     </article>
@@ -1611,7 +2314,7 @@ function providerCompactPanel(proveedores) {
   return `
     <article class="visual-panel main-chart">
       <div class="visual-panel-head">
-        <h3>PROVEEDORES</h3>
+        <h3><i class="visual-title-icon">${iconoPicking("proveedor")}</i>PROVEEDORES</h3>
         <span>Programado vs recibido</span>
       </div>
       <div class="provider-compact">
@@ -1666,7 +2369,7 @@ function despachoTurnoPanel(resumen) {
     <article class="visual-panel main-chart">
       <div class="visual-panel-head">
         <h3>DIA VS NOCHE</h3>
-        <span>Bultos, pallets, viajes y productividad</span>
+        <span>Costo, viajes, pallets y capacidad</span>
       </div>
       <div class="dispatch-shifts">
         ${["DIA", "NOCHE"].map(turno => {
@@ -1674,11 +2377,11 @@ function despachoTurnoPanel(resumen) {
           return `
             <div class="dispatch-shift-card">
               <strong>${turno}</strong>
-              <div class="dispatch-big">${fmt(x.bultos)}</div>
-              <span>Bultos</span>
+              <div class="dispatch-big">S/ ${fmt(x.costo)}</div>
+              <span>Costo despachado</span>
               <div class="dispatch-mini">
-                <b>${fmt(x.pallets)}<small>Pallets</small></b>
                 <b>${fmt(x.viajes)}<small>Viajes</small></b>
+                <b>${fmt(x.pallets)}<small>Pallets</small></b>
                 <b>${fmt(x.bultosPallet)}<small>Bultos/Pallet</small></b>
               </div>
             </div>
@@ -1689,10 +2392,10 @@ function despachoTurnoPanel(resumen) {
   `;
 }
 
-let turnoPickingCompacto = "TODOS";
+let turnoPickingCompacto = "DIA";
 
 function seleccionarTurnoPickingCompacto(turno) {
-  turnoPickingCompacto = turno;
+  turnoPickingCompacto = turnoPickingCompacto === turno ? "TODOS" : turno;
   verPickingCompacto();
 }
 
@@ -1703,20 +2406,67 @@ function tarjetaDestajoTurno(turno, data, totalGeneral) {
   const lpns = new Set(filas.map(r => r.lpn).filter(Boolean)).size;
   const horas = promedioPickingPorHora(filas);
   const porHora = horas.length ? bultos / horas.length : 0;
-  const porUsuario = usuarios ? bultos / usuarios : 0;
   const tonos = { DIA: "green", TARDE: "gold", NOCHE: "purple" };
+  const iconos = { DIA: "dia", TARDE: "tarde", NOCHE: "noche" };
+  const inicio = horas[0]?.label || "-";
+  const fin = horas[horas.length - 1]?.label || "-";
   return `
     <button class="picking-shift-card ${tonos[turno]} ${turnoPickingCompacto === turno ? "active" : ""}" onclick="seleccionarTurnoPickingCompacto('${turno}')">
-      <span>${turno}</span>
-      <strong>${fmt(bultos)}</strong>
-      <em>Bultos pickeados</em>
-      <div>
-        <b>${fmt(porHora)}<small>Bultos / hora</small></b>
-        <b>${fmt(porUsuario)}<small>Bultos / usuario</small></b>
-        <b>${fmt(lpns)}<small>LPNs</small></b>
-        <b>${pct(bultos, totalGeneral).toFixed(1)}%<small>Participacion</small></b>
+      <div class="picking-shift-top">
+        <i class="picking-shift-icon">${iconoPicking(iconos[turno])}</i>
+        <div class="picking-shift-title">
+          <span>${turno}</span>
+          <em>BULTOS TOTALES</em>
+          <strong>${fmt(bultos)}</strong>
+        </div>
+        <div class="picking-shift-stats">
+          <b>${fmt(usuarios)}<small>USUARIOS</small></b>
+          <b>${fmt(lpns)}<small>LPNS</small></b>
+          <b>${fmt(porHora)}<small>PROM. HORA</small></b>
+        </div>
+      </div>
+      <div class="picking-shift-bottom">
+        <b>${inicio}<small>INICIO</small></b>
+        <b>${fin}<small>FIN</small></b>
+        <b>${fmt(horas.length)}<small>HORAS</small></b>
+        <b>${fmt(pct(bultos, totalGeneral))}%<small>PARTICIPACION</small></b>
       </div>
     </button>
+  `;
+}
+
+function rankingPickingTop10Panel(usuarios, total) {
+  const top = usuarios.slice(0, 10);
+  const max = Math.max(...top.map(x => x.valor), 1);
+  return `
+    <article class="visual-panel picking-top-panel">
+      <div class="visual-panel-head">
+        <div>
+          <h3><i class="visual-title-icon">${iconoPicking("usuarios")}</i>TOP 10 USUARIOS PICK</h3>
+          <span>Productividad del turno</span>
+        </div>
+      </div>
+      <div class="picking-top-table">
+        <div class="picking-top-head">
+          <span>#</span>
+          <span>Usuario</span>
+          <span>Picking</span>
+          <span>Prom/h</span>
+        </div>
+        ${top.map((x, index) => {
+          const promedio = x.horasActivas ? x.valor / x.horasActivas : 0;
+          return `
+            <article class="picking-top-row">
+              <b>${index + 1}</b>
+              <strong>${corto(nombreUsuarioPorDni(x.label), 18)}</strong>
+              <div><i style="width:${pct(x.valor, max)}%"></i></div>
+              <span>${fmt(x.valor)}</span>
+              <em>${fmt(promedio)}</em>
+            </article>
+          `;
+        }).join("") || `<div class="empty-state">Sin usuarios.</div>`}
+      </div>
+    </article>
   `;
 }
 
@@ -1729,38 +2479,28 @@ function verPickingCompacto() {
   const total = data.reduce((a, b) => a + b.bultos, 0);
   const horas = promedioPickingPorHora(data);
   const lpns = new Set(data.map(r => r.lpn).filter(Boolean)).size;
-  const usuarios = agruparSum(data, r => r.usuario, r => r.bultos);
+  const usuarios = rankingPickingDetalle(data, r => r.usuario);
   const horaPico = horas.slice().sort((a, b) => b.valor - a.valor)[0];
 
   document.getElementById("modulo").innerHTML = `
     <section class="visual-sheet picking-compact">
       <div class="visual-header">
         <div>
-          <h2>INDICADORES DE PICKING</h2>
+          <h2>REPORTE PICKING</h2>
           <span>Evaluacion de destajo: ${turnoPickingCompacto}</span>
         </div>
         <div class="visual-kpi-row">
-          ${visualKpi(turnoPickingCompacto === "TODOS" ? "TOTAL PICKING" : `BULTOS ${turnoPickingCompacto}`, fmt(total))}
-          ${visualKpi("USUARIOS", fmt(usuarios.length))}
-          ${visualKpi("LPNS", fmt(lpns))}
-          ${visualKpi("PROM. HORA", fmt(horas.length ? total / horas.length : 0))}
+          ${visualKpi("TOTAL PICKING", fmt(totalGeneral), "", "caja")}
+          ${visualKpi("USUARIOS", fmt(usuarios.length), "", "usuarios")}
+          ${visualKpi("LPNS", fmt(lpns), "", "barras")}
+          ${visualKpi("PROM. HORA", fmt(horas.length ? total / horas.length : 0), "", "reloj")}
         </div>
       </div>
-      <div class="picking-turn-control">
-        <div class="picking-turn-buttons">
-          ${["TODOS", "DIA", "TARDE", "NOCHE"].map(turno => `
-            <button class="${turnoPickingCompacto === turno ? "active" : ""}" onclick="seleccionarTurnoPickingCompacto('${turno}')">${turno}</button>
-          `).join("")}
+      <div class="picking-report-main">
+        <div class="picking-main-chart">
+          ${visualLine(`AVANCE POR HORA - ${turnoPickingCompacto}`, horas.map(x => ({ label: x.label, valor: x.valor })), total, "#2563eb", true)}
         </div>
-        <div class="picking-turn-highlights">
-          <div><span>Turno evaluado</span><strong>${turnoPickingCompacto}</strong></div>
-          <div><span>Top usuario</span><strong>${corto(usuarios[0]?.label || "-", 24)}</strong><small>${fmt(usuarios[0]?.valor || 0)} bultos</small></div>
-          <div><span>Hora pico</span><strong>${horaPico?.label || "-"}</strong><small>${fmt(horaPico?.valor || 0)} bultos</small></div>
-          <div><span>Participacion</span><strong>${pct(total, totalGeneral).toFixed(1)}%</strong><small>del picking general</small></div>
-        </div>
-      </div>
-      <div class="picking-main-chart">
-        ${visualLine(`AVANCE POR HORA - ${turnoPickingCompacto}`, horas.map(x => ({ label: x.label, valor: x.valor })), total, "#2563eb", true)}
+        ${rankingPickingTop10Panel(usuarios, total)}
       </div>
       <div class="picking-shift-grid">
         ${["DIA", "TARDE", "NOCHE"].map(turno => tarjetaDestajoTurno(turno, dataGeneral, totalGeneral)).join("")}
@@ -1780,13 +2520,13 @@ function verRecepcionCompacto() {
   document.getElementById("modulo").innerHTML = `
     <section class="visual-sheet reception-compact">
       <div class="visual-header green">
-        <div><h2>INDICADORES DE RECEPCION</h2><span>Control general por proveedor</span></div>
+        <div><h2>REPORTE RECEPCION</h2><span>Control general por proveedor</span></div>
         <div class="visual-kpi-row">
-          ${visualKpi("RECIBIDO", fmt(resumen.totalRecibido))}
-          ${visualKpi("PROGRAMADO", fmt(resumen.totalProgramado))}
-          ${visualKpi("CUMPLIMIENTO", `${resumen.cumplimiento.toFixed(1)}%`)}
-          ${visualKpi("PALETEROS RECIBIDOS", fmt(resumen.paleterosRecibidos))}
-          ${visualKpi("PROVEEDORES", fmt(proveedoresVisibles.length))}
+          ${visualKpi("RECIBIDO", fmt(resumen.totalRecibido), "", "recibido")}
+          ${visualKpi("PROGRAMADO", fmt(resumen.totalProgramado), "", "programado")}
+          ${visualKpi("CUMPLIMIENTO", `${resumen.cumplimiento.toFixed(1)}%`, "", "check")}
+          ${visualKpi("PALETEROS RECIBIDOS", fmt(resumen.paleterosRecibidos), "", "paletero")}
+          ${visualKpi("PROVEEDORES", fmt(proveedoresVisibles.length), "", "proveedor")}
         </div>
       </div>
       ${filtroProveedoresRecepcion(proveedoresDetalle)}
@@ -1797,49 +2537,147 @@ function verRecepcionCompacto() {
         <div><h2>Indicadores de proveedores seleccionados</h2><span>Los calculos corresponden solamente a los proveedores visibles.</span></div>
       </div>
       <div class="visual-gauge-row reception-gauges">
-        ${visualGauge("CUMPLIMIENTO", resumen.totalRecibido, resumen.totalProgramado, "#22c55e")}
-        ${visualGauge("PUNTA NEGRA", resumen.recibido917, Math.max(resumen.totalRecibido, 1), "#2563eb")}
-        ${visualGauge("MONO 917", resumen.mono917, Math.max(resumen.pallets917, 1), "#f59e0b")}
-        ${visualGauge("MULTI 917", resumen.multi917, Math.max(resumen.pallets917, 1), "#ef4444")}
+        ${visualGauge("CUMPLIMIENTO", resumen.totalRecibido, resumen.totalProgramado, "#22c55e", "check")}
+        ${visualGauge("PUNTA NEGRA", resumen.recibido917, Math.max(resumen.totalRecibido, 1), "#2563eb", "proveedor")}
+        ${visualGauge("MONO 917", resumen.mono917, Math.max(resumen.pallets917, 1), "#f59e0b", "paletero")}
+        ${visualGauge("MULTI 917", resumen.multi917, Math.max(resumen.pallets917, 1), "#ef4444", "barras")}
       </div>
     </section>
   `;
 }
 
-function verDespachoCompacto() {
-  const data = modeloDespacho();
-  const resumen = resumenDespacho(data);
-  const turnos = resumen.turnos;
-  const destinos = agruparSum(data, r => r.destinoKey, r => r.bultos);
-  const jerarquias = agruparSum(data, r => r.jerarquia, r => r.bultos);
-  const dia = turnos.find(x => x.label === "DIA")?.valor || 0;
-  const noche = turnos.find(x => x.label === "NOCHE")?.valor || 0;
-
-  document.getElementById("modulo").innerHTML = `
-    <section class="visual-sheet">
-      <div class="visual-header blue">
-        <h2>INDICADORES DE DESPACHO</h2>
-        <div class="visual-kpi-row">
-          ${visualKpi("BULTOS", fmt(resumen.totalBultos))}
-          ${visualKpi("PALLETS", fmt(resumen.palletsTotal))}
-          ${visualKpi("VIAJES", fmt(resumen.viajes))}
-          ${visualKpi("BULTOS/PALLET", fmt(resumen.bultosPallet))}
+function tarjetaDespachoTurnoVisual(turno, resumen, totalGeneral) {
+  const x = resumen.porTurno[turno] || { bultos: 0, pallets: 0, viajes: 0, tiendas: 0, placas: 0, costo: 0, bultosPallet: 0, ocupacion: 0 };
+  const tonos = { DIA: "green", NOCHE: "purple" };
+  const iconos = { DIA: "dia", NOCHE: "noche" };
+  const horarios = { DIA: ["07:00", "18:59"], NOCHE: ["21:00", "06:59"] };
+  return `
+    <article class="dispatch-shift-visual ${tonos[turno]}">
+      <div class="dispatch-shift-top">
+        <i class="dispatch-shift-icon">${iconoPicking(iconos[turno])}</i>
+        <div>
+          <span>${turno}</span>
+          <em>COSTO DESPACHADO</em>
+          <strong>S/ ${fmt(x.costo)}</strong>
+        </div>
+        <div class="dispatch-shift-stats">
+          <b>${fmt(x.viajes)}<small>VIAJES</small></b>
+          <b>${fmt(x.pallets)}<small>PALLETS</small></b>
+          <b>${fmt(x.bultosPallet)}<small>BULTOS/PALLET</small></b>
         </div>
       </div>
-      <div class="dispatch-highlights">
-        <div><span>Destinos</span><strong>${fmt(destinos.length)}</strong></div>
-        <div><span>Top destino</span><strong>${corto(destinos[0]?.label || "-", 28)}</strong><small>${fmt(destinos[0]?.valor || 0)} bultos</small></div>
-        <div><span>Top jerarquia</span><strong>${corto(jerarquias[0]?.label || "-", 28)}</strong><small>${fmt(jerarquias[0]?.valor || 0)} bultos</small></div>
+      <div class="dispatch-shift-meter"><i style="width:${pct(x.costo, Math.max(totalGeneral, 1))}%"></i></div>
+      <div class="dispatch-shift-bottom">
+        <b>${horarios[turno][0]}<small>INICIO</small></b>
+        <b>${horarios[turno][1]}<small>FIN</small></b>
+        <b>${fmt(x.placas)}<small>PLACAS</small></b>
+        <b>${pct(x.costo, totalGeneral).toFixed(1)}%<small>PARTICIPACION</small></b>
       </div>
-      <div class="dispatch-main-grid">
-        ${despachoTurnoPanel(resumen)}
-        ${visualDonutInterno("DISTRIBUCION POR TURNO", turnos, resumen.totalBultos)}
+    </article>
+  `;
+}
+
+function panelImpactoDespacho(resumen) {
+  const dia = resumen.porTurno.DIA || {};
+  const noche = resumen.porTurno.NOCHE || {};
+  const pctDia = pct(dia.costo || 0, Math.max(resumen.costoTotal, 1));
+  const pctNoche = pct(noche.costo || 0, Math.max(resumen.costoTotal, 1));
+  const turnoFuerte = pctDia >= pctNoche ? "DIA" : "NOCHE";
+  const pctFuerte = Math.max(pctDia, pctNoche);
+  return `
+    <article class="visual-panel dispatch-impact-panel">
+      <div class="visual-panel-head">
+        <div>
+          <h3><i class="visual-title-icon">${iconoPicking("ruta")}</i>RESUMEN LOGISTICO</h3>
+          <span>Dia 07:00-18:59 | Noche 21:00-06:59</span>
+        </div>
       </div>
-      <div class="visual-gauge-row dispatch-gauges">
-        ${visualGauge("DIA", dia, resumen.totalBultos, "#22c55e")}
-        ${visualGauge("NOCHE", noche, resumen.totalBultos, "#6d28d9")}
-        ${visualGauge("VIAJES DIA", resumen.porTurno.DIA?.viajes || 0, Math.max(resumen.viajes, 1), "#f59e0b")}
-        ${visualGauge("VIAJES NOCHE", resumen.porTurno.NOCHE?.viajes || 0, Math.max(resumen.viajes, 1), "#ef4444")}
+      <div class="dispatch-impact-hero">
+        <div class="dispatch-donut-mini" style="--dia:${pctDia}; --noche:${pctNoche}">
+          <strong>S/ ${fmt(resumen.costoTotal)}</strong>
+          <span>Costo total</span>
+        </div>
+        <div class="dispatch-impact-badges">
+          <b><span>${fmt(resumen.viajes)}</span>Viajes</b>
+          <b><span>${fmt(resumen.palletsTotal)}</span>Pallets</b>
+          <b><span>${fmt(resumen.bultosPallet)}</span>Bultos/Pallet</b>
+        </div>
+      </div>
+      <div class="dispatch-impact-legend">
+        <span><i class="dia"></i>Dia <strong>${pctDia.toFixed(1)}%</strong></span>
+        <span><i class="noche"></i>Noche <strong>${pctNoche.toFixed(1)}%</strong></span>
+      </div>
+      <div class="dispatch-impact-focus">
+        <span>Turno dominante</span>
+        <strong>${turnoFuerte}</strong>
+        <b>${pctFuerte.toFixed(1)}% del costo despachado</b>
+      </div>
+    </article>
+  `;
+}
+
+function tarjetaResumenLogistico(turno, data, participacion, icono) {
+  return `
+    <article class="dispatch-impact-shift ${turno.toLowerCase()}">
+      <div>
+        <i class="dispatch-shift-icon">${iconoPicking(icono)}</i>
+        <span>${turno}</span>
+        <strong>${participacion.toFixed(1)}%</strong>
+      </div>
+      <small>S/ ${fmt(data.costo || 0)} despachado</small>
+      <section>
+        <b>${fmt(data.viajes || 0)}<em>Viajes</em></b>
+        <b>${fmt(data.pallets || 0)}<em>Pallets</em></b>
+        <b>${fmt(data.tiendas || 0)}<em>Tiendas</em></b>
+      </section>
+      <u><i style="width:${Math.max(2, participacion)}%"></i></u>
+    </article>
+  `;
+}
+
+function verDespachoCompacto() {
+  const dataGeneral = modeloDespacho();
+  const data = filtrarDespachoPorTurno(dataGeneral);
+  const resumen = resumenDespacho(data, turnoDespachoReporte);
+  const resumenGeneral = resumenDespacho(dataGeneral, "TODOS");
+  const viajesHora = viajesDespachoPorHora(turnoDespachoReporte);
+  const horaPico = viajesHora.slice().sort((a, b) => b.valor - a.valor)[0];
+
+  document.getElementById("modulo").innerHTML = `
+    <section class="visual-sheet dispatch-compact">
+      <div class="visual-header blue">
+        <div>
+          <h2>REPORTE DESPACHO</h2>
+          <span>Control logistico por turno: ${turnoDespachoReporte}</span>
+        </div>
+        <div class="visual-kpi-row">
+          ${visualKpi("VIAJES", fmt(resumen.viajes), "", "camion")}
+          ${visualKpi("PALLETS", fmt(resumen.palletsTotal), "", "pallet")}
+          ${visualKpi("TIENDAS", fmt(resumen.tiendas), "", "tienda")}
+          ${visualKpi("COSTO", `S/ ${fmt(resumen.costoTotal)}`, "", "moneda")}
+          ${visualKpi("BULTOS/PALLET", fmt(resumen.bultosPallet), "", "barras")}
+        </div>
+      </div>
+      <div class="picking-turn-control despacho-turn-control">
+        <div class="picking-turn-buttons">
+          ${["TODOS", "DIA", "NOCHE"].map(turno => `
+            <button class="${turnoDespachoReporte === turno ? "active" : ""}" onclick="seleccionarTurnoDespacho('${turno}', 'compacto')">${turno}</button>
+          `).join("")}
+        </div>
+        <div class="picking-turn-highlights">
+          <div><span>Turno evaluado</span><strong>${turnoDespachoReporte}</strong></div>
+          <div><span>Hora pico viajes</span><strong>${horaPico?.label || "-"}</strong><small>${fmt(horaPico?.valor || 0)} viajes</small></div>
+          <div><span>Placas</span><strong>${fmt(resumen.placas)}</strong><small>${fmt(resumen.paradas)} paradas</small></div>
+        </div>
+      </div>
+      <div class="dispatch-report-main">
+        <div class="picking-main-chart">
+          ${visualLine(`VIAJES DESPACHADOS POR HORA - ${turnoDespachoReporte}`, viajesHora, Math.max(resumen.viajes, 1), "#2563eb", true, "VIAJES")}
+        </div>
+        ${panelImpactoDespacho(resumen)}
+      </div>
+      <div class="dispatch-shift-grid">
+        ${["DIA", "NOCHE"].map(turno => tarjetaDespachoTurnoVisual(turno, resumenGeneral, Math.max(resumenGeneral.costoTotal, 1))).join("")}
       </div>
     </section>
   `;
@@ -2140,7 +2978,7 @@ function rankingPickingVisible(data, total) {
         <article class="picking-rank-row">
           <b>${index + 1}</b>
           <div>
-            <strong>${x.label}</strong>
+            <strong>${nombreUsuarioPorDni(x.label)}</strong>
             <span>${fmt(x.valor)} bultos | pico ${x.horaPico} con ${fmt(x.bultosPico)} | ${fmt(x.horasActivas)} h activas</span>
           </div>
           <strong>${pct(x.valor, total).toFixed(1)}%</strong>
@@ -2357,6 +3195,8 @@ function aliasesRankingPicking() {
 }
 
 function nombreUsuarioRanking(usuario, aliases = aliasesRankingPicking()) {
+  const desdeHoja = nombreUsuarioPorDni(usuario);
+  if (desdeHoja && desdeHoja !== limpiar(usuario)) return desdeHoja;
   return limpiar(aliases[usuario]) || usuario;
 }
 
@@ -2562,17 +3402,60 @@ function prepararContenidoReporte() {
 function abrirVistaReporte() {
   const visor = document.getElementById("visorReporte");
   if (!visor || !prepararContenidoReporte()) return;
+  visor.classList.remove("maximized");
   visor.hidden = false;
+  actualizarBotonMaximizarReporte();
   document.body.classList.add("report-viewer-open");
 }
 
-function cerrarVistaReporte() {
+function actualizarBotonMaximizarReporte() {
+  const visor = document.getElementById("visorReporte");
+  const boton = document.getElementById("btnMaximizarReporte");
+  if (!visor || !boton) return;
+  const maximizado = visor.classList.contains("maximized") || document.fullscreenElement === visor;
+  boton.textContent = maximizado ? "Restaurar" : "Maximizar";
+}
+
+async function alternarMaximizarReporte() {
+  const visor = document.getElementById("visorReporte");
+  if (!visor || visor.hidden) return;
+  const maximizado = visor.classList.contains("maximized") || document.fullscreenElement === visor;
+  if (maximizado) {
+    visor.classList.remove("maximized");
+    if (document.fullscreenElement && document.exitFullscreen) {
+      try { await document.exitFullscreen(); } catch {}
+    }
+  } else {
+    visor.classList.add("maximized");
+    if (visor.requestFullscreen) {
+      try { await visor.requestFullscreen(); } catch {}
+    }
+  }
+  actualizarBotonMaximizarReporte();
+}
+
+async function cerrarVistaReporte() {
   const visor = document.getElementById("visorReporte");
   const destino = document.getElementById("visorReporteContenido");
-  if (visor) visor.hidden = true;
+  if (document.fullscreenElement && document.exitFullscreen) {
+    try { await document.exitFullscreen(); } catch {}
+  }
+  if (visor) {
+    visor.hidden = true;
+    visor.classList.remove("maximized");
+  }
   if (destino) destino.innerHTML = "";
+  actualizarBotonMaximizarReporte();
   document.body.classList.remove("report-viewer-open");
 }
+
+document.addEventListener("fullscreenchange", () => {
+  const visor = document.getElementById("visorReporte");
+  if (visor && !document.fullscreenElement) {
+    visor.classList.remove("maximized");
+  }
+  actualizarBotonMaximizarReporte();
+});
 
 function exportarPdfReporte() {
   const visor = document.getElementById("visorReporte");

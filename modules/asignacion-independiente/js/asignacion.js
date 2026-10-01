@@ -8,6 +8,7 @@ let cacheDetallePedido = null;
 let cacheValidacionAvance = null;
 let vistaActual = "reserva";
 let estadoOperarios = JSON.parse(localStorage.getItem("asignacion_estadoOperarios") || "{}");
+let validacionesAvanceOK = JSON.parse(localStorage.getItem("asignacion_validacionesAvanceOK") || "{}");
 let fechaPedidoSeleccionada = "";
 let fechaDetallePedidoSeleccionada = "";
 let filtroValidacionAvance = "todo";
@@ -117,7 +118,7 @@ function obtenerPedido() {
     const codigo = limpiarCodigo(row.PRODUCTO);
     if (!codigo) continue;
 
-    const cantidad = numeroReal(campo(row, ["BULTOS_NO_ASIGNADO", "BULTO_NO_ASIGANDO", "BULTOS_NO_ASIGANDO"]));
+    const cantidad = bultosNoAsignadosPedido(row);
     if (cantidad <= 0) continue;
 
     if (!mapa.has(codigo)) {
@@ -192,7 +193,7 @@ function calcularResumenPedido() {
   return (dataPedido || []).reduce((acc, row) => {
     acc.pedido += numeroReal(campo(row, ["BULTOS_PEDIDO"]));
     acc.asignado += bultosAsignadosPedido(row);
-    acc.noAsignado += numeroReal(campo(row, ["BULTOS_NO_ASIGNADO", "BULTO_NO_ASIGANDO", "BULTOS_NO_ASIGANDO"]));
+    acc.noAsignado += bultosNoAsignadosPedido(row);
     return acc;
   }, {
     pedido: 0,
@@ -804,7 +805,6 @@ function procesarDatos() {
     }
 
     const pedidoReserva = Math.min(restante, stockReserva);
-
     const usadosReserva = elegirLpns(reserva, restante);
     for (const usado of usadosReserva) {
       const tomar = Math.min(restante, usado.tomar);
@@ -1191,7 +1191,7 @@ function resumenTrabajoValidacion() {
     destino.pendiente += Math.max(0, pedido - plus);
     destino.sobrante += Math.max(0, plus - pedido);
     destino.productos += 1;
-    if (row.estado === "Trabajado completo") destino.completos += 1;
+    if (row.estado === "Trabajado completo" || row.estado === "Validado OK") destino.completos += 1;
     else if (row.estado === "Se bajo de mas") destino.sobrantes += 1;
     else destino.pendientes += 1;
   });
@@ -1315,12 +1315,12 @@ function abrirVistaReporteNoAsignado() {
 function htmlVistaReporteNoAsignado(data, r, totalNoAsignado) {
   return `
     <div class="report-noasig-kpis">
-      <div class="kpi hero-kpi"><span>Pedido general</span><strong>${formatoDecimal(data.fechaActual.pedido)}</strong><small>${htmlSeguro(data.fechaActual.fecha)} - fecha mas actual</small></div>
-      <div class="kpi alert"><span>Total no asignado</span><strong>${formatoDecimal(totalNoAsignado)}</strong><small>bultos del pedido</small></div>
-      <div class="kpi ok"><span>Activo</span><strong>${formatoDecimal(r.activo)}</strong><small>stock usable antes de reserva</small></div>
-      <div class="kpi ok"><span>Reserva</span><strong>${formatoDecimal(r.reserva)}</strong><small>bultos encontrados</small></div>
-      <div class="kpi"><span>Otras ubicaciones</span><strong>${formatoDecimal(r.otras)}</strong><small>bultos encontrados</small></div>
-      <div class="kpi alert"><span>Sin stock</span><strong>${formatoDecimal(r.sinCobertura)}</strong><small>no asignable sin Plus</small></div>
+      ${kpiNoAsignado("Pedido general", formatoDecimal(data.fechaActual.pedido), `${htmlSeguro(data.fechaActual.fecha)} - fecha mas actual`, "hero-kpi", "pedido")}
+      ${kpiNoAsignado("Total no asignado", formatoDecimal(totalNoAsignado), "bultos del pedido", "alert", "alerta")}
+      ${kpiNoAsignado("Activo", formatoDecimal(r.activo), "stock usable antes de reserva", "ok", "activo")}
+      ${kpiNoAsignado("Reserva", formatoDecimal(r.reserva), "bultos encontrados", "ok reserva", "reserva")}
+      ${kpiNoAsignado("Otras ubicaciones", formatoDecimal(r.otras), "bultos encontrados", "otras", "ubicacion")}
+      ${kpiNoAsignado("Sin stock", formatoDecimal(r.sinCobertura), "no asignable sin Plus", "alert danger", "sinStock")}
     </div>
     <div class="report-noasig-main">
       ${tarjetaDonutAsignacion("Activo", data.pctActivo, r.activo, data.asignable, "activo")}
@@ -1332,6 +1332,33 @@ function htmlVistaReporteNoAsignado(data, r, totalNoAsignado) {
       ${graficoTrabajoPendiente(data.trabajo)}
       ${graficoSinStockPlus(data.trabajo.SIN_STOCK)}
       ${graficoPastelTrabajoNoAsignado(r)}
+    </div>
+  `;
+}
+
+function iconoNoAsignado(tipo) {
+  const iconos = {
+    pedido: "▣",
+    alerta: "!",
+    activo: "✓",
+    reserva: "↥",
+    ubicacion: "⌂",
+    sinStock: "×",
+    fecha: "◷",
+    trabajo: "↗",
+    plus: "+",
+    fuente: "◔"
+  };
+  return iconos[tipo] || "•";
+}
+
+function kpiNoAsignado(titulo, valor, subtitulo, clase, icono) {
+  return `
+    <div class="kpi ${clase}">
+      <i class="noasig-kpi-icon">${iconoNoAsignado(icono)}</i>
+      <span>${titulo}</span>
+      <strong>${valor}</strong>
+      <small>${subtitulo}</small>
     </div>
   `;
 }
@@ -1352,8 +1379,10 @@ function tarjetaFuenteNoAsignado(titulo, valor, total, clase, subtitulo) {
 
 function tarjetaDonutAsignacion(titulo, pct, valor, total, clase) {
   const pctSeguro = Math.max(0, Math.min(100, pct || 0));
+  const icono = clase === "activo" ? "activo" : clase === "reserva" ? "reserva" : "ubicacion";
   return `
     <article class="dash-card percent-card ${clase}">
+      <i class="noasig-card-icon">${iconoNoAsignado(icono)}</i>
       <div>
         <h3>${htmlSeguro(titulo)}</h3>
         <strong>${pctSeguro.toFixed(1)}%</strong>
@@ -1371,7 +1400,7 @@ function graficoBarrasNoAsignadoPorFecha(data) {
   return `
     <article class="dash-card wide-card">
       <div class="subsection-head">
-        <h3>No asignado por fecha</h3>
+        <h3><i class="noasig-section-icon">${iconoNoAsignado("fecha")}</i>No asignado por fecha</h3>
         <span>${formatoDecimal(data.reduce((a, b) => a + b.noAsignado, 0))} bultos</span>
       </div>
       <div class="date-bar-chart">
@@ -1395,7 +1424,7 @@ function graficoTrabajoPendiente(trabajo) {
   return `
     <article class="dash-card wide-card">
       <div class="subsection-head">
-        <h3>Avance trabajado vs pendiente</h3>
+        <h3><i class="noasig-section-icon">${iconoNoAsignado("trabajo")}</i>Avance trabajado vs pendiente</h3>
       </div>
       <div class="work-bars">
         ${filas.map(r => {
@@ -1428,7 +1457,7 @@ function graficoSinStockPlus(row) {
   return `
     <article class="dash-card wide-card sin-stock-card">
       <div class="subsection-head">
-        <h3>Sin stock ubicado en Plus</h3>
+        <h3><i class="noasig-section-icon">${iconoNoAsignado("plus")}</i>Sin stock ubicado en Plus</h3>
       </div>
       <div class="sin-stock-summary">
         <div><span>Requerido sin stock</span><strong>${formatoDecimal(row?.pedido || 0)}</strong></div>
@@ -1456,7 +1485,7 @@ function graficoPastelTrabajoNoAsignado(r) {
   return `
     <article class="dash-card pie-work-card">
       <div class="subsection-head">
-        <h3>Trabajo por fuente</h3>
+        <h3><i class="noasig-section-icon">${iconoNoAsignado("fuente")}</i>Trabajo por fuente</h3>
       </div>
       <div class="pie-work-layout">
         <div class="pie-work" style="--activo:${pActivo}; --reserva:${pReserva}; --piso:${pPiso};"></div>
@@ -3397,6 +3426,69 @@ function estadoValidacionAvance(pedido, codPlus) {
   return { texto: "Se bajo de mas", clase: "bad" };
 }
 
+function claveValidacionAvance(row) {
+  return [
+    row.origen,
+    row.codigo,
+    limpiarCodigo(row.lpnOrigen),
+    limpiarCodigo(row.ubicacionOrigen)
+  ].join("|");
+}
+
+function guardarValidacionesAvanceOK() {
+  localStorage.setItem("asignacion_validacionesAvanceOK", JSON.stringify(validacionesAvanceOK));
+}
+
+function productoAsignacionValidacion(codigo) {
+  const datos = procesarDatos();
+  return (datos.productos || []).find(p => p.codigo === codigo) || null;
+}
+
+function detalleConciliacionValidacion(row) {
+  const producto = productoAsignacionValidacion(row.codigo);
+  const pedidoOriginal = numeroReal(producto?.total || row.requerido || row.pedido);
+  const activo = numeroReal(producto?.asignadoActivo);
+  const reserva = numeroReal(producto?.asignadoReserva);
+  const otras = numeroReal(producto?.asignadoOtras);
+  const sinStock = numeroReal(producto?.sinCobertura);
+  const despuesActivo = Math.max(0, pedidoOriginal - activo);
+  const despuesReserva = Math.max(0, despuesActivo - reserva);
+  const despuesOtras = Math.max(0, despuesReserva - otras);
+  const excesoFila = Math.max(0, numeroReal(row.codPlus) - numeroReal(row.pedido));
+  const excesoOriginal = Math.max(0, numeroReal(row.codPlus) - pedidoOriginal);
+  const faltanteOriginal = Math.max(0, pedidoOriginal - numeroReal(row.codPlus));
+  const conciliable = excesoFila > 0 && excesoOriginal <= 0.0001 && activo > 0;
+
+  return {
+    pedidoOriginal,
+    activo,
+    reserva,
+    otras,
+    sinStock,
+    despuesActivo,
+    despuesReserva,
+    despuesOtras,
+    excesoFila,
+    excesoOriginal,
+    faltanteOriginal,
+    conciliable
+  };
+}
+
+function aplicarConciliacionValidacion(row) {
+  const detalle = detalleConciliacionValidacion(row);
+  const validado = Boolean(validacionesAvanceOK[claveValidacionAvance(row)]);
+  row.detalleConciliacion = detalle;
+  row.validadoOk = validado && detalle.conciliable;
+
+  if (row.validadoOk) {
+    row.estado = "Validado OK";
+    row.clase = "ok";
+  }
+
+  return row;
+}
+
 function obtenerValidacionAvance() {
   if (cacheValidacionAvance) return cacheValidacionAvance;
   procesarDatos();
@@ -3440,6 +3532,7 @@ function obtenerValidacionAvance() {
     destino.clase = estado.clase;
   });
 
+  filas.forEach(aplicarConciliacionValidacion);
   filas.sort(ordenValidacionAvance);
 
   cacheValidacionAvance = { filas };
@@ -3462,14 +3555,14 @@ function verValidacionAvance() {
 
 function renderValidacionAvance() {
   const data = datosValidacionAvanceFiltrados();
-  const trabajado = data.filter(r => r.estado === "Trabajado completo").length;
+  const trabajado = data.filter(r => r.estado === "Trabajado completo" || r.estado === "Validado OK").length;
   const falta = data.filter(r => r.estado === "Falta trabajar" || r.estado === "Sin avance").length;
   const exceso = data.filter(r => r.estado === "Se bajo de mas").length;
   const pedido = data.reduce((a, b) => a + b.pedido, 0);
   const codPlus = data.reduce((a, b) => a + b.codPlus, 0);
   const trabajadoExacto = data.reduce((a, b) => a + Math.min(b.pedido, b.codPlus), 0);
   const pendiente = data.reduce((a, b) => a + Math.max(0, b.pedido - b.codPlus), 0);
-  const sobrante = data.reduce((a, b) => a + Math.max(0, b.codPlus - b.pedido), 0);
+  const sobrante = data.reduce((a, b) => a + (b.validadoOk ? 0 : Math.max(0, b.codPlus - b.pedido)), 0);
   const bloques = bloquesValidacionAvance(data);
 
   document.getElementById("contenido").innerHTML = `
@@ -3587,6 +3680,17 @@ function verDetalleValidacionAvance(origen, codigo, lpnOrigen = "", ubicacionOri
     limpiarCodigo(r.ubicacionOrigen) === limpiarCodigo(ubicacionOrigen)
   );
   if (!item) return;
+  const detalle = item.detalleConciliacion || detalleConciliacionValidacion(item);
+  const puedeValidar = detalle.conciliable && item.diferencia > 0 && !item.validadoOk;
+  const mensaje = item.validadoOk
+    ? "Validado OK: el sobrante contra esta fila queda explicado por el pedido original y la cobertura tomada de activo."
+    : detalle.conciliable && item.diferencia > 0
+      ? "Conciliable: Plus cubre mas que esta fila, pero no supera el pedido original del producto."
+      : detalle.excesoOriginal > 0
+        ? "Sobrante real: lo ubicado en Plus supera el pedido original del producto."
+        : detalle.faltanteOriginal > 0
+          ? "Pendiente: Plus aun no cubre el pedido original completo."
+          : "Cuadrado contra el pedido original.";
 
   document.getElementById("modal").innerHTML = `
     <div class="modal-backdrop">
@@ -3594,9 +3698,32 @@ function verDetalleValidacionAvance(origen, codigo, lpnOrigen = "", ubicacionOri
         <div class="section-head">
           <div>
             <h2>${htmlSeguro(item.codigo)} | ${htmlSeguro(item.desc)}</h2>
-            <p>${htmlSeguro(item.origen)} | LPN ${htmlSeguro(item.lpnOrigen || "-")} | Ubicacion ${htmlSeguro(item.ubicacionOrigen || "-")} | Pedido ${formatoDecimal(item.pedido)} | CodPlus ${formatoDecimal(item.codPlus)}</p>
+            <p>${htmlSeguro(item.origen)} | LPN ${htmlSeguro(item.lpnOrigen || "-")} | Ubicacion ${htmlSeguro(item.ubicacionOrigen || "-")}</p>
           </div>
-          <button onclick="cerrarModal()">Cerrar</button>
+          <div class="section-actions">
+            ${puedeValidar ? `<button onclick="validarOKValidacionAvance(${argumentoSeguro(item.origen)}, ${argumentoSeguro(item.codigo)}, ${argumentoSeguro(item.lpnOrigen)}, ${argumentoSeguro(item.ubicacionOrigen)})">Validar OK</button>` : ""}
+            <button onclick="cerrarModal()">Cerrar</button>
+          </div>
+        </div>
+        <div class="validacion-story">
+          <div class="story-kpis">
+            <div><span>Pedido original</span><strong>${formatoDecimal(detalle.pedidoOriginal)}</strong></div>
+            <div><span>Tomado activo</span><strong>${formatoDecimal(detalle.activo)}</strong></div>
+            <div><span>Pedido de esta fila</span><strong>${formatoDecimal(item.pedido)}</strong></div>
+            <div><span>Ubicado en Plus</span><strong>${formatoDecimal(item.codPlus)}</strong></div>
+            <div><span>Diferencia fila</span><strong>${formatoDecimal(item.diferencia)}</strong></div>
+            <div><span>Sobrante real</span><strong>${formatoDecimal(detalle.excesoOriginal)}</strong></div>
+          </div>
+          <div class="story-flow">
+            <div><span>Original</span><strong>${formatoDecimal(detalle.pedidoOriginal)}</strong></div>
+            <div><span>- Activo</span><strong>${formatoDecimal(detalle.activo)}</strong><small>Restan ${formatoDecimal(detalle.despuesActivo)}</small></div>
+            <div><span>- Reserva</span><strong>${formatoDecimal(detalle.reserva)}</strong><small>Restan ${formatoDecimal(detalle.despuesReserva)}</small></div>
+            <div><span>- Otras</span><strong>${formatoDecimal(detalle.otras)}</strong><small>Restan ${formatoDecimal(detalle.despuesOtras)}</small></div>
+            <div><span>Sin stock</span><strong>${formatoDecimal(detalle.sinStock)}</strong></div>
+          </div>
+          <div class="validacion-note ${item.validadoOk ? "ok" : detalle.excesoOriginal > 0 ? "bad" : detalle.faltanteOriginal > 0 ? "warn" : "ok"}">
+            ${htmlSeguro(mensaje)}
+          </div>
         </div>
         ${tablaSimple(["LPN", "Ubicacion", "Estado", "Bultos", "UnAct"], item.lpnsCodPlus.map(r => `
           <tr>
@@ -3610,6 +3737,36 @@ function verDetalleValidacionAvance(origen, codigo, lpnOrigen = "", ubicacionOri
       </div>
     </div>
   `;
+}
+
+function validarOKValidacionAvance(origen, codigo, lpnOrigen = "", ubicacionOrigen = "") {
+  const item = obtenerValidacionAvance().filas.find(r =>
+    r.origen === origen &&
+    r.codigo === codigo &&
+    limpiarCodigo(r.lpnOrigen) === limpiarCodigo(lpnOrigen) &&
+    limpiarCodigo(r.ubicacionOrigen) === limpiarCodigo(ubicacionOrigen)
+  );
+  if (!item) return;
+
+  const detalle = item.detalleConciliacion || detalleConciliacionValidacion(item);
+  if (!detalle.conciliable) {
+    alert("No se puede validar OK: la diferencia no queda explicada por activo contra el pedido original.");
+    return;
+  }
+
+  validacionesAvanceOK[claveValidacionAvance(item)] = {
+    codigo: item.codigo,
+    origen: item.origen,
+    fecha: new Date().toISOString(),
+    pedido: item.pedido,
+    codPlus: item.codPlus,
+    pedidoOriginal: detalle.pedidoOriginal,
+    activo: detalle.activo
+  };
+  guardarValidacionesAvanceOK();
+  cacheValidacionAvance = null;
+  renderValidacionAvance();
+  verDetalleValidacionAvance(origen, codigo, lpnOrigen, ubicacionOrigen);
 }
 
 function descargarExcelValidacionAvance() {
