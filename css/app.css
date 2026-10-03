@@ -95,6 +95,19 @@ button { cursor: pointer; }
 .module-frame { display: block; border: 0; background: white; }
 .module-frame[hidden] { display: none; }
 
+/* Home: clean module launcher with icon and title only. */
+.app-header .side-brand-text strong{font-size:14px;letter-spacing:.03em}
+.home-view{padding-top:12px}
+.home-view .hero{padding:24px 30px;border-radius:12px;background:#1b2b49;box-shadow:0 10px 26px rgba(16,36,62,.16)}
+.home-view .hero h1{margin:0;font-size:clamp(24px,3vw,38px);letter-spacing:.02em}
+.module-grid{grid-template-columns:repeat(5,minmax(150px,1fr));gap:14px;margin-top:18px}
+.module-card{min-height:138px;align-items:center;justify-content:center;padding:20px 14px;border-radius:10px;text-align:center;box-shadow:0 6px 18px rgba(16,36,62,.08)}
+.module-card:hover{transform:translateY(-3px);box-shadow:0 12px 26px rgba(16,36,62,.14)}
+.card-icon{width:52px;height:52px;margin-bottom:14px;border-radius:10px;display:grid;place-items:center;color:#fff;background:#111827;border:2px solid #111827;font-size:30px;font-weight:900;line-height:1;font-family:Arial,sans-serif;box-shadow:0 4px 10px rgba(17,24,39,.18)}
+.module-card strong{margin:0;color:#172944;font-size:15px;letter-spacing:.04em}
+@media(max-width:1050px){.module-grid{grid-template-columns:repeat(3,minmax(170px,1fr))}}
+@media(max-width:650px){.module-grid{grid-template-columns:repeat(2,minmax(140px,1fr))}.home-view .hero{padding:20px}.module-card{min-height:125px}}
+
 @media (max-width: 1200px) {
   .module-grid { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
 }

@@ -370,61 +370,35 @@ function rankingPickActivoUsuarios(data, asignacionTotal) {
   });
 }
 
-function verPickActivo() {
-  document.getElementById("modulo").innerHTML = `
-    <section class="hero picking-hero pick-active-hero">
-      <div>
-        <span>Reporte Picking</span>
-        <h2>Pick Activo</h2>
-      </div>
-    </section>
-    <div id="pickActivoVista"></div>
-  `;
+let paginaShelvyUsuarios = 0;
+function cambiarPaginaShelvy(delta) {
+  paginaShelvyUsuarios = Math.max(0, paginaShelvyUsuarios + delta);
   renderPickActivo();
 }
-
+function verPickActivo() {
+  document.getElementById("modulo").innerHTML = '<div id="pickActivoVista"></div>';
+  renderPickActivo();
+}
 function renderPickActivo() {
   const resumen = resumenPickActivo();
-  const usuarios = rankingPickActivoUsuarios(resumen.unidadesTerminadas, resumen.asignacion).slice(0, 12);
-  const horaPico = [...resumen.horasUnidades].sort((a, b) => b.valor - a.valor)[0];
-  const horaPicoTareas = [...resumen.horasTareas].sort((a, b) => b.valor - a.valor)[0];
-
+  const usuarios = rankingPickActivoUsuarios(resumen.unidadesTerminadas, resumen.asignacion);
   document.getElementById("pickActivoVista").innerHTML = `
-    <section class="visual-sheet pick-active-compact">
-      <div class="visual-header pick-active">
-        <div>
-          <h2>REPORTE PICK ACTIVO</h2>
-          <span>Tareas, unidades y productividad en una sola vista</span>
-        </div>
+    <section class="visual-sheet case-redesign shelvy-report shelvy-units-only">
+      <div class="visual-header case">
+        <h2>REPORTE SHELVY</h2>
         <div class="visual-kpi-row">
-          ${visualKpi("TOTAL TAREAS", fmt(resumen.totalTareas), "", "check")}
-          ${visualKpi("UNIDADES", fmt(resumen.totalTerminadas), "", "recibido")}
-          ${visualKpi("PENDIENTES", fmt(resumen.totalPendientes), "", "programado")}
-          ${visualKpi("PROM. HORA", fmt(resumen.promedioUnidadesHora), "", "reloj")}
+          ${visualKpi("TOTAL DE UNIDADES", fmt(resumen.totalTerminadas), "", "recibido")}
         </div>
       </div>
-
-      <div class="pick-active-summary">
-        ${pickActivoGauge("Avance tareas", resumen.tareasTerminadas.length, resumen.totalTareas, "check", "#2563eb")}
-        ${pickActivoGauge("Avance unidades", resumen.totalTerminadas, resumen.totalUnidades, "recibido", "#22c55e")}
-        ${pickActivoGauge("Pendiente unidades", resumen.totalPendientes, resumen.totalUnidades, "programado", "#f59e0b")}
-        <article class="pick-active-peak-card">
-          <i class="visual-title-icon">${iconoPicking("linea")}</i>
-          <span>Pico operativo</span>
-          <strong>${horaPico?.label || horaPicoTareas?.label || "-"}</strong>
-          <small>${horaPico ? `${fmt(horaPico.valor)} unidades` : `${fmt(horaPicoTareas?.valor || 0)} tareas`}</small>
-        </article>
+      <div class="case-summary">
+        ${pickActivoGauge("Avance unidades", resumen.totalTerminadas, resumen.totalUnidades, "recibido", "#16365f")}
+        ${pickActivoGauge("Pendiente unidades", resumen.totalPendientes, resumen.totalUnidades, "programado", "#16365f")}
       </div>
-
-      <div class="pick-active-report-main">
-        <div class="pick-active-chart-stack">
-          ${visualLine("TENDENCIA TAREAS", resumen.horasTareas, resumen.tareasTerminadas.length, "#2563eb", true, "TAREAS")}
-          ${visualLine("TENDENCIA UNIDADES", resumen.horasUnidades, resumen.totalTerminadas, "#22c55e", true, "UNIDADES")}
-        </div>
-        ${pickActivoUsuariosCompacto(usuarios, resumen.totalTerminadas)}
-      </div>
-    </section>
-  `;
+      <article class="case-trend-main"><h3>TENDENCIA UNIDADES</h3>${tendenciaCaseRecta(resumen.horasUnidades,false,"Unidades terminadas por hora")}</article>
+      ${tablaUsuariosCase(usuarios, resumen.horasUnidades, rows => promedioPickActivoPorHora(rows, "unidades"))}
+    </section>`;
+  const visor=document.getElementById("visorReporte");
+  if(visor&&!visor.hidden)prepararContenidoReporte();
 }
 
 function pickActivoUserBars(data, total) {
@@ -511,21 +485,61 @@ function verCase() {
   renderCase();
 }
 
+let vistaCase = "GENERAL";
+let paginaUsuariosCase = 0;
+
+function seleccionarVistaCase(vista) {
+  vistaCase = vista === "USUARIOS" ? "USUARIOS" : "GENERAL";
+  paginaUsuariosCase = 0;
+  renderCase();
+}
+
+function cambiarPaginaUsuariosCase(delta) {
+  paginaUsuariosCase = Math.max(0, paginaUsuariosCase + delta);
+  renderCase();
+}
+
+function tendenciaCaseRecta(horas, mini = false, chartLabel = "Bultos CASE terminados por hora") {
+  if (!horas.length) return '<div class="empty-state">Sin actividad terminada.</div>';
+  const width = Math.max(mini ? 600 : 1100, horas.length * 72);
+  const height = mini ? 240 : 300, bottom = height - 42;
+  const max = Math.max(1, ...horas.map(h => h.valor));
+  const points = horas.map((h, i) => ({
+    ...h, x: horas.length === 1 ? width / 2 : 55 + i * (width - 110) / Math.max(1, horas.length - 1),
+    y: bottom - h.valor / max * (bottom - 48)
+  }));
+  const path = points.map((p, i) => `${i ? "L" : "M"} ${p.x} ${p.y}`).join(" ");
+  const area = `${path} L ${points.at(-1).x} ${bottom} L ${points[0].x} ${bottom} Z`;
+  return `<div class="case-trend-scroll"><svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="${chartLabel.includes("CASE") ? "xMidYMid meet" : "none"}" style="min-width:${mini ? Math.max(500,horas.length*60) : 1000}px" role="img" aria-label="${chartLabel}">
+    ${[0,1,2,3].map(i=>`<line x1="55" x2="${width-55}" y1="${48+i*(bottom-48)/3}" y2="${48+i*(bottom-48)/3}" stroke="#dce3ed"/>`).join("")}
+    <path class="case-trend-area" d="${area}" fill="#16365f" opacity=".1"/>
+    <path class="case-trend-path" d="${path}" fill="none" stroke="#16365f" stroke-width="3"/>
+    ${points.map(p=>`<g><circle cx="${p.x}" cy="${p.y}" r="4" fill="#16365f" stroke="#fff" stroke-width="2"/><text class="case-trend-value" x="${p.x}" y="${p.y-14}" text-anchor="middle">${fmt(p.valor)}</text><text x="${p.x}" y="${height-12}" text-anchor="middle">${p.label}</text></g>`).join("")}
+  </svg></div>`;
+}
+
+function tablaUsuariosCase(usuarios, horasGenerales, agruparHoras = rows => horasCase(rows, "TERMINADO")) {
+  const escape = value => String(value).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const colores = ["#16365f", "#00857d", "#bf5700", "#8c409b", "#c12f52", "#467629"];
+  const horas = horasGenerales.map(h => h.label);
+  const filas = usuarios.map((u,i) => ({...u, color:colores[i % colores.length], valores:new Map(agruparHoras(u.rows).map(h=>[h.label,h.valor]))}));
+  return `<div class="case-hourly-scroll"><table class="case-hourly-table">
+    <thead><tr><th>Usuario</th>${horas.map(h=>`<th>${escape(h)}</th>`).join("")}<th>Total</th></tr></thead>
+    <tbody>${filas.map(u=>`<tr><th scope="row"><i style="background:${u.color}"></i>${escape(nombreUsuarioPorDni(u.label))}</th>${horas.map(h=>`<td style="color:${u.color}">${u.valores.has(h)?fmt(u.valores.get(h)):"—"}</td>`).join("")}<td class="case-user-sum">${fmt(u.valor)}</td></tr>`).join("")}</tbody>
+    <tfoot><tr><th>Total</th>${horas.map(h=>`<td>${fmt(filas.reduce((s,u)=>s+(u.valores.get(h)||0),0))}</td>`).join("")}<td>${fmt(filas.reduce((s,u)=>s+u.valor,0))}</td></tr></tfoot>
+  </table></div>`;
+}
+
 function renderCase() {
   const data = filtrosCase(modeloCase());
   const resumen = resumenCase(data);
-  const usuariosDetalle = rankingPickingDetalle(data.filter(esCaseTerminado), r => r.usuario).slice(0, 12);
+  const usuariosDetalle = rankingPickingDetalle(data.filter(esCaseTerminado), r => r.usuario);
   const horasTerminadas = horasCase(data, "TERMINADO");
-  const horaPico = [...horasTerminadas].sort((a, b) => b.valor - a.valor)[0];
   const promedioHora = horasTerminadas.length ? resumen.bultosTerminados / horasTerminadas.length : 0;
-
   document.getElementById("caseVista").innerHTML = `
-    <section class="visual-sheet case-compact">
+    <section class="visual-sheet case-compact case-redesign">
       <div class="visual-header case">
-        <div>
-          <h2>REPORTE CASE</h2>
-          <span>Avance de bultos, productividad y usuarios en una sola vista</span>
-        </div>
+        <div><h2>REPORTE CASE</h2></div>
         <div class="visual-kpi-row">
           ${visualKpi("TOTAL CASE", fmt(resumen.totalOperativo), "", "caja")}
           ${visualKpi("TRABAJADO", fmt(resumen.bultosTerminados), "", "check")}
@@ -534,96 +548,15 @@ function renderCase() {
         </div>
       </div>
 
-      <div class="case-summary">
-        ${pickActivoGauge("Avance case", resumen.bultosTerminados, resumen.totalOperativo, "check", "#2563eb")}
-        ${pickActivoGauge("Pendiente case", resumen.bultosPendientes, resumen.totalOperativo, "programado", "#f59e0b")}
-        ${pickActivoGauge("Cancelado", resumen.bultosCancelados, resumen.totalOperativo + resumen.bultosCancelados, "caja", "#ef4444")}
-        <article class="pick-active-peak-card">
-          <i class="visual-title-icon">${iconoPicking("linea")}</i>
-          <span>Pico operativo</span>
-          <strong>${horaPico?.label || "-"}</strong>
-          <small>${fmt(horaPico?.valor || 0)} bultos</small>
-        </article>
-      </div>
-
-      <div class="case-report-main">
-        <div class="case-chart-stack">
-          ${visualLine("TENDENCIA CASE", horasTerminadas, resumen.bultosTerminados, "#2563eb", true, "BULTOS TRABAJADOS")}
+        <div class="case-summary">
+          ${pickActivoGauge("Avance case", resumen.bultosTerminados, resumen.totalOperativo, "check", "#16365f")}
+          ${pickActivoGauge("Pendiente case", resumen.bultosPendientes, resumen.totalOperativo, "programado", "#16365f")}
         </div>
-        ${caseUsuariosCompacto(usuariosDetalle, resumen.bultosTerminados)}
-      </div>
-    </section>
-  `;
-}
-
-function caseKpiPanel(resumen) {
-  return `
-    <section class="case-kpi-grid">
-      <article class="case-kpi total">
-        <span>Total</span>
-        <strong>${fmt(resumen.totalOperativo)}</strong>
-        <small>Bultos case</small>
-      </article>
-      <article class="case-kpi pending">
-        <span>Pendiente</span>
-        <strong>${fmt(resumen.bultosPendientes)}</strong>
-        <small>${fmt(resumen.pendientes.length)} registros</small>
-      </article>
-      <article class="case-kpi done">
-        <span>Trabajado</span>
-        <strong>${fmt(resumen.bultosTerminados)}</strong>
-        <small>${fmt(resumen.terminados.length)} registros</small>
-      </article>
-      <article class="case-kpi progress">
-        <span>Avance</span>
-        <strong>${resumen.avance.toFixed(1)}%</strong>
-        <small>Terminado vs operativo</small>
-      </article>
-    </section>
-  `;
-}
-
-function caseUsuariosCompacto(data, total) {
-  return `
-    <article class="visual-panel case-users-card">
-      <div class="visual-panel-head">
-        <div>
-          <h3><i class="visual-title-icon">${iconoPicking("usuarios")}</i>TOP USUARIOS CASE</h3>
-          <span>Bultos terminados y participacion</span>
-        </div>
-      </div>
-      ${caseUserBarsVisible(data, total)}
-    </article>
-  `;
-}
-
-function caseUserBarsVisible(data, total) {
-  const max = Math.max(...data.map(x => x.valor), 1);
-  const palette = caseUserPalette();
-  const usuarios = data.slice(0, 6);
-  const renderUsuario = (x, index) => `
-    <article style="--case-user-color:${palette[index % palette.length]}">
-      <div class="case-user-head">
-        <span>${index + 1}</span>
-        <div>
-          <strong>${nombreUsuarioPorDni(x.label)}</strong>
-          <small>${fmt(x.valor)} bultos · pico ${x.horaPico} con ${fmt(x.bultosPico)}</small>
-        </div>
-        <b>${pct(x.valor, total).toFixed(1)}%</b>
-      </div>
-      <i><u style="width:${Math.max(2, pct(x.valor, max))}%"></u></i>
-    </article>
-  `;
-  return `
-    <div class="case-user-layout">
-      ${usuarios.length ? `
-        <div class="case-user-bars case-user-bars-columns">
-          ${usuarios.map(renderUsuario).join("")}
-        </div>
-      ` : `<div class="empty-state">Sin datos.</div>`}
-      ${caseUserDonutVisible(data, total)}
-    </div>
-  `;
+        <article class="case-trend-main"><h3>TENDENCIA CASE</h3>${tendenciaCaseRecta(horasTerminadas)}</article>
+      ${tablaUsuariosCase(usuariosDetalle, horasTerminadas)}
+    </section>`;
+  const visor = document.getElementById("visorReporte");
+  if (visor && !visor.hidden) prepararContenidoReporte();
 }
 
 function caseUserPalette() {
@@ -1691,13 +1624,8 @@ function seleccionarProveedoresRecepcionEjecutivo(modo) {
 }
 
 function filtroProveedoresRecepcionEjecutivo(proveedores) {
-  const visibles = proveedoresRecepcionEjecutivoVisibles(proveedores);
   return `
     <div class="executive-provider-filter">
-      <div>
-        <strong>${fmt(visibles.length)} proveedores visibles</strong>
-        <span>Los indicadores de recepcion se calculan con la seleccion.</span>
-      </div>
       <details class="provider-filter">
         <summary>Escoger proveedores</summary>
         <div class="provider-filter-menu">
@@ -1725,20 +1653,18 @@ function filtroProveedoresRecepcionEjecutivo(proveedores) {
   `;
 }
 
-function pickingEjecutivoPanel(turnos, total, promedioHora) {
+function pickingEjecutivoPanel(turnos, total) {
   const valorTurno = turno => turnos.find(x => x.label === turno)?.valor || 0;
   return `
     <div class="executive-picking-summary">
       <div class="executive-total-card">
         <span>Total picking</span>
         <strong>${fmt(total)}</strong>
-        <small>Bultos procesados</small>
       </div>
       <div class="executive-summary-cards">
-        ${executiveMetric("DIA", fmt(valorTurno("DIA")), `${pct(valorTurno("DIA"), total).toFixed(1)}% del total`)}
-        ${executiveMetric("TARDE", fmt(valorTurno("TARDE")), `${pct(valorTurno("TARDE"), total).toFixed(1)}% del total`)}
-        ${executiveMetric("NOCHE", fmt(valorTurno("NOCHE")), `${pct(valorTurno("NOCHE"), total).toFixed(1)}% del total`)}
-        ${executiveMetric("PROMEDIO / HORA", fmt(promedioHora), "Por hora activa")}
+        ${executiveMetric("DIA", fmt(valorTurno("DIA")))}
+        ${executiveMetric("TARDE", fmt(valorTurno("TARDE")))}
+        ${executiveMetric("NOCHE", fmt(valorTurno("NOCHE")))}
       </div>
     </div>
   `;
@@ -1747,11 +1673,10 @@ function pickingEjecutivoPanel(turnos, total, promedioHora) {
 function despachoEjecutivoPanel(resumen) {
   return `
     <div class="executive-dispatch-totals">
-      ${executiveMetric("COSTO DESPACHADO", `S/ ${fmt(resumen.costoTotal)}`)}
-      ${executiveMetric("BULTOS TOTALES", fmt(resumen.totalBultos))}
-      ${executiveMetric("PALLETS TOTALES", fmt(resumen.palletsTotal))}
-      ${executiveMetric("VIAJES TOTALES", fmt(resumen.viajes))}
-      ${executiveMetric("TIENDAS", fmt(resumen.tiendas))}
+      ${executiveMetric("PALLETS", fmt(resumen.palletsTotal))}
+      ${executiveMetric("VIAJES", fmt(resumen.viajes))}
+      ${executiveMetric("BULTOS / PALLET", fmt(resumen.bultosPallet))}
+      ${executiveMetric("COSTO TOTAL", `S/ ${fmt(resumen.costoTotal)}`)}
     </div>
     ${despachoTurnoPanel(resumen)}
   `;
@@ -1761,11 +1686,10 @@ function verResumenEjecutivo() {
   const picking = modeloPicking();
   const recepcion = modeloRecepcion();
   const despacho = modeloDespacho();
+  const pedido = pedidoEjecutivoAnterior();
 
   const totalPicking = picking.reduce((a, b) => a + b.bultos, 0);
   const pickTurnos = agruparSum(picking, r => r.turno, r => r.bultos);
-  const pickHoras = promedioPickingPorHora(picking);
-  const pickPromedioHora = totalPicking / Math.max(pickHoras.length, 1);
 
   const recepProveedores = resumenProveedoresRecepcion(recepcion);
   const recepProveedoresVisibles = proveedoresRecepcionEjecutivoVisibles(recepProveedores);
@@ -1773,42 +1697,38 @@ function verResumenEjecutivo() {
   const recepcionVisible = recepcion.filter(r => clavesRecepcionVisibles.has(r.proveedorKey));
   const resRecep = resumenRecepcion(recepcionVisible);
 
-  const resDesp = resumenDespacho(despacho);
+  const resDesp = resumenDespacho(despacho, "TODOS");
 
   document.getElementById("modulo").innerHTML = `
     <section class="visual-sheet executive-main">
-      <div class="visual-header executive">
-        <h2>PANEL EJECUTIVO OPERACIONAL</h2>
-        <div class="visual-kpi-row">
-          ${visualKpi("PICKING", fmt(totalPicking))}
-          ${visualKpi("RECEPCION", fmt(resRecep.totalRecibido))}
-          ${visualKpi("DESPACHO", fmt(resDesp.totalBultos))}
-          ${visualKpi("FECHA", new Date().toLocaleDateString("es-PE", { day: "2-digit", month: "2-digit" }))}
-        </div>
-      </div>
+      <div class="executive-title-only"><h2>SPSA CD MASS TRUJILLO - 962</h2></div>
 
       <div class="executive-visual-grid">
+        <article class="visual-panel executive-column executive-order">
+          <div class="visual-panel-head"><h3>PEDIDO</h3></div>
+          ${pedidoEjecutivoPanel(pedido)}
+        </article>
+
         <article class="visual-panel executive-column executive-picking">
           <div class="visual-panel-head">
             <h3>PICKING</h3>
-            <span>Cantidades por turno</span>
           </div>
-          ${pickingEjecutivoPanel(pickTurnos, totalPicking, pickPromedioHora)}
+          ${pickingEjecutivoPanel(pickTurnos, totalPicking)}
         </article>
 
         <article class="visual-panel executive-column executive-reception">
           <div class="visual-panel-head">
             <h3>RECEPCION</h3>
-            <span>${resRecep.cumplimiento.toFixed(1)}% cumplimiento</span>
           </div>
           ${filtroProveedoresRecepcionEjecutivo(recepProveedores)}
-          ${providerCompactPanel(recepProveedoresVisibles)}
+          <div class="executive-provider-list">
+            ${recepProveedoresVisibles.map(p => `<div class="executive-provider-simple"><span>${p.proveedor}</span><strong>${fmt(p.recibido)}</strong></div>`).join("") || `<div class="executive-empty">Sin proveedores visibles.</div>`}
+          </div>
         </article>
 
         <article class="visual-panel executive-column executive-dispatch">
           <div class="visual-panel-head">
             <h3>DESPACHO</h3>
-            <span>Totales y detalle por turno</span>
           </div>
           ${despachoEjecutivoPanel(resDesp)}
         </article>
@@ -2281,7 +2201,7 @@ function filtroProveedoresRecepcion(proveedores) {
     <div class="provider-filter-bar">
       <div>
         <strong>Proveedores visibles</strong>
-        <span>${fmt(visibles.length)} de ${fmt(proveedores.length)} seleccionados. Los totales generales no cambian.</span>
+        <span>${fmt(visibles.length)} de ${fmt(proveedores.length)} seleccionados.</span>
       </div>
       <details class="provider-filter">
         <summary>Escoger proveedores</summary>
@@ -2378,7 +2298,6 @@ function despachoTurnoPanel(resumen) {
             <div class="dispatch-shift-card">
               <strong>${turno}</strong>
               <div class="dispatch-big">S/ ${fmt(x.costo)}</div>
-              <span>Costo despachado</span>
               <div class="dispatch-mini">
                 <b>${fmt(x.viajes)}<small>Viajes</small></b>
                 <b>${fmt(x.pallets)}<small>Pallets</small></b>
@@ -2399,6 +2318,34 @@ function seleccionarTurnoPickingCompacto(turno) {
   verPickingCompacto();
 }
 
+function fechaPedidoEjecutivo(valor) {
+  const texto = limpiar(valor);
+  const partes = texto.includes("/") ? texto.split("/").map(Number) : texto.split("-").map(Number);
+  if (partes.length !== 3 || partes.some(n => !Number.isFinite(n))) return null;
+  return texto.includes("/") ? new Date(partes[2], partes[1] - 1, partes[0]) : new Date(partes[0], partes[1] - 1, partes[2]);
+}
+
+function pedidoEjecutivoAnterior() {
+  const agrupado = new Map();
+  (dataPedido || []).forEach(row => {
+    const fecha = fechaPedidoEjecutivo(campo(row, ["FECHA_ORDEN", "FECHA", "Fecha"]));
+    if (!fecha || !Number.isFinite(fecha.getTime())) return;
+    const key = fecha.toISOString().slice(0, 10);
+    if (!agrupado.has(key)) agrupado.set(key, { fecha, asignable: 0, asignado: 0 });
+    const item = agrupado.get(key);
+    item.asignable += num(campo(row, ["BULTOS_PEDIDO"]));
+    item.asignado += num(campo(row, ["BULTOS_ASIGNADOS", "BULTOS_ASIGANDOS", "BULTOS_ASIGNADO", "BULTO_ASIGNADO", "ASIGNADO"]));
+  });
+  const hoy = new Date();
+  hoy.setHours(0, 0, 0, 0);
+  return Array.from(agrupado.values()).filter(item => item.fecha < hoy).sort((a, b) => b.fecha - a.fecha)[0] || null;
+}
+
+function pedidoEjecutivoPanel(resumen) {
+  if (!resumen) return `<div class="executive-empty">No hay una fecha anterior disponible en la hoja PEDIDO.</div>`;
+  return `<div class="executive-order-metrics">${executiveMetric("ASIGNABLE", fmt(resumen.asignable))}${executiveMetric("ASIGNADO", fmt(resumen.asignado))}</div>`;
+}
+
 function tarjetaDestajoTurno(turno, data, totalGeneral) {
   const filas = data.filter(r => r.turno === turno);
   const bultos = filas.reduce((a, b) => a + b.bultos, 0);
@@ -2406,12 +2353,11 @@ function tarjetaDestajoTurno(turno, data, totalGeneral) {
   const lpns = new Set(filas.map(r => r.lpn).filter(Boolean)).size;
   const horas = promedioPickingPorHora(filas);
   const porHora = horas.length ? bultos / horas.length : 0;
-  const tonos = { DIA: "green", TARDE: "gold", NOCHE: "purple" };
   const iconos = { DIA: "dia", TARDE: "tarde", NOCHE: "noche" };
   const inicio = horas[0]?.label || "-";
   const fin = horas[horas.length - 1]?.label || "-";
   return `
-    <button class="picking-shift-card ${tonos[turno]} ${turnoPickingCompacto === turno ? "active" : ""}" onclick="seleccionarTurnoPickingCompacto('${turno}')">
+    <button class="picking-shift-card ${turnoPickingCompacto === turno ? "active" : ""}" aria-pressed="${turnoPickingCompacto === turno}" onclick="seleccionarTurnoPickingCompacto('${turno}')">
       <div class="picking-shift-top">
         <i class="picking-shift-icon">${iconoPicking(iconos[turno])}</i>
         <div class="picking-shift-title">
@@ -2435,78 +2381,65 @@ function tarjetaDestajoTurno(turno, data, totalGeneral) {
   `;
 }
 
-function rankingPickingTop10Panel(usuarios, total) {
-  const top = usuarios.slice(0, 10);
-  const max = Math.max(...top.map(x => x.valor), 1);
-  return `
-    <article class="visual-panel picking-top-panel">
-      <div class="visual-panel-head">
-        <div>
-          <h3><i class="visual-title-icon">${iconoPicking("usuarios")}</i>TOP 10 USUARIOS PICK</h3>
-          <span>Productividad del turno</span>
-        </div>
-      </div>
-      <div class="picking-top-table">
-        <div class="picking-top-head">
-          <span>#</span>
-          <span>Usuario</span>
-          <span>Picking</span>
-          <span>Prom/h</span>
-        </div>
-        ${top.map((x, index) => {
-          const promedio = x.horasActivas ? x.valor / x.horasActivas : 0;
-          return `
-            <article class="picking-top-row">
-              <b>${index + 1}</b>
-              <strong>${corto(nombreUsuarioPorDni(x.label), 18)}</strong>
-              <div><i style="width:${pct(x.valor, max)}%"></i></div>
-              <span>${fmt(x.valor)}</span>
-              <em>${fmt(promedio)}</em>
-            </article>
-          `;
-        }).join("") || `<div class="empty-state">Sin usuarios.</div>`}
-      </div>
-    </article>
-  `;
+let vistaPickingCompacto = "GENERAL";
+
+function seleccionarVistaPickingCompacto(vista) {
+  vistaPickingCompacto = vista === "DIARIA" ? "DIARIA" : "GENERAL";
+  verPickingCompacto();
+}
+
+function tendenciaPicking(horas, total) {
+  const width = Math.max(1000, horas.length * 70);
+  const max = Math.max(1, ...horas.map(h => h.valor));
+  const points = horas.map((h, i) => ({
+    ...h, x: horas.length === 1 ? width / 2 : 65 + i * (width - 130) / Math.max(1, horas.length - 1),
+    y: 245 - h.valor / max * 175
+  }));
+  const path = points.map((p, i) => `${i ? "L" : "M"} ${p.x} ${p.y}`).join(" ");
+  return `<article class="picking-trend">
+    <h3>AVANCE POR HORA - ${turnoPickingCompacto}</h3>
+    <div class="picking-trend-scroll">
+      ${points.length ? `<svg viewBox="0 0 ${width} 300" style="min-width:1000px" role="img" aria-label="Bultos de picking por hora">
+      ${[70,128,187,245].map(y=>`<line x1="65" x2="${width-65}" y1="${y}" y2="${y}" stroke="#dce3ed"/>`).join("")}
+      <path d="${path}" fill="none" stroke="#16365f" stroke-width="3"/>
+      ${points.map(p=>`<g><circle cx="${p.x}" cy="${p.y}" r="5" fill="#16365f" stroke="white" stroke-width="2"/><text x="${p.x}" y="${p.y-16}" text-anchor="middle" class="picking-point-value">${fmt(p.valor)}</text><text x="${p.x}" y="282" text-anchor="middle">${p.label}</text></g>`).join("")}
+      </svg>` : '<div class="empty-state">Sin datos para este turno.</div>'}
+    </div>
+  </article>`;
 }
 
 function verPickingCompacto() {
-  const dataGeneral = modeloPicking();
-  const data = turnoPickingCompacto === "TODOS"
-    ? dataGeneral
-    : dataGeneral.filter(r => r.turno === turnoPickingCompacto);
+  const source = modeloPicking();
+  prepararFiltroPickers(source);
+  const dataGeneral = pickingUsersSelected === null ? source : source.filter(r => pickingUsersSelected.has(limpiar(r.usuario)));
+  const data = turnoPickingCompacto === "TODOS" ? dataGeneral : dataGeneral.filter(r => r.turno === turnoPickingCompacto);
   const totalGeneral = dataGeneral.reduce((a, b) => a + b.bultos, 0);
   const total = data.reduce((a, b) => a + b.bultos, 0);
   const horas = promedioPickingPorHora(data);
-  const lpns = new Set(data.map(r => r.lpn).filter(Boolean)).size;
-  const usuarios = rankingPickingDetalle(data, r => r.usuario);
-  const horaPico = horas.slice().sort((a, b) => b.valor - a.valor)[0];
+  const usuarios = new Set(data.map(r => r.usuario).filter(Boolean)).size;
 
   document.getElementById("modulo").innerHTML = `
     <section class="visual-sheet picking-compact">
       <div class="visual-header">
-        <div>
-          <h2>REPORTE PICKING</h2>
-          <span>Evaluacion de destajo: ${turnoPickingCompacto}</span>
+        <div><h2>REPORTE DE PICKING</h2>
+          <div class="picking-view-switch" role="group" aria-label="Tipo de reporte">
+            <button type="button" aria-pressed="${vistaPickingCompacto === "DIARIA"}" onclick="seleccionarVistaPickingCompacto('DIARIA')">Diaria</button>
+            <button type="button" aria-pressed="${vistaPickingCompacto === "GENERAL"}" onclick="seleccionarVistaPickingCompacto('GENERAL')">General</button>
+          </div>
         </div>
         <div class="visual-kpi-row">
-          ${visualKpi("TOTAL PICKING", fmt(totalGeneral), "", "caja")}
-          ${visualKpi("USUARIOS", fmt(usuarios.length), "", "usuarios")}
-          ${visualKpi("LPNS", fmt(lpns), "", "barras")}
-          ${visualKpi("PROM. HORA", fmt(horas.length ? total / horas.length : 0), "", "reloj")}
+          ${visualKpi("TOTAL PICKING", fmt(total), "", "caja")}
+          ${visualKpi("USUARIOS", fmt(usuarios), "", "usuarios")}
+          ${visualKpi("PROMEDIO X HORA", fmt(horas.length ? total / horas.length : 0), "", "reloj")}
         </div>
       </div>
-      <div class="picking-report-main">
-        <div class="picking-main-chart">
-          ${visualLine(`AVANCE POR HORA - ${turnoPickingCompacto}`, horas.map(x => ({ label: x.label, valor: x.valor })), total, "#2563eb", true)}
-        </div>
-        ${rankingPickingTop10Panel(usuarios, total)}
-      </div>
-      <div class="picking-shift-grid">
+      <div class="picking-report-main">${tendenciaPicking(horas, total)}</div>
+      ${vistaPickingCompacto === "GENERAL" ? `<div class="picking-shift-grid">
         ${["DIA", "TARDE", "NOCHE"].map(turno => tarjetaDestajoTurno(turno, dataGeneral, totalGeneral)).join("")}
-      </div>
-    </section>
-  `;
+      </div>` : ""}
+    </section>`;
+  const visor = document.getElementById("visorReporte");
+  if (visor && !visor.hidden) prepararContenidoReporte();
 }
 
 function verRecepcionCompacto() {
@@ -2520,27 +2453,18 @@ function verRecepcionCompacto() {
   document.getElementById("modulo").innerHTML = `
     <section class="visual-sheet reception-compact">
       <div class="visual-header green">
-        <div><h2>REPORTE RECEPCION</h2><span>Control general por proveedor</span></div>
+        <div><h2>REPORTE DE RECEPCION</h2></div>
         <div class="visual-kpi-row">
           ${visualKpi("RECIBIDO", fmt(resumen.totalRecibido), "", "recibido")}
           ${visualKpi("PROGRAMADO", fmt(resumen.totalProgramado), "", "programado")}
           ${visualKpi("CUMPLIMIENTO", `${resumen.cumplimiento.toFixed(1)}%`, "", "check")}
-          ${visualKpi("PALETEROS RECIBIDOS", fmt(resumen.paleterosRecibidos), "", "paletero")}
+          ${visualKpi("PALETEROS", fmt(resumen.paleterosRecibidos), "", "paletero")}
           ${visualKpi("PROVEEDORES", fmt(proveedoresVisibles.length), "", "proveedor")}
         </div>
       </div>
       ${filtroProveedoresRecepcion(proveedoresDetalle)}
       <div class="reception-provider-main">
         ${providerCompactPanel(proveedoresVisibles)}
-      </div>
-      <div class="reception-indicator-head">
-        <div><h2>Indicadores de proveedores seleccionados</h2><span>Los calculos corresponden solamente a los proveedores visibles.</span></div>
-      </div>
-      <div class="visual-gauge-row reception-gauges">
-        ${visualGauge("CUMPLIMIENTO", resumen.totalRecibido, resumen.totalProgramado, "#22c55e", "check")}
-        ${visualGauge("PUNTA NEGRA", resumen.recibido917, Math.max(resumen.totalRecibido, 1), "#2563eb", "proveedor")}
-        ${visualGauge("MONO 917", resumen.mono917, Math.max(resumen.pallets917, 1), "#f59e0b", "paletero")}
-        ${visualGauge("MULTI 917", resumen.multi917, Math.max(resumen.pallets917, 1), "#ef4444", "barras")}
       </div>
     </section>
   `;
@@ -2635,6 +2559,11 @@ function tarjetaResumenLogistico(turno, data, participacion, icono) {
   `;
 }
 
+let vistaDespachoCompacto = "GENERAL";
+function seleccionarVistaDespachoCompacto(vista) {
+  vistaDespachoCompacto = vista === "DIARIA" ? "DIARIA" : "GENERAL";
+  verDespachoCompacto();
+}
 function verDespachoCompacto() {
   const dataGeneral = modeloDespacho();
   const data = filtrarDespachoPorTurno(dataGeneral);
@@ -2644,11 +2573,11 @@ function verDespachoCompacto() {
   const horaPico = viajesHora.slice().sort((a, b) => b.valor - a.valor)[0];
 
   document.getElementById("modulo").innerHTML = `
-    <section class="visual-sheet dispatch-compact">
+    <section class="visual-sheet dispatch-compact case-redesign dispatch-redesign">
       <div class="visual-header blue">
         <div>
-          <h2>REPORTE DESPACHO</h2>
-          <span>Control logistico por turno: ${turnoDespachoReporte}</span>
+          <h2>REPORTE DE DESPACHO</h2>
+          <div class="case-view-switch" role="group" aria-label="Vista Despacho"><button type="button" aria-pressed="${vistaDespachoCompacto === 'DIARIA'}" onclick="seleccionarVistaDespachoCompacto('DIARIA')">Diaria</button><button type="button" aria-pressed="${vistaDespachoCompacto === 'GENERAL'}" onclick="seleccionarVistaDespachoCompacto('GENERAL')">General</button></div>
         </div>
         <div class="visual-kpi-row">
           ${visualKpi("VIAJES", fmt(resumen.viajes), "", "camion")}
@@ -2672,15 +2601,16 @@ function verDespachoCompacto() {
       </div>
       <div class="dispatch-report-main">
         <div class="picking-main-chart">
-          ${visualLine(`VIAJES DESPACHADOS POR HORA - ${turnoDespachoReporte}`, viajesHora, Math.max(resumen.viajes, 1), "#2563eb", true, "VIAJES")}
+          ${viajesHora.length ? tendenciaCaseRecta(viajesHora, false, "Viajes despachados por hora") : '<div class="empty-state">Sin viajes para este turno.</div>'}
         </div>
-        ${panelImpactoDespacho(resumen)}
       </div>
-      <div class="dispatch-shift-grid">
+      ${vistaDespachoCompacto === "GENERAL" ? `<div class="dispatch-shift-grid">
         ${["DIA", "NOCHE"].map(turno => tarjetaDespachoTurnoVisual(turno, resumenGeneral, Math.max(resumenGeneral.costoTotal, 1))).join("")}
-      </div>
+      </div>` : ""}
     </section>
   `;
+  const visor = document.getElementById("visorReporte");
+  if (visor && !visor.hidden) prepararContenidoReporte();
 }
 
 function modeloBI() {

@@ -1440,6 +1440,14 @@ button.compact {
 .legend.center {
   justify-content: center;
 }
+.pedido-dashboard .pedido-extra-visual{display:none}
+.pedido-dashboard .donut-wrap{width:180px;height:180px;margin:20px auto 16px;filter:drop-shadow(0 8px 14px rgba(15,23,42,.14))}
+.pedido-dashboard .donut{width:180px;height:180px;background:conic-gradient(#1f2937 calc(var(--p) * 1%), #d9dee7 0);border:8px solid #fff;box-sizing:border-box}
+.pedido-dashboard .donut::after{inset:42px;background:#fff;box-shadow:inset 0 0 0 1px #e3e8ef}
+.pedido-dashboard .donut-center strong{font-size:24px;color:#16284d}
+.pedido-dashboard .donut-center span{color:#64748b;font-weight:700}
+.pedido-dashboard .legend.center{display:grid;gap:8px;max-width:360px;margin:0 auto 18px}
+.pedido-dashboard .legend.center span{padding:8px 12px;border:1px solid #e1e6ed;border-radius:6px;background:#f8fafc;color:#334155}
 
 .distribution-bars {
   display: grid;

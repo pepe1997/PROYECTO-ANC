@@ -3,21 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ANC Logistica | Asignacion Operacional</title>
-  <link rel="stylesheet" href="css/asignacion.css?v=20260914-noasig-visual">
+  <title>Asignacion</title>
+  <link rel="stylesheet" href="css/asignacion.css?v=20261001-asignacion-clean">
 </head>
 <body>
-  <script src="js/asignacion.js?v=20260914-noasig-visual"></script>
+  <script src="js/asignacion.js?v=20261001-otras-sin-avance"></script>
   <section id="loginView" class="login-view">
     <form class="login-card" onsubmit="login(event)">
-      <div class="brand-row login-brand-row">
-        <div class="login-mark">ANC</div>
-        <div>
-          <strong>ANC Logistica</strong>
-          <span>Operacion Logistica</span>
-        </div>
-      </div>
-      <h1>Asignacion Operacional</h1>
+      <h1>Asignacion</h1>
       <label>
         Usuario
         <input id="usuario" type="text" autocomplete="username" required>
@@ -33,18 +26,6 @@
 
   <section id="appView" class="app-view" hidden>
     <div class="workspace">
-      <header class="topbar">
-        <div>
-          <strong>ANC Logistica</strong>
-          <span id="estadoCarga">Esperando carga...</span>
-        </div>
-        <div class="topbar-actions">
-          <span id="usuarioActivo" class="user-pill"></span>
-          <button class="secondary" onclick="resetOperarios()">Reiniciar avance</button>
-          <button class="ghost" onclick="logout()">Salir</button>
-        </div>
-      </header>
-
       <main class="layout">
         <section id="modulo" class="panel">
           <div class="loading">Preparando asignacion...</div>
@@ -54,7 +35,7 @@
   </section>
 
   <script src="js/data.js"></script>
-  <script src="js/auth.js"></script>
+  <script src="js/auth.js?v=20261001-clean-header-fix"></script>
   <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
 </body>
 </html>

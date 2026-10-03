@@ -937,9 +937,8 @@ function abrirAsignacion() {
   document.getElementById("modulo").innerHTML = `
     <div class="module-head">
       <div>
-        <h1>Asignacion operacional</h1>
+        <h1>Asignacion</h1>
       </div>
-      <button class="soft" onclick="exportarNoAsignados()">Exportar no asignados</button>
     </div>
 
     ${quiebres.length ? `<div class="notice danger">${quiebres.length} productos en quiebre.</div>` : ""}
@@ -956,31 +955,26 @@ function abrirAsignacion() {
       <div class="kpi alert"><span>Sin cobertura</span><strong>${formatoDecimal(resumen.sinCobertura)}</strong></div>
       <div class="kpi"><span>Cobertura</span><strong>${resumen.cobertura.toFixed(1)}%</strong></div>
       <div class="kpi"><span>Productos</span><strong>${resumen.productos}</strong></div>
-      <div class="kpi"><span>Avance</span><strong id="kpiAvancePorcentaje">${prog.porcentaje.toFixed(1)}%</strong><small id="kpiAvanceDetalle">${prog.productosCompletados} / ${prog.totalProductos}</small></div>
     </div>
 
     <div class="toolbar module-tabs">
-      <button onclick="verDashboard()">Dashboard</button>
       <button onclick="verDashboardPedido()">Dashboard pedido</button>
       <button onclick="verActivo()">Activo</button>
       <button onclick="verReserva()">Reserva</button>
       <button onclick="verOtras()">Otras ubicaciones</button>
       <button onclick="verOtrasPrimero()">Otras primero</button>
-      <button onclick="verSimulacionAsignacion()">Simulacion ola</button>
       <button onclick="verDetallePedido()">Detalle de pedido</button>
       <button onclick="verDashboardNoAsignado()">Dashboard no asignado</button>
       <button onclick="verValidacionAvance()">Validacion de avance</button>
       <button onclick="verFormatoTablas()">Formato de tablas</button>
       <button onclick="verSinStock()">Sin stock</button>
-      <button onclick="verAnalisisRapido()">Analisis rapido</button>
-      <button onclick="verBuscadorLPN()">Buscador LPN</button>
     </div>
 
     <div id="contenido"></div>
     <div id="modal"></div>
   `;
 
-  verDashboard();
+  verDashboardPedido();
 }
 
 function bultosNoAsignadosPedido(row) {
@@ -1247,7 +1241,6 @@ function renderDashboardNoAsignado() {
       <div class="section-head report-actions">
         <div>
           <h2>Dashboard no asignado</h2>
-          <p>Formato compacto para captura y seguimiento operativo.</p>
         </div>
         <div class="section-actions">
           <button onclick="abrirVistaReporteNoAsignado()">Vista reporte</button>
@@ -1280,10 +1273,10 @@ function htmlCabeceraNoAsignado(data, r, totalNoAsignado, cobertura) {
 function htmlFuentesNoAsignado(r, totalNoAsignado) {
   return `
     <div class="no-asig-source-grid">
-      ${tarjetaFuenteNoAsignado("Activo", r.activo, totalNoAsignado, "ok", "stock usable antes de reserva")}
-      ${tarjetaFuenteNoAsignado("Reserva", r.reserva, totalNoAsignado, "reserva", "bultos desde Mass")}
-      ${tarjetaFuenteNoAsignado("Otras", r.otras, totalNoAsignado, "otras", "ubicaciones de apoyo")}
-      ${tarjetaFuenteNoAsignado("Sin stock", r.sinCobertura, totalNoAsignado, "bad", "brecha final")}
+      ${tarjetaFuenteNoAsignado("Activo", r.activo, totalNoAsignado, "ok")}
+      ${tarjetaFuenteNoAsignado("Reserva", r.reserva, totalNoAsignado, "reserva")}
+      ${tarjetaFuenteNoAsignado("Otras", r.otras, totalNoAsignado, "otras")}
+      ${tarjetaFuenteNoAsignado("Sin stock", r.sinCobertura, totalNoAsignado, "bad")}
     </div>
   `;
 }
@@ -1316,11 +1309,11 @@ function htmlVistaReporteNoAsignado(data, r, totalNoAsignado) {
   return `
     <div class="report-noasig-kpis">
       ${kpiNoAsignado("Pedido general", formatoDecimal(data.fechaActual.pedido), `${htmlSeguro(data.fechaActual.fecha)} - fecha mas actual`, "hero-kpi", "pedido")}
-      ${kpiNoAsignado("Total no asignado", formatoDecimal(totalNoAsignado), "bultos del pedido", "alert", "alerta")}
-      ${kpiNoAsignado("Activo", formatoDecimal(r.activo), "stock usable antes de reserva", "ok", "activo")}
-      ${kpiNoAsignado("Reserva", formatoDecimal(r.reserva), "bultos encontrados", "ok reserva", "reserva")}
-      ${kpiNoAsignado("Otras ubicaciones", formatoDecimal(r.otras), "bultos encontrados", "otras", "ubicacion")}
-      ${kpiNoAsignado("Sin stock", formatoDecimal(r.sinCobertura), "no asignable sin Plus", "alert danger", "sinStock")}
+      ${kpiNoAsignado("Total no asignado", formatoDecimal(totalNoAsignado), "", "alert", "alerta")}
+      ${kpiNoAsignado("Activo", formatoDecimal(r.activo), "", "ok", "activo")}
+      ${kpiNoAsignado("Reserva", formatoDecimal(r.reserva), "", "ok reserva", "reserva")}
+      ${kpiNoAsignado("Otras ubicaciones", formatoDecimal(r.otras), "", "otras", "ubicacion")}
+      ${kpiNoAsignado("Sin stock", formatoDecimal(r.sinCobertura), "", "alert danger", "sinStock")}
     </div>
     <div class="report-noasig-main">
       ${tarjetaDonutAsignacion("Activo", data.pctActivo, r.activo, data.asignable, "activo")}
@@ -1358,19 +1351,19 @@ function kpiNoAsignado(titulo, valor, subtitulo, clase, icono) {
       <i class="noasig-kpi-icon">${iconoNoAsignado(icono)}</i>
       <span>${titulo}</span>
       <strong>${valor}</strong>
-      <small>${subtitulo}</small>
+      ${subtitulo ? `<small>${subtitulo}</small>` : ""}
     </div>
   `;
 }
 
-function tarjetaFuenteNoAsignado(titulo, valor, total, clase, subtitulo) {
+function tarjetaFuenteNoAsignado(titulo, valor, total, clase) {
   const pct = total > 0 ? Math.max(0, Math.min(100, (numeroReal(valor) / total) * 100)) : 0;
   return `
     <article class="no-asig-source ${clase}">
       <div>
         <span>${htmlSeguro(titulo)}</span>
         <strong>${formatoDecimal(valor)}</strong>
-        <small>${htmlSeguro(subtitulo)} | ${pct.toFixed(1)}%</small>
+        <small>${pct.toFixed(1)}%</small>
       </div>
       <div class="no-asig-bar"><div style="width:${pct}%"></div></div>
     </article>
@@ -1386,7 +1379,6 @@ function tarjetaDonutAsignacion(titulo, pct, valor, total, clase) {
       <div>
         <h3>${htmlSeguro(titulo)}</h3>
         <strong>${pctSeguro.toFixed(1)}%</strong>
-        <span>${formatoDecimal(valor)} de ${formatoDecimal(total)} bultos asignables</span>
       </div>
       <div class="percent-meter">
         <div style="width:${pctSeguro}%"></div>
@@ -1435,7 +1427,6 @@ function graficoTrabajoPendiente(trabajo) {
             <div class="work-row">
               <div>
                 <strong>${htmlSeguro(r.origen)}</strong>
-                ${r.sobrante > 0 ? `<span><b>${formatoDecimal(r.sobrante)}</b> sobrante</span>` : ""}
               </div>
               <div class="stack-bar dashboard-stack">
                 <div style="width:${pctTrabajado}%"></div>
@@ -1463,7 +1454,7 @@ function graficoSinStockPlus(row) {
         <div><span>Requerido sin stock</span><strong>${formatoDecimal(row?.pedido || 0)}</strong></div>
         <div><span>Encontrado en Plus</span><strong>${formatoDecimal(row?.trabajado || 0)}</strong></div>
         <div><span>Pendiente</span><strong>${formatoDecimal(row?.pendiente || 0)}</strong></div>
-        <div><span>Sobrante</span><strong>${formatoDecimal(sobrante)}</strong></div>
+        
       </div>
       <div class="percent-meter sin-stock-meter">
         <div style="width:${pctTrabajado}%"></div>
@@ -1604,7 +1595,8 @@ function crearBloqueTabla(titulo, data, tipo, id) {
 }
 
 function crearTabla(data, tipo) {
-  const progreso = calcularProgreso(data);
+  const sinSeguimiento = tipo === "reserva" || tipo === "otras";
+  const progreso = sinSeguimiento ? {} : calcularProgreso(data);
 
   if (!data.length) {
     return `<div class="empty">Sin datos para mostrar.</div>`;
@@ -1624,20 +1616,18 @@ function crearTabla(data, tipo) {
             <th>Stock LPN</th>
             <th>Asignar</th>
             <th>Restante</th>
-            <th>Progreso</th>
-            <th>Estado</th>
-            <th>Accion</th>
+            ${sinSeguimiento ? "" : `<th>Progreso</th><th>Estado</th><th>Accion</th>`}
           </tr>
         </thead>
         <tbody>
           ${data.map(r => {
             const key = `${r.lpn}_${r.codigo}`;
-            const estado = estadoInfo(key);
+            const estado = sinSeguimiento ? null : estadoInfo(key);
             const p = progreso[r.codigo] || {};
             const quiebre = esQuiebre(r.codigo);
 
             return `
-              <tr class="${atributoSeguro(estado.clase)} ${quiebre ? "quiebre" : ""}" data-key="${atributoSeguro(key)}" data-codigo="${atributoSeguro(r.codigo)}" data-tipo="${atributoSeguro(tipo)}">
+              <tr class="${atributoSeguro(estado?.clase || "")} ${quiebre ? "quiebre" : ""}" data-key="${atributoSeguro(key)}" data-codigo="${atributoSeguro(r.codigo)}" data-tipo="${atributoSeguro(tipo)}">
                 <td><strong>${htmlSeguro(r.lpn)}</strong></td>
                 <td>${htmlSeguro(r.codigo)}</td>
                 <td>${quiebre ? "SI" : ""}</td>
@@ -1647,9 +1637,7 @@ function crearTabla(data, tipo) {
                 <td>${formatoDecimal(r.bultos)}</td>
                 <td class="number">${formatoDecimal(r.asignar)}</td>
                 <td>${formatoDecimal(r.restante)}</td>
-                <td class="progreso-cell">${barraProgreso(p.porcentaje || 0)}</td>
-                <td class="estado-cell"><strong>${estado.texto}</strong></td>
-                <td><button class="compact accion-estado" onclick="cambiarEstadoOperario(${argumentoSeguro(key)}, ${argumentoSeguro(tipo)}, ${argumentoSeguro(r.codigo)})">${estado.accion}</button></td>
+                ${sinSeguimiento ? "" : `<td class="progreso-cell">${barraProgreso(p.porcentaje || 0)}</td><td class="estado-cell"><strong>${estado.texto}</strong></td><td><button class="compact accion-estado" onclick="cambiarEstadoOperario(${argumentoSeguro(key)}, ${argumentoSeguro(tipo)}, ${argumentoSeguro(r.codigo)})">${estado.accion}</button></td>`}
               </tr>
             `;
           }).join("")}
@@ -1680,19 +1668,12 @@ function verDashboard() {
         ${barraProgreso(resumen.cobertura)}
       </div>
       <div class="metric-panel">
-        <span>Avance operativo</span>
-        <strong>${progreso.porcentaje.toFixed(1)}%</strong>
-        ${barraProgreso(progreso.porcentaje)}
-      </div>
-      <div class="metric-panel">
         <span>Productos mixtos</span>
         <strong>${mixtos}</strong>
-        <small>Usan reserva y otras ubicaciones</small>
       </div>
       <div class="metric-panel danger">
         <span>Productos con brecha</span>
         <strong>${resumen.productosSinCobertura}</strong>
-        <small>${formatoDecimal(resumen.sinCobertura)} bultos sin cobertura</small>
       </div>
     </section>
 
@@ -1708,10 +1689,10 @@ function verDashboard() {
           <div style="width:${Math.min(100, sinCoberturaPct)}%" title="Sin cobertura"></div>
         </div>
         <div class="legend">
-          <span><b class="dot reserva"></b>Activo ${coberturaActivo.toFixed(1)}%</span>
-          <span><b class="dot reserva"></b>Reserva ${coberturaReserva.toFixed(1)}%</span>
-          <span><b class="dot otras"></b>Otras ${coberturaOtras.toFixed(1)}%</span>
-          <span><b class="dot brecha"></b>Brecha ${sinCoberturaPct.toFixed(1)}%</span>
+          <span><b class="dot reserva"></b>Activo</span>
+          <span><b class="dot reserva"></b>Reserva</span>
+          <span><b class="dot otras"></b>Otras</span>
+          <span><b class="dot brecha"></b>Brecha</span>
         </div>
         <div class="mini-kpis">
           <div><span>Activo</span><strong>${formatoDecimal(resumen.activo)}</strong></div>
@@ -1726,49 +1707,15 @@ function verDashboard() {
           <h2>Lectura operacional</h2>
         </div>
         <div class="insight-list">
-          <div><strong>${soloActivo}</strong><span>productos salen solo de activo.</span></div>
-          <div><strong>${soloReserva}</strong><span>productos salen solo de reserva.</span></div>
-          <div><strong>${soloOtras}</strong><span>productos salen solo de otras ubicaciones.</span></div>
-          <div><strong>${mixtos}</strong><span>productos usan mas de una fuente.</span></div>
-          <div><strong>${resumen.productosSinStock}</strong><span>productos sin stock utilizable.</span></div>
+          <div><strong>${soloActivo}</strong><span>Activo</span></div>
+          <div><strong>${soloReserva}</strong><span>Reserva</span></div>
+          <div><strong>${soloOtras}</strong><span>Otras ubicaciones</span></div>
+          <div><strong>${mixtos}</strong><span>Fuentes multiples</span></div>
+          <div><strong>${resumen.productosSinStock}</strong><span>Sin stock</span></div>
         </div>
       </div>
     </section>
 
-    <section class="insight-card">
-      <div class="section-head">
-        <h2>Top productos a revisar</h2>
-        <button class="compact" onclick="verAnalisisRapido()">Ver analisis completo</button>
-      </div>
-      <div class="table-wrap table-wrap-compact">
-        <table>
-          <thead>
-            <tr>
-              <th>Codigo</th>
-              <th>Descripcion</th>
-              <th>Pedido</th>
-              <th>Activo</th>
-              <th>Reserva</th>
-              <th>Otras</th>
-              <th>Brecha</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${criticos.map(p => `
-              <tr class="bad">
-                <td><strong>${htmlSeguro(p.codigo)}</strong></td>
-                <td>${htmlSeguro(p.desc)}</td>
-                <td>${formatoDecimal(p.total)}</td>
-                <td>${formatoDecimal(p.asignadoActivo)}</td>
-                <td>${formatoDecimal(p.asignadoReserva)}</td>
-                <td>${formatoDecimal(p.asignadoOtras)}</td>
-                <td class="number">${formatoDecimal(p.sinCobertura)}</td>
-              </tr>
-            `).join("") || `<tr><td colspan="7">No hay productos con brecha.</td></tr>`}
-          </tbody>
-        </table>
-      </div>
-    </section>
   `;
 }
 
@@ -2033,7 +1980,7 @@ function verDashboardPedido() {
         </div>
       </div>
 
-      <div class="dashboard-layout pedido-layout">
+      <div class="dashboard-layout pedido-layout pedido-extra-visual">
         <div class="insight-card">
           <div class="section-head">
             <h2>Tendencia diaria</h2>
@@ -2053,7 +2000,7 @@ function verDashboardPedido() {
         </div>
       </div>
 
-      <div class="dashboard-grid-pro">
+      <div class="dashboard-grid-pro pedido-extra-visual">
         <div class="metric-panel">
           <span>Brecha asignable</span>
           <strong>${formatoDecimal(brechaOperativa)}</strong>
@@ -2543,16 +2490,12 @@ function verOtras() {
             <th>No asignado</th>
             <th>LPNs</th>
             <th>Ubicaciones</th>
-            <th>Progreso</th>
-            <th>Estado</th>
             <th>Ver</th>
           </tr>
         </thead>
         <tbody>
           ${filas.map(r => {
             const ubicaciones = [...new Set(r.lpns.map(l => l.ubicacion || "VACIO"))].join(", ");
-            const progreso = calcularProgresoProducto(r.codigo, "otras");
-
             return `
               <tr data-codigo="${atributoSeguro(r.codigo)}" data-tipo="otras" data-resumen-producto="otras">
                 <td><strong>${htmlSeguro(r.codigo)}</strong></td>
@@ -2560,8 +2503,6 @@ function verOtras() {
                 <td class="number">${formatoDecimal(r.requerido)}</td>
                 <td>${r.lpns.length}</td>
                 <td>${htmlSeguro(ubicaciones)}</td>
-                <td class="progreso-cell">${barraProgreso(progreso.porcentaje)}</td>
-                <td class="estado-producto-cell"><strong>${progreso.estado}</strong></td>
                 <td><button class="compact" onclick="verDetalleOtras(${argumentoSeguro(r.codigo)})">Ver</button></td>
               </tr>
             `;

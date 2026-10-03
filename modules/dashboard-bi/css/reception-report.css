@@ -1,0 +1,14 @@
+body .reception-compact{background:#fff;color:#16365f}
+body .reception-compact>.visual-header.green{background:#16365f;color:#fff}
+body .reception-compact>.visual-header.green h2{color:#fff}
+body .reception-compact .visual-kpi{background:#fff;border-color:#dce3ed;box-shadow:0 3px 10px #16365f0d}
+body .reception-compact .visual-kpi *{color:#16365f}
+body .reception-compact .visual-panel{background:#fff;border-color:#dce3ed;box-shadow:0 3px 10px #16365f0d}
+body .reception-compact .visual-panel h3,body .reception-compact .visual-title-icon{color:#16365f}
+body .reception-compact .provider-compact-row,body .reception-compact .provider-compact-row.ok,body .reception-compact .provider-compact-row.alert{background:#fff;border-color:#dce3ed;color:#16365f}
+body .reception-compact .provider-compact-row strong,body .reception-compact .provider-compact-row b,body .reception-compact .provider-compact-row span,body .reception-compact .provider-compact-row small{color:#16365f}
+body .reception-compact .provider-filter-bar,body .reception-compact .provider-filter-menu{background:#fff;border-color:#dce3ed;color:#16365f}
+body .reception-compact .provider-filter summary,body .reception-compact .provider-filter-actions button{background:#16365f;color:#fff;border-color:#16365f}
+body .reception-compact .provider-filter-actions button.ghost{background:#fff;color:#16365f}
+body .reception-compact input[type=checkbox]{accent-color:#16365f}
+body .reception-compact .reception-punta-summary strong{color:#16365f}

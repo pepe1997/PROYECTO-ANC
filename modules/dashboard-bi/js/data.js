@@ -1,4 +1,5 @@
 const SHEET_ID = "1fMEnjNjCZf0c-9VPmeHOQnFERXy5jz7XJ2lY64tblRc";
+const PEDIDO_SHEET_ID = "1-v6vXjHpLlIn0-_lVZw0BtGopnxSHH0zqoOrW8aBwcg";
 const RECEPCION_PROVEEDORES_SHEET_ID = "18iiFahjssG-2Or8HE9KjBer3DcuG0mDaMpxZj-rqycI";
 const HOJAS = {
   picking: "PICKING",
@@ -26,6 +27,7 @@ let dataProductos = [];
 let dataUbicaciones = [];
 let dataUsuarios = [];
 let dataRecepcionProveedoresResumen = [];
+let dataPedido = [];
 let datosListos = false;
 
 async function cargarHojaDesde(sheetId, nombre) {
@@ -168,9 +170,17 @@ async function cargarDatos() {
     dataUbicaciones = ubicacionesDemo();
     dataUsuarios = [];
     dataRecepcionProveedoresResumen = proveedoresResumenDemo();
+    dataPedido = [];
     datosListos = true;
     estado("Modo demo | Configura SHEET_ID");
     return;
+  }
+
+  try {
+    dataPedido = await cargarHojaDesde(PEDIDO_SHEET_ID, "PEDIDO");
+  } catch (error) {
+    console.warn("No se pudo cargar PEDIDO para el panel ejecutivo.", error);
+    dataPedido = [];
   }
 
   try {

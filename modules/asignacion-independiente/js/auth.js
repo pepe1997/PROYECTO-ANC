@@ -28,7 +28,8 @@ async function sha256(texto) {
 function mostrarApp(usuario) {
   document.getElementById("loginView").hidden = true;
   document.getElementById("appView").hidden = false;
-  document.getElementById("usuarioActivo").textContent = usuario.nombre || usuario.user;
+  const usuarioActivo = document.getElementById("usuarioActivo");
+  if (usuarioActivo) usuarioActivo.textContent = usuario.nombre || usuario.user;
 }
 
 function mostrarLogin() {

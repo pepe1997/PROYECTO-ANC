@@ -1,9 +1,9 @@
 const MODULOS = [
-  { id: "asistencia", nombre: "Asistencia Trujillo", descripcion: "Control diario, reportes y regularizacion de asistencia.", ruta: "modules/anc-asistencia/index.html?integrado=1", icono: "AS" },
-  { id: "asignacion", nombre: "Asignacion Operacional", descripcion: "Cobertura, reserva, paletero y productos sin stock.", ruta: "modules/asignacion-independiente/index.html?integrado=1", icono: "AO" },
-  { id: "bi", nombre: "Reporte Operacional", descripcion: "Indicadores ejecutivos de picking, recepcion y despacho.", ruta: "modules/dashboard-bi/index.html?integrado=1", icono: "BI" },
-  { id: "operaciones", nombre: "Control Operativo", descripcion: "Inventario, LPNs, ubicaciones, slotting y bloqueo.", ruta: "modules/operaciones-independiente/index.html?integrado=1", icono: "CO" },
-  { id: "tareas", nombre: "Tareas Asignacion", descripcion: "Seguimiento de tareas y reportes desde asignacion.", ruta: "modules/tareas-asignacion/index.html?integrado=1", icono: "TA" }
+  { id: "asistencia", nombre: "ASISTENCIA", ruta: "modules/anc-asistencia/index.html?integrado=1", icono: "◷" },
+  { id: "asignacion", nombre: "ASIGNACION", ruta: "modules/asignacion-independiente/index.html?integrado=1", icono: "⇄" },
+  { id: "bi", nombre: "REPORTES", ruta: "modules/dashboard-bi/index.html?integrado=1", icono: "▥" },
+  { id: "operaciones", nombre: "CONTROL OPERATIVO", ruta: "modules/operaciones-independiente/index.html?integrado=1", icono: "⌘" },
+  { id: "tareas", nombre: "TAREAS", ruta: "modules/tareas-asignacion/index.html?integrado=1", icono: "✓" }
 ];
 
 const USUARIOS = [
@@ -50,8 +50,6 @@ function renderNavegacion() {
     <button class="module-card" onclick="abrirModulo('${modulo.id}')">
       <span class="card-icon">${modulo.icono}</span>
       <strong>${modulo.nombre}</strong>
-      <span>${modulo.descripcion}</span>
-      <em>Abrir modulo</em>
     </button>
   `).join("");
 }
@@ -65,9 +63,6 @@ function seleccionarNav(id) {
 function mostrarInicio() {
   document.getElementById("homeView").hidden = false;
   document.getElementById("moduleView").hidden = true;
-  document.getElementById("homeButton").hidden = true;
-  document.getElementById("pageTitle").textContent = "Panel principal";
-  document.getElementById("pageSubtitle").textContent = "Selecciona un modulo para comenzar";
   seleccionarNav("navInicio");
 }
 
@@ -144,9 +139,6 @@ function abrirModulo(id) {
   obtenerFrame(modulo).hidden = false;
   document.getElementById("homeView").hidden = true;
   document.getElementById("moduleView").hidden = false;
-  document.getElementById("homeButton").hidden = false;
-  document.getElementById("pageTitle").textContent = modulo.nombre;
-  document.getElementById("pageSubtitle").textContent = modulo.descripcion;
   seleccionarNav(`nav-${id}`);
 }
 
